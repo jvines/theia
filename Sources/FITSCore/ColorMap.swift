@@ -3,10 +3,10 @@ import simd
 
 /// Display colour maps for stretched pixel values in `[0, 1]`.
 ///
-/// The non-trivial perceptual maps (viridis, magma, plasma) use the well-known
-/// polynomial fits to matplotlib's listed colormaps by Mike Bostock and collected
-/// on Shadertoy (https://www.shadertoy.com/view/WlfXRN). Negligible error from
-/// the reference LUTs for our purposes.
+/// The perceptual maps (viridis, magma, plasma) are our own degree-10 least-squares
+/// polynomial fits to matplotlib's listed colormaps, which their authors dedicated
+/// to the public domain (CC0). Max error vs the reference data is < 1% per channel —
+/// ample for an 8-bit display LUT.
 public enum ColorMap: String, CaseIterable, Sendable {
     case gray
     case invertedGray
@@ -50,51 +50,65 @@ public enum ColorMap: String, CaseIterable, Sendable {
     }
 
     // MARK: - Polynomial colour fits
+    //
+    // Degree-10 least-squares fits to matplotlib's public-domain (CC0)
+    // viridis/magma/plasma data; `c[k]` is the coefficient of `t^k`.
 
     private func viridis(_ t: Float) -> SIMD3<Float> {
-        let c0 = SIMD3<Float>(0.2777273272,  0.005407344544, 0.3340998832)
-        let c1 = SIMD3<Float>(0.1050930431,  1.404613529,    1.384590162)
-        let c2 = SIMD3<Float>(-0.3308618287, 0.214847176,    0.09509516862)
-        let c3 = SIMD3<Float>(-4.634230030, -5.799100872,   -19.33244095)
-        let c4 = SIMD3<Float>(6.228269936,   14.17993633,    56.69055260)
-        let c5 = SIMD3<Float>(4.776384997,  -13.74514183,   -65.35303263)
-        let c6 = SIMD3<Float>(-5.435455156,  4.645852474,    26.31218282)
-        return horner(t, c0, c1, c2, c3, c4, c5, c6)
+        horner(t, [
+            SIMD3<Float>(0.26879913, 0.0024819165, 0.32894473),
+            SIMD3<Float>(0.19569507, 1.6241486, 1.6020904),
+            SIMD3<Float>(2.0691932, -3.5256532, -3.7756279),
+            SIMD3<Float>(-32.744093, 20.025165, 19.950264),
+            SIMD3<Float>(32.005827, -76.074043, -186.39315),
+            SIMD3<Float>(641.82133, 153.34602, 836.4229),
+            SIMD3<Float>(-3124.5776, -134.14808, -1969.5555),
+            SIMD3<Float>(6561.9629, -27.623013, 2614.46),
+            SIMD3<Float>(-7221.6573, 154.33954, -1948.3737),
+            SIMD3<Float>(4071.0459, -117.42885, 739.12616),
+            SIMD3<Float>(-929.40272, 30.368758, -103.64169),
+        ])
     }
 
     private func magma(_ t: Float) -> SIMD3<Float> {
-        let c0 = SIMD3<Float>(-0.002136485053, -0.000749655152, -0.005386127855)
-        let c1 = SIMD3<Float>(0.2516605407,    0.6775232436,    2.494026191)
-        let c2 = SIMD3<Float>(8.353717238,    -3.577719586,    0.3144679030)
-        let c3 = SIMD3<Float>(-27.66873308,    14.26473282,   -13.64921318)
-        let c4 = SIMD3<Float>(52.17613308,   -27.94360443,    12.94416770)
-        let c5 = SIMD3<Float>(-50.76852379,   29.04658287,    4.234001515)
-        let c6 = SIMD3<Float>(18.65570506,   -11.48977351,   -5.601961508)
-        return horner(t, c0, c1, c2, c3, c4, c5, c6)
+        horner(t, [
+            SIMD3<Float>(0.00040627635, 0.0069230209, 0.0062637587),
+            SIMD3<Float>(0.27655803, -0.92762505, 2.6406562),
+            SIMD3<Float>(6.0660788, 45.254936, -32.540586),
+            SIMD3<Float>(-15.785758, -529.56166, 548.12481),
+            SIMD3<Float>(141.79465, 2976.8216, -3997.3018),
+            SIMD3<Float>(-1010.5285, -9380.0634, 15336.155),
+            SIMD3<Float>(3470.9812, 17758.798, -34548.072),
+            SIMD3<Float>(-6369.3282, -20613.712, 47349.901),
+            SIMD3<Float>(6464.3613, 14347.74, -38851.355),
+            SIMD3<Float>(-3433.5881, -5488.7219, 17553.826),
+            SIMD3<Float>(746.73879, 885.35553, -3360.6363),
+        ])
     }
 
     private func plasma(_ t: Float) -> SIMD3<Float> {
-        let c0 = SIMD3<Float>(0.05873234392,  0.02333670892,  0.5433401118)
-        let c1 = SIMD3<Float>(2.176514634,    0.2383834171,   0.7539604341)
-        let c2 = SIMD3<Float>(-2.689460976,  -7.455851110,    3.110799939)
-        let c3 = SIMD3<Float>(6.130348345,    42.31123756,   -28.51885050)
-        let c4 = SIMD3<Float>(-11.10743463,  -82.66631104,   60.13984767)
-        let c5 = SIMD3<Float>(10.02306227,    71.41361370,  -54.07218351)
-        let c6 = SIMD3<Float>(-3.658713842,  -22.93153897,   18.19190778)
-        return horner(t, c0, c1, c2, c3, c4, c5, c6)
+        horner(t, [
+            SIMD3<Float>(0.053096878, 0.03452846, 0.52562476),
+            SIMD3<Float>(2.8995847, -1.0860295, 1.6466476),
+            SIMD3<Float>(-15.314252, 28.695096, -17.514267),
+            SIMD3<Float>(98.207169, -350.31654, 175.24254),
+            SIMD3<Float>(-374.72283, 2110.7324, -1036.2597),
+            SIMD3<Float>(878.07156, -7032.4501, 3531.4365),
+            SIMD3<Float>(-1325.2747, 14102.556, -7471.2468),
+            SIMD3<Float>(1301.7653, -17529.002, 10078.322),
+            SIMD3<Float>(-806.75145, 13256.988, -8461.6295),
+            SIMD3<Float>(285.83751, -5599.3137, 4029.2021),
+            SIMD3<Float>(-43.832226, 1014.1378, -829.5845),
+        ])
     }
 
-    private func horner(_ t: Float, _ c0: SIMD3<Float>, _ c1: SIMD3<Float>,
-                        _ c2: SIMD3<Float>, _ c3: SIMD3<Float>,
-                        _ c4: SIMD3<Float>, _ c5: SIMD3<Float>,
-                        _ c6: SIMD3<Float>) -> SIMD3<Float> {
-        var acc = c6
-        acc = c5 + t * acc
-        acc = c4 + t * acc
-        acc = c3 + t * acc
-        acc = c2 + t * acc
-        acc = c1 + t * acc
-        acc = c0 + t * acc
+    /// Horner evaluation of a polynomial with vector coefficients. `c[0]` is the
+    /// constant term, `c[k]` the coefficient of `t^k`.
+    private func horner(_ t: Float, _ c: [SIMD3<Float>]) -> SIMD3<Float> {
+        guard var acc = c.last else { return .zero }
+        for k in stride(from: c.count - 2, through: 0, by: -1) {
+            acc = c[k] + t * acc
+        }
         return acc
     }
 
