@@ -1,0 +1,69 @@
+name: Release
+
+# Build a signed + notarized DMG and publish it to GitHub Releases when a v*
+# tag is pushed to Forgejo. Runs on bronco — the only host with the Developer
+# ID cert and notarytool profile. GitHub Actions never sees this file (it lives
+# under .forgejo/workflows; GitHub only reads .github/workflows), so the DMG is
+# built once here and pushed to the public GitHub repo as a release asset.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build, sign, notarize, publish DMG
+    runs-on: macos-15   # bronco host runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      # package.sh builds release, assembles Theia.app, codesigns with the
+      # Developer ID identity derived from SIGNER_NAME + TEAM_ID, notarizes iff
+      # NOTARY_PROFILE names a valid keychain profile (skipped when the secret
+      # is empty), and writes dist/Theia-<version>.dmg.
+      - name: Build, sign, notarize, package DMG
+        env:
+          SIGNER_NAME: "Jose Vines"
+          TEAM_ID: "Z77NN7UQG6"
+          NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
+          MAKE_DMG: "1"
+        run: ./scripts/package.sh
+
+      - name: Locate DMG
+        id: dmg
+        run: |
+          set -euo pipefail
+          DMG="$(ls -1 dist/Theia-*.dmg | head -1)"
+          [ -n "$DMG" ] || { echo "error: no DMG produced by package.sh" >&2; exit 1; }
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "Built $DMG"
+
+      # Publish to the public GitHub repo. Skips gracefully (still green) when
+      # GH_RELEASE_TOKEN is unset, so the build/sign path can be validated
+      # before the token is provisioned.
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+          GH_REPO: jvines/theia
+          TAG: ${{ github.ref_name }}
+          DMG_PATH: ${{ steps.dmg.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_RELEASE_TOKEN not set — skipping GitHub publish."
+            echo "Signed DMG built at: $DMG_PATH"
+            exit 0
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Theia $TAG" --generate-notes
+          fi
+          gh release upload "$TAG" "$DMG_PATH" --clobber
+          echo "Published $DMG_PATH to $GH_REPO release $TAG"
