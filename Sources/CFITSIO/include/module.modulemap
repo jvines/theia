@@ -1,0 +1,6 @@
+module CFITSIO {
+    // CFITSIO's public API. fitsio.h pulls in longnam.h (short names) itself.
+    header "../fitsio.h"
+    link "z"
+    export *
+}

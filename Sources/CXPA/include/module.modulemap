@@ -1,0 +1,6 @@
+module CXPA {
+    // libxpa public API. Pulls in prsetup.h itself via angle includes resolved
+    // through the target's header search path.
+    header "xpa.h"
+    export *
+}

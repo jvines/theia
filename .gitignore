@@ -1,0 +1,42 @@
+## Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdatad/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+Package.resolved
+
+## macOS
+.DS_Store
+
+## Build artefacts
+build/
+dist/
+*.dmg
+*.app
+*.zip
+
+## Editor / tools
+.vscode/
+.idea/
+*.swp
+
+## Claude Code local state (agent worktrees, scheduled-task locks, settings)
+.claude/
+
+## Secrets / local
+.env
+.env.local
+secrets/
+
+## Generated sample data
+sample.fits
+*.fits.gen
+
+## Packaged .app output
+dist/
+test_data/
