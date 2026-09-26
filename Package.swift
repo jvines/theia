@@ -1,21 +1,49 @@
 // swift-tools-version:5.10
 import PackageDescription
 
+let xpaToolLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags(["-Xlinker", "-lpthread"], .when(platforms: [.linux]))
+]
+
+#if os(macOS)
+let macOSProducts: [Product] = [
+    .executable(name: "Theia", targets: ["FITSViewerApp"]),
+    .library(name: "FITSRender", targets: ["FITSRender"]),
+]
+let macOSTargets: [Target] = [
+    .executableTarget(
+        name: "FITSViewerApp",
+        dependencies: ["FITSCore", "FITSRaster", "TheiaKit", "FITSRender", "XPABridge"],
+        path: "Sources/FITSViewerApp"
+    ),
+    .target(
+        name: "FITSRender",
+        dependencies: ["FITSCore", "FITSRaster", "TheiaKit"],
+        path: "Sources/FITSRender",
+        resources: [.copy("Shaders.metal")]
+    ),
+    .testTarget(
+        name: "FITSRenderTests",
+        dependencies: ["FITSRender"],
+        path: "Tests/FITSRenderTests"
+    ),
+]
+#else
+let macOSProducts: [Product] = []
+let macOSTargets: [Target] = []
+#endif
+
 let package = Package(
     name: "Theia",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Theia", targets: ["FITSViewerApp"]),
         .library(name: "FITSCore", targets: ["FITSCore"]),
-        .library(name: "FITSRender", targets: ["FITSRender"]),
-    ],
+        .library(name: "FITSRaster", targets: ["FITSRaster"]),
+        .library(name: "TheiaKit", targets: ["TheiaKit"]),
+        .library(name: "XPABridge", targets: ["XPABridge"]),
+    ] + macOSProducts,
     dependencies: [],
     targets: [
-        .executableTarget(
-            name: "FITSViewerApp",
-            dependencies: ["FITSCore", "FITSRender", "XPABridge"],
-            path: "Sources/FITSViewerApp"
-        ),
         // Vendored CFITSIO 4.6.4 (HEASARC/NASA) compiled as a static C target.
         // Fortran wrappers, network/GSI/shared-mem drivers, and platform utilities
         // are not vendored. Network/bzip2 code paths compile out (their HAVE_* macros
@@ -63,42 +91,38 @@ let package = Package(
         // for users who don't already have the XPA tools installed).
         .executableTarget(
             name: "xpans", dependencies: ["CXPA"], path: "Sources/xpans",
-            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])]
+            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])],
+            linkerSettings: xpaToolLinkerSettings
         ),
         .executableTarget(
             name: "xpaget", dependencies: ["CXPA"], path: "Sources/xpaget",
-            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])]
+            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])],
+            linkerSettings: xpaToolLinkerSettings
         ),
         .executableTarget(
             name: "xpaset", dependencies: ["CXPA"], path: "Sources/xpaset",
-            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])]
+            cSettings: [.define("HAVE_CONFIG_H"), .unsafeFlags(["-w"])],
+            linkerSettings: xpaToolLinkerSettings
         ),
         .target(
             name: "FITSCore",
             dependencies: ["CFITSIO"],
             path: "Sources/FITSCore"
         ),
-        .target(
-            name: "FITSRender",
-            dependencies: ["FITSCore"],
-            path: "Sources/FITSRender",
-            resources: [.copy("Shaders.metal")]
-        ),
+        .target(name: "FITSRaster", dependencies: ["FITSCore"], path: "Sources/FITSRaster"),
+        .target(name: "TheiaKit", dependencies: ["FITSRaster"], path: "Sources/TheiaKit"),
         .testTarget(
             name: "FITSCoreTests",
             dependencies: ["FITSCore"],
             path: "Tests/FITSCoreTests",
             resources: [.copy("Fixtures")]
         ),
-        .testTarget(
-            name: "FITSRenderTests",
-            dependencies: ["FITSRender"],
-            path: "Tests/FITSRenderTests"
-        ),
+        .testTarget(name: "FITSRasterTests", dependencies: ["FITSRaster"], path: "Tests/FITSRasterTests"),
+        .testTarget(name: "TheiaKitTests", dependencies: ["TheiaKit"], path: "Tests/TheiaKitTests"),
         .testTarget(
             name: "XPABridgeTests",
             dependencies: ["XPABridge"],
             path: "Tests/XPABridgeTests"
         ),
-    ]
+    ] + macOSTargets
 )

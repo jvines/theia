@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// Affine transform from image-pixel space to view-point space: `view = scale * imagePoint + translation`.
 /// Used by the renderer (as Metal uniform) and by gesture handlers.

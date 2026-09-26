@@ -1882,7 +1882,7 @@ extension DocumentView {
         await MainActor.run { isFetchingCatalog = true }
         defer { Task { @MainActor in isFetchingCatalog = false } }
         do {
-            let sources = try await CatalogClient.shared.fetchGaia(
+            let sources = try await AppCatalog.client.fetchGaia(
                 centerRA: cs.centerRA,
                 centerDec: cs.centerDec,
                 radiusDeg: cs.radiusDeg,

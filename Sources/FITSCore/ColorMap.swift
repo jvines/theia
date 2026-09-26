@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// Display colour maps for stretched pixel values in `[0, 1]`.
 ///
