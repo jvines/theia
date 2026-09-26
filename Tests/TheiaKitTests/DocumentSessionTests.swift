@@ -110,6 +110,23 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testDocumentTextPreservesHDUAndStatusReadouts() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let cube = session.file.hdus[1]
+            XCTAssertEqual(DocumentText.windowSubtitle(for: session.file), "6 HDUs · 2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.hduLabel(index: 1, name: nil), "HDU 1")
+            XCTAssertEqual(DocumentText.hduLabel(index: 2, name: "SCI"), "HDU 2 — SCI")
+            XCTAssertEqual(DocumentText.sidebarDetails(for: cube), "3D cube · 2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.statusDetails(for: cube), "2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.pixelCoordinates(imageX: 0, imageY: 4), "(1, 5)")
+            XCTAssertEqual(DocumentText.pixelValue(.nan), "NaN")
+            XCTAssertEqual(DocumentText.pixelValue(1.23456), "1.235")
+            XCTAssertEqual(DocumentText.level(0), "0.00e+00")
+            XCTAssertEqual(DocumentText.level(1000), "1.00e+03")
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()

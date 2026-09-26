@@ -257,7 +257,7 @@ struct HDUSidebar: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text("\(hdu.kindLabel) · \(hdu.shapeDescription) · \(hdu.bitpixLabel)")
+                    Text(DocumentText.sidebarDetails(for: hdu))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -319,7 +319,7 @@ struct StatusBar: View {
             skyBlock
             Spacer(minLength: 12)
             scaleBlock(showLabel: true)
-            Text("\(hdu.shapeDescription) · \(hdu.bitpixLabel)")
+            Text(DocumentText.statusDetails(for: hdu))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -339,9 +339,10 @@ struct StatusBar: View {
         HStack(spacing: 4) {
             if showLabel { Text("Pixel").foregroundStyle(.tertiary) }
             if let c = cursor {
-                Text("(\(c.fitsX), \(c.fitsY))").font(.system(.body, design: .monospaced))
+                Text(DocumentText.pixelCoordinates(imageX: c.imageX, imageY: c.imageY))
+                    .font(.system(.body, design: .monospaced))
                 Text("=").foregroundStyle(.secondary)
-                Text(c.value.isNaN ? "NaN" : String(format: "%.4g", c.value))
+                Text(DocumentText.pixelValue(c.value))
                     .font(.system(.body, design: .monospaced))
             } else {
                 Text("(—, —) = —")
@@ -392,10 +393,10 @@ struct StatusBar: View {
         HStack(spacing: 4) {
             if showLabel { Text("Scale").foregroundStyle(.secondary) }
             Text("min").foregroundStyle(.tertiary)
-            Text(formatLevel(viewport.vmin))
+            Text(DocumentText.level(viewport.vmin))
                 .font(.system(.body, design: .monospaced))
             Text("max").foregroundStyle(.tertiary)
-            Text(formatLevel(viewport.vmax))
+            Text(DocumentText.level(viewport.vmax))
                 .font(.system(.body, design: .monospaced))
             Image(systemName: "questionmark.circle")
                 .foregroundStyle(.tertiary)
@@ -407,9 +408,6 @@ struct StatusBar: View {
         .hoverTooltip("Right-click + drag on the image to adjust scale. Horizontal = contrast, vertical = bias. ZScale toolbar button resets.")
     }
 
-    private func formatLevel(_ v: Float) -> String {
-        String(format: abs(v) < 1000 && abs(v) >= 0.01 ? "%.3g" : "%.2e", v)
-    }
 }
 
 struct FITSImageView: View {
@@ -1798,9 +1796,7 @@ extension DocumentView {
     }
 
     fileprivate func hduLabel(_ idx: Int) -> String {
-        guard let hdu = document.file.hdus[safe: idx] else { return "HDU \(idx)" }
-        if let name = hdu.name { return "HDU \(idx) — \(name)" }
-        return "HDU \(idx)"
+        DocumentText.hduLabel(index: idx, name: document.file.hdus[safe: idx]?.name)
     }
 
     fileprivate func canReproject(onto referenceIdx: Int) -> Bool {
