@@ -68,6 +68,10 @@ public struct HDUFacts {
                 self.selectedRegionIndex = nil
             }
             if regions.isEmpty { previewRegion = nil }
+            if regions != oldValue {
+                emit(.regionsChanged)
+                emit(.persistedFieldChanged)
+            }
         }
     }
     public var selectedRegionIndex: Int? {
@@ -75,22 +79,50 @@ public struct HDUFacts {
             if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
                 self.selectedRegionIndex = nil
             }
+            if selectedRegionIndex != oldValue { emit(.selectionChanged) }
         }
     }
-    public var previewRegion: Region?
-    public var remoteCrosshair: SIMD2<Double>?
-    public var mode: DrawMode = .pan
-    public var profileMarker: ProfileGeometry?
-    public var cursor: CursorInfo?
-    public var inspectorVisible = true
-    public var inspectorTab: InspectorTab = .header
-    public var catalogFetchInProgress = false
+    public var previewRegion: Region? {
+        didSet { if previewRegion != oldValue { emit(.overlaysChanged) } }
+    }
+    public var remoteCrosshair: SIMD2<Double>? {
+        didSet { if remoteCrosshair != oldValue { emit(.cursorMoved) } }
+    }
+    public var mode: DrawMode = .pan {
+        didSet {
+            if mode != oldValue {
+                emit(.selectionChanged)
+                emit(.persistedFieldChanged)
+            }
+        }
+    }
+    public var profileMarker: ProfileGeometry? {
+        didSet { if profileMarker != oldValue { emit(.overlaysChanged) } }
+    }
+    public var cursor: CursorInfo? {
+        didSet { if cursor != oldValue { emit(.cursorMoved) } }
+    }
+    public var inspectorVisible = true {
+        didSet { if inspectorVisible != oldValue { emit(.panelStateChanged) } }
+    }
+    public var inspectorTab: InspectorTab = .header {
+        didSet { if inspectorTab != oldValue { emit(.panelStateChanged) } }
+    }
+    public var catalogFetchInProgress = false {
+        didSet { if catalogFetchInProgress != oldValue { emit(.jobStatusChanged) } }
+    }
     public private(set) var playing = false
     public private(set) var fps: Double = 5
     public private(set) var blink: BlinkState?
-    public var showGrid = false
-    public var showCompass = false
-    public var showColorBar = false
+    public var showGrid = false {
+        didSet { if showGrid != oldValue { emitOverlaySettingChange() } }
+    }
+    public var showCompass = false {
+        didSet { if showCompass != oldValue { emitOverlaySettingChange() } }
+    }
+    public var showColorBar = false {
+        didSet { if showColorBar != oldValue { emitOverlaySettingChange() } }
+    }
     public private(set) var contourSpec = ContourSpec()
     public private(set) var contourSegments: [Contours.LeveledSegments] = []
     public var imageRevision: Int { view.imageRevision }
@@ -103,6 +135,10 @@ public struct HDUFacts {
     @ObservationIgnored internal private(set) var decodedImageCount = 0
     @ObservationIgnored private var lastPlaneAdvance: Date = .now
     @ObservationIgnored private let jobs = SessionJobQueue()
+    @ObservationIgnored private var eventObservers: [UUID: @MainActor (SessionEvent) -> Void] = [:]
+    @ObservationIgnored private var eventOrigin: CommandOrigin = .user
+    @ObservationIgnored private var eventEchoTag: UUID?
+    @ObservationIgnored private var persistSelection = true
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
         let fileFacts = file.hdus.map(HDUFacts.init)
@@ -114,6 +150,53 @@ public struct HDUFacts {
         self.sourceWCSVariant = fileFacts[initialHDU].wcsVariants.first ?? ""
         self.view = ImageViewState(stretch: stretch, colorMap: colorMap)
         view.display(sourceImage(), revision: 0)
+        view.onChange = { [weak self] change in
+            guard let self else { return }
+            switch change {
+            case .displayParameters:
+                self.emit(.displayParametersChanged)
+                if self.persistSelection { self.emit(.persistedFieldChanged) }
+            case .transform: self.emit(.transformChanged)
+            case .imageRevision: self.emit(.imageRevisionChanged)
+            }
+        }
+    }
+
+    /// Register a synchronous observer. Remove it when its consumer closes.
+    @discardableResult public func addEventObserver(
+        _ observer: @escaping @MainActor (SessionEvent) -> Void
+    ) -> UUID {
+        let id = UUID()
+        eventObservers[id] = observer
+        return id
+    }
+
+    public func removeEventObserver(_ id: UUID) { eventObservers[id] = nil }
+
+    /// Tag mutations from a command or sync propagation, including nested calls.
+    public func withEventContext<T>(
+        origin: CommandOrigin, echoTag: UUID? = nil, _ body: () throws -> T
+    ) rethrows -> T {
+        let previousOrigin = eventOrigin
+        let previousTag = eventEchoTag
+        eventOrigin = origin
+        eventEchoTag = echoTag
+        defer {
+            eventOrigin = previousOrigin
+            eventEchoTag = previousTag
+        }
+        return try body()
+    }
+
+    private func emit(_ kind: SessionEvent.Kind) {
+        let event = SessionEvent(kind: kind, origin: eventOrigin,
+                                 echoTag: eventEchoTag, imageRevision: imageRevision)
+        for observer in Array(eventObservers.values) { observer(event) }
+    }
+
+    private func emitOverlaySettingChange() {
+        emit(.displayParametersChanged)
+        emit(.persistedFieldChanged)
     }
 
     public var wcsVariant: String { derived?.wcs?.variant ?? sourceWCSVariant }
@@ -186,6 +269,8 @@ public struct HDUFacts {
         guard spec != contourSpec else { return }
         contourSpec = spec
         recomputeContours()
+        emit(.displayParametersChanged)
+        emit(.persistedFieldChanged)
     }
 
     private func recomputeContours() {
@@ -193,11 +278,19 @@ public struct HDUFacts {
         guard contourSpec.enabled, let image = displayed,
               !levels.isEmpty else {
             jobs.cancel(kind: .contours)
-            contourSegments = []
+            if !contourSegments.isEmpty {
+                contourSegments = []
+                emit(.overlaysChanged)
+            }
             return
         }
         let revision = imageRevision
-        contourSegments = []
+        if !contourSegments.isEmpty {
+            contourSegments = []
+            emit(.overlaysChanged)
+        }
+        let origin = eventOrigin
+        let echoTag = eventEchoTag
         jobs.enqueue(
             kind: .contours, imageRevision: revision,
             currentRevision: { [weak self] in self?.imageRevision ?? -1 },
@@ -208,7 +301,12 @@ public struct HDUFacts {
                     height: image.height, levels: levels
                 )
             },
-            apply: { [weak self] segments in self?.contourSegments = segments }
+            apply: { [weak self] (segments: [Contours.LeveledSegments]) in
+                self?.withEventContext(origin: origin, echoTag: echoTag) {
+                    self?.contourSegments = segments
+                    self?.emit(.overlaysChanged)
+                }
+            }
         )
     }
 
@@ -227,24 +325,34 @@ public struct HDUFacts {
     public func setPlaying(_ value: Bool, now: Date = .now) {
         guard !value || facts[hdu].planeCount > 1 else { return }
         if value && !playing { lastPlaneAdvance = now }
+        guard playing != value else { return }
         playing = value
+        emit(.playbackChanged)
     }
 
     public func setFPS(_ value: Double) {
-        fps = value.isFinite ? min(30, max(1, value)) : 5
+        let next = value.isFinite ? min(30, max(1, value)) : 5
+        guard fps != next else { return }
+        fps = next
+        emit(.playbackChanged)
     }
 
     public func toggleBlink(now: Date = .now) {
         if let blink {
             selectHDU(blink.primary)
             self.blink = nil
+            emit(.playbackChanged)
         } else if let partner = blinkPartner {
             blink = BlinkState(primary: hdu, partner: partner,
                                intervalSeconds: 1, startedAt: now)
+            emit(.playbackChanged)
         }
     }
 
     public func tick(now: Date) {
+        let previousPersistence = persistSelection
+        persistSelection = false
+        defer { persistSelection = previousPersistence }
         if let blink {
             let target = blink.currentHDU(at: now)
             if hdu != target { selectHDU(target) }
@@ -258,13 +366,18 @@ public struct HDUFacts {
 
     public func selectHDU(_ index: Int) {
         guard facts.indices.contains(index), index != hdu else { return }
-        playing = false
+        if playing {
+            playing = false
+            emit(.playbackChanged)
+        }
         hdu = index
         plane = 0
         derived = nil
         sourceWCSVariant = facts[index].wcsVariants.first ?? ""
         view.display(sourceImage(), revision: imageRevision &+ 1)
         recomputeContours()
+        emit(.selectionChanged)
+        if persistSelection { emit(.persistedFieldChanged) }
     }
 
     public func selectPlane(_ index: Int) {
@@ -275,12 +388,15 @@ public struct HDUFacts {
         derived = nil
         view.display(sourceImage(), revision: imageRevision &+ 1)
         recomputeContours()
+        emit(.selectionChanged)
+        if persistSelection { emit(.persistedFieldChanged) }
     }
 
     public func selectWCSVariant(_ variant: String) {
         guard derived == nil, facts[hdu].wcsVariants.contains(variant),
               variant != sourceWCSVariant else { return }
         sourceWCSVariant = variant
+        emit(.displayParametersChanged)
     }
 
     public func setDerived(_ image: DerivedImage?) {

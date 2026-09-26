@@ -13,7 +13,14 @@ final class XPACommandBridge: XPAServerDelegate {
     }
 
     func xpaSet(command: String, params: String, data: Data?) -> Bool {
-        MainActor.assumeIsolated { setMain(command: command, params: params, data: data) }
+        MainActor.assumeIsolated {
+            guard let session = frontController()?.documentModel.session else {
+                return setMain(command: command, params: params, data: data)
+            }
+            return session.withEventContext(origin: .script) {
+                setMain(command: command, params: params, data: data)
+            }
+        }
     }
 
     // MARK: - get (xpaget)

@@ -211,27 +211,30 @@ final class ScriptingServer {
             guard let controller = controllerByIndex(id) else {
                 return httpResponse(404, json: ["error": "no document with id \(id)"])
             }
-            switch (method, sub) {
-            case ("GET", "info"):
-                return infoResponse(controller: controller)
-            case ("POST", "stretch"):
-                return setStretchResponse(controller: controller, body: body)
-            case ("POST", "colormap"):
-                return setColormapResponse(controller: controller, body: body)
-            case ("POST", "scale"):
-                return setScaleResponse(controller: controller, body: body)
-            case ("POST", "zscale"):
-                controller.documentModel.session.resetLevels()
-                return httpResponse(200, json: ["ok": true])
-            case ("GET", "regions"):
-                return regionsGetResponse(controller: controller)
-            case ("POST", "regions"):
-                return regionsPostResponse(controller: controller, body: body)
-            case ("POST", "regions/clear"):
-                controller.setRegionsForScripting([])
-                return httpResponse(200, json: ["ok": true])
-            default: break
+            let response: Data? = controller.documentModel.session.withEventContext(origin: .script) {
+                switch (method, sub) {
+                case ("GET", "info"):
+                    return infoResponse(controller: controller)
+                case ("POST", "stretch"):
+                    return setStretchResponse(controller: controller, body: body)
+                case ("POST", "colormap"):
+                    return setColormapResponse(controller: controller, body: body)
+                case ("POST", "scale"):
+                    return setScaleResponse(controller: controller, body: body)
+                case ("POST", "zscale"):
+                    controller.documentModel.session.resetLevels()
+                    return httpResponse(200, json: ["ok": true])
+                case ("GET", "regions"):
+                    return regionsGetResponse(controller: controller)
+                case ("POST", "regions"):
+                    return regionsPostResponse(controller: controller, body: body)
+                case ("POST", "regions/clear"):
+                    controller.setRegionsForScripting([])
+                    return httpResponse(200, json: ["ok": true])
+                default: return nil
+                }
             }
+            if let response { return response }
         }
         return httpResponse(404, json: ["error": "no route"])
     }
@@ -267,15 +270,17 @@ final class ScriptingServer {
         }
         // Optional params
         let session = controller.documentModel.session
-        if let s = obj["stretch"] as? String, let stretch = ImageStretch(rawValue: s) {
-            session.view.stretch = stretch
+        session.withEventContext(origin: .script) {
+            if let s = obj["stretch"] as? String, let stretch = ImageStretch(rawValue: s) {
+                session.view.stretch = stretch
+            }
+            if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
+                session.view.colorMap = cm
+            }
+            if let vmin = obj["vmin"] as? Double { session.view.vmin = Float(vmin) }
+            if let vmax = obj["vmax"] as? Double { session.view.vmax = Float(vmax) }
+            if obj["zscale"] as? Bool == true { session.resetLevels() }
         }
-        if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
-            session.view.colorMap = cm
-        }
-        if let vmin = obj["vmin"] as? Double { session.view.vmin = Float(vmin) }
-        if let vmax = obj["vmax"] as? Double { session.view.vmax = Float(vmax) }
-        if obj["zscale"] as? Bool == true { session.resetLevels() }
         let id = AppDelegate.shared?.scriptingID(of: controller) ?? -1
         return httpResponse(200, json: ["id": id])
     }

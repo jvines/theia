@@ -5,6 +5,88 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testEventsReportStateChangesAndPreserveOriginAndEchoTag() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var events: [SessionEvent] = []
+            let observer = session.addEventObserver { events.append($0) }
+            let echoTag = UUID()
+
+            session.withEventContext(origin: .script, echoTag: echoTag) {
+                session.view.stretch = .log
+                session.view.transform = ViewTransform(scale: 2)
+                session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+                session.cursor = CursorInfo(imageX: 1, imageY: 0, value: 2)
+                session.selectPlane(1)
+            }
+
+            XCTAssertTrue(events.contains { $0.kind == .displayParametersChanged })
+            XCTAssertTrue(events.contains { $0.kind == .transformChanged })
+            XCTAssertTrue(events.contains { $0.kind == .regionsChanged })
+            XCTAssertTrue(events.contains { $0.kind == .persistedFieldChanged })
+            XCTAssertTrue(events.contains { $0.kind == .cursorMoved })
+            XCTAssertTrue(events.contains { $0.kind == .selectionChanged })
+            XCTAssertTrue(events.contains { $0.kind == .imageRevisionChanged })
+            XCTAssertTrue(events.allSatisfy { $0.origin == .script && $0.echoTag == echoTag })
+            XCTAssertTrue(events.allSatisfy { $0.imageRevision <= session.imageRevision })
+
+            let count = events.count
+            session.view.stretch = .log
+            XCTAssertEqual(events.count, count)
+            session.removeEventObserver(observer)
+            session.view.stretch = .linear
+            XCTAssertEqual(events.count, count)
+        }
+    }
+
+    func testPlaybackTicksDoNotEmitPersistenceEvents() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var kinds: [SessionEvent.Kind] = []
+            session.addEventObserver { kinds.append($0.kind) }
+            let start = Date(timeIntervalSince1970: 0)
+            session.setFPS(30)
+            session.setPlaying(true, now: start)
+            session.tick(now: start.addingTimeInterval(0.04))
+            XCTAssertTrue(kinds.contains(.selectionChanged))
+            XCTAssertTrue(kinds.contains(.imageRevisionChanged))
+            XCTAssertFalse(kinds.contains(.persistedFieldChanged))
+        }
+    }
+
+    func testContourJobCompletionRetainsCommandEventContext() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        let recorder = await MainActor.run { EventRecorder() }
+        let echoTag = UUID()
+        await MainActor.run {
+            session.addEventObserver { recorder.events.append($0) }
+            session.withEventContext(origin: .script, echoTag: echoTag) {
+                session.setContourSpec(ContourSpec(enabled: true, count: 1, minValue: 1, maxValue: 2))
+            }
+        }
+        await session.idle()
+        await MainActor.run {
+            let completed = recorder.events.filter { $0.kind == .overlaysChanged }
+            XCTAssertEqual(completed.count, 1)
+            XCTAssertEqual(completed.first?.origin, .script)
+            XCTAssertEqual(completed.first?.echoTag, echoTag)
+        }
+    }
+
+    func testDirectSessionPropertiesEmitPersistedFieldEvents() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var kinds: [SessionEvent.Kind] = []
+            session.addEventObserver { kinds.append($0.kind) }
+            session.mode = .lineProfile
+            session.showGrid = true
+            session.showCompass = true
+            session.showColorBar = true
+            XCTAssertEqual(kinds.filter { $0 == .persistedFieldChanged }.count, 4)
+            XCTAssertEqual(kinds.filter { $0 == .displayParametersChanged }.count, 3)
+        }
+    }
+
     func testDisplayedCachesPlanesAndTracksPixelRevisions() async throws {
         try await MainActor.run {
         let session = try makeSession()
@@ -404,4 +486,8 @@ final class DocumentSessionTests: XCTestCase {
         data.append(contentsOf: pixels)
         data.append(Data(repeating: 0, count: (2880 - pixels.count % 2880) % 2880))
     }
+}
+
+@MainActor private final class EventRecorder {
+    var events: [SessionEvent] = []
 }
