@@ -9,9 +9,9 @@ public struct RegionOverlay: View {
     public let regions: [Region]
     public let selectedIndex: Int?
     public let wcs: WCS?
-    @ObservedObject public var viewport: ViewportObservable
+    public let viewport: ImageViewState
 
-    public init(regions: [Region], selectedIndex: Int? = nil, wcs: WCS?, viewport: ViewportObservable) {
+    public init(regions: [Region], selectedIndex: Int? = nil, wcs: WCS?, viewport: ImageViewState) {
         self.regions = regions
         self.selectedIndex = selectedIndex
         self.wcs = wcs
@@ -19,9 +19,10 @@ public struct RegionOverlay: View {
     }
 
     public var body: some View {
+        let transform = viewport.transform
         Canvas { context, size in
             let mapping = ViewMapping(
-                transform: viewport.transform,
+                transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )

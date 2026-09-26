@@ -2,12 +2,13 @@ import SwiftUI
 import AppKit
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Modeless inspector for adjusting brightness scale: numeric vmin/vmax fields,
 /// percentile preset buttons, and a tiny histogram preview with draggable handles.
 /// Classic Scale Parameters dialog.
 struct ScaleParametersPanel: View {
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
     @ObservedObject var toolbarState: ToolbarState
     let physicalValuesProvider: () -> [Double]
     let onApplyPreset: (ScalePreset) -> Void
@@ -97,8 +98,8 @@ struct ScaleParametersPanel: View {
         .padding(16)
         .frame(minWidth: 380)
         .onAppear { refreshFromViewport(); refreshDataRange() }
-        .onReceive(viewport.$vmin) { _ in refreshFromViewport() }
-        .onReceive(viewport.$vmax) { _ in refreshFromViewport() }
+        .onChange(of: viewport.vmin) { _, _ in refreshFromViewport() }
+        .onChange(of: viewport.vmax) { _, _ in refreshFromViewport() }
     }
 
     // MARK: - Helpers
@@ -191,7 +192,7 @@ struct ScaleParametersPanel: View {
 /// Floating panel host so the user can keep tweaking the scale while watching the image.
 @MainActor
 final class ScaleParametersWindowController: NSWindowController {
-    static func show(viewport: ViewportObservable,
+    static func show(viewport: ImageViewState,
                      toolbarState: ToolbarState,
                      physicalValuesProvider: @escaping () -> [Double],
                      onApplyPreset: @escaping (ScalePreset) -> Void,

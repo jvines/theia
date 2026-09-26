@@ -44,12 +44,13 @@ extension PVDiagramWindowController: NSWindowDelegate {
 
 private struct PVDiagramView: View {
     let image: FITSImage
-    @StateObject private var viewport: ViewportObservable
+    @State private var viewport: ImageViewState
 
     init(image: FITSImage) {
         self.image = image
-        let levels = DocumentSession.recommendedLevels(for: image)
-        self._viewport = StateObject(wrappedValue: ViewportObservable(vmin: levels.vmin, vmax: levels.vmax))
+        self._viewport = State(initialValue: ImageViewState(
+            image: image, stretch: .linear, colorMap: .viridis
+        ))
     }
 
     var body: some View {
@@ -57,8 +58,6 @@ private struct PVDiagramView: View {
             FITSMetalView(
                 image: image,
                 imageRevision: 0,
-                stretch: .linear,
-                colorMap: .viridis,
                 viewport: viewport
             )
             HStack {

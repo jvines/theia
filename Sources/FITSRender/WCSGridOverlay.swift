@@ -3,19 +3,20 @@ import FITSCore
 import TheiaKit
 
 /// SwiftUI overlay that draws WCS RA/Dec gridlines on top of a `FITSMetalView`,
-/// using the shared `ViewportObservable` so panning and zooming stay in sync.
+/// using the shared `ImageViewState` so panning and zooming stay in sync.
 public struct WCSGridOverlay: View {
     public let image: FITSImage
     public let wcs: WCS
-    @ObservedObject public var viewport: ViewportObservable
+    public let viewport: ImageViewState
 
-    public init(image: FITSImage, wcs: WCS, viewport: ViewportObservable) {
+    public init(image: FITSImage, wcs: WCS, viewport: ImageViewState) {
         self.image = image
         self.wcs = wcs
         self.viewport = viewport
     }
 
     public var body: some View {
+        let transform = viewport.transform
         Canvas { context, size in
             let lines = WCSGridGenerator.gridlines(
                 wcs: wcs,
@@ -23,7 +24,7 @@ public struct WCSGridOverlay: View {
                 imageHeight: image.height
             )
             let mapping = ViewMapping(
-                transform: viewport.transform,
+                transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )

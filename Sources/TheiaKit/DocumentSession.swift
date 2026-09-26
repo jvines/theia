@@ -57,11 +57,12 @@ public struct HDUFacts {
     public let url: URL
     public let file: FITSFile
     public let facts: [HDUFacts]
+    public let view: ImageViewState
     public private(set) var hdu: Int
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""
     public private(set) var derived: DerivedImage?
-    public private(set) var imageRevision: Int = 0
+    public var imageRevision: Int { view.imageRevision }
 
     private struct ImageKey: Hashable {
         let hdu: Int
@@ -70,12 +71,16 @@ public struct HDUFacts {
     @ObservationIgnored private var imageCache: [ImageKey: FITSImage] = [:]
     @ObservationIgnored internal private(set) var decodedImageCount = 0
 
-    public init(url: URL, file: FITSFile) {
+    public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
+        let fileFacts = file.hdus.map(HDUFacts.init)
+        let initialHDU = file.firstImageHDUIndex ?? 0
         self.url = url
         self.file = file
-        self.facts = file.hdus.map(HDUFacts.init)
-        self.hdu = file.firstImageHDUIndex ?? 0
-        self.sourceWCSVariant = facts[hdu].wcsVariants.first ?? ""
+        self.facts = fileFacts
+        self.hdu = initialHDU
+        self.sourceWCSVariant = fileFacts[initialHDU].wcsVariants.first ?? ""
+        self.view = ImageViewState(stretch: stretch, colorMap: colorMap)
+        view.display(sourceImage(), revision: 0)
     }
 
     public var wcsVariant: String { derived?.wcs?.variant ?? sourceWCSVariant }
@@ -91,7 +96,10 @@ public struct HDUFacts {
     }
 
     public var displayed: FITSImage? {
-        if let derived { return derived.image }
+        view.image
+    }
+
+    private func sourceImage() -> FITSImage? {
         guard facts.indices.contains(hdu), facts[hdu].isDisplayableImage else { return nil }
         let key = ImageKey(hdu: hdu, plane: plane)
         if let cached = imageCache[key] { return cached }
@@ -135,7 +143,7 @@ public struct HDUFacts {
         plane = 0
         derived = nil
         sourceWCSVariant = facts[index].wcsVariants.first ?? ""
-        imageRevision &+= 1
+        view.display(sourceImage(), revision: imageRevision &+ 1)
     }
 
     public func selectPlane(_ index: Int) {
@@ -144,7 +152,7 @@ public struct HDUFacts {
               index != plane || derived != nil else { return }
         plane = index
         derived = nil
-        imageRevision &+= 1
+        view.display(sourceImage(), revision: imageRevision &+ 1)
     }
 
     public func selectWCSVariant(_ variant: String) {
@@ -156,6 +164,6 @@ public struct HDUFacts {
     public func setDerived(_ image: DerivedImage?) {
         guard derived != image else { return }
         derived = image
-        imageRevision &+= 1
+        view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
     }
 }

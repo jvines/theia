@@ -10,12 +10,13 @@ import TheiaKit
 struct ContourOverlay: View {
     let leveled: [Contours.LeveledSegments]
     let imageHeight: Int
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     var body: some View {
+        let transform = viewport.transform
         Canvas { context, size in
             let mapping = ViewMapping(
-                transform: viewport.transform,
+                transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )

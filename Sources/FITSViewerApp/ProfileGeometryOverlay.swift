@@ -16,14 +16,14 @@ enum ProfileGeometry: Equatable {
 
 struct ProfileGeometryOverlay: View {
     let geometry: ProfileGeometry?
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     var body: some View {
+        let transform = viewport.transform
         Canvas { ctx, size in
             guard let g = geometry else { return }
-            let t = viewport.transform
             let mapping = ViewMapping(
-                transform: t,
+                transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )
@@ -47,7 +47,7 @@ struct ProfileGeometryOverlay: View {
                 drawLabel(ctx: ctx, at: mid, text: String(format: "%.1f px", len), color: stroke)
             case .radial(let center, let maxR), .growth(let center, let maxR):
                 let c = toCanvas(center)
-                let r = CGFloat(t.scale * maxR)
+                let r = CGFloat(transform.scale * maxR)
                 // Centre crosshair.
                 drawTick(ctx: ctx, at: c, color: stroke)
                 // Outer ring at maxRadius.
