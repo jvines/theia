@@ -61,14 +61,31 @@ public enum PixelStatistics {
         maxIters: Int = 5,
         rejectionSigma: Double = 2.5
     ) -> (z1: Double, z2: Double)? {
+        zscaleSampled(
+            pixelCount: values.count, contrast: contrast, nSamples: nSamples,
+            maxIters: maxIters, rejectionSigma: rejectionSigma
+        ) { values[$0] }
+    }
+
+    /// Run zscale by reading at most `nSamples` source pixels. The caller can
+    /// provide a memory-mapped image without materializing its full pixel array.
+    public static func zscaleSampled(
+        pixelCount: Int,
+        contrast: Double = 0.25,
+        nSamples: Int = 600,
+        maxIters: Int = 5,
+        rejectionSigma: Double = 2.5,
+        sampleAt: (Int) -> Double
+    ) -> (z1: Double, z2: Double)? {
+        guard pixelCount > 0, nSamples > 0 else { return nil }
         // Stride-sample NaN-free pixels so the sample spans the input.
         var sample = [Double]()
-        sample.reserveCapacity(min(nSamples, values.count))
-        let nPix = values.count
+        sample.reserveCapacity(min(nSamples, pixelCount))
+        let nPix = pixelCount
         let stride = max(1, Int((Double(nPix) / Double(nSamples)).rounded(.up)))
         var i = 0
         while i < nPix && sample.count < nSamples {
-            let v = values[i]
+            let v = sampleAt(i)
             if !v.isNaN { sample.append(v) }
             i += stride
         }

@@ -228,7 +228,9 @@ public struct FITSImage: Sendable {
 
     /// Default display range via IRAF zscale.
     public func defaultRange(contrast: Double = 0.25) -> (z1: Double, z2: Double)? {
-        PixelStatistics.zscale(physicalValues(), contrast: contrast)
+        PixelStatistics.zscaleSampled(pixelCount: width * height, contrast: contrast) { index in
+            physicalValue(x: index % width, y: index / width)
+        }
     }
 
     /// How to combine values along the planes of a cube into a single 2D image.

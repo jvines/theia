@@ -71,6 +71,19 @@ final class PixelStatisticsTests: XCTestCase {
         XCTAssertEqual(r!.z2, 600.0, accuracy: 2.0)
     }
 
+    func testZScaleSamplesSourceWithoutReadingEveryPixel() {
+        let values = (0..<12_000).map { Double($0 % 301) }
+        var reads = 0
+        let sampled = PixelStatistics.zscaleSampled(pixelCount: values.count) { index in
+            reads += 1
+            return values[index]
+        }
+        let arrayResult = PixelStatistics.zscale(values)
+        XCTAssertEqual(sampled?.z1, arrayResult?.z1)
+        XCTAssertEqual(sampled?.z2, arrayResult?.z2)
+        XCTAssertLessThanOrEqual(reads, 600)
+    }
+
     func testEqualizeMapsValueToCDFEntry() {
         // 10 bins of 1 count each over [0,10]. CDF = [.1, .2, ..., 1.0].
         let h = Histogram(counts: Array(repeating: 1, count: 10), edges: (0...10).map(Double.init))
