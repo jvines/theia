@@ -449,6 +449,51 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testSixtyHertzPulsesDeliverThirtyFramesPerSecond() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let start = Date(timeIntervalSince1970: 0)
+            session.setFPS(30)
+            session.setPlaying(true, now: start)
+            for pulse in 1...60 {
+                session.tick(now: start.addingTimeInterval(Double(pulse) / 60))
+            }
+            XCTAssertGreaterThanOrEqual(session.imageRevision, 29)
+        }
+    }
+
+    func testFrameDriverRunsOnlyWhilePlaybackOrBlinkIsActive() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var starts = 0
+            var stops = 0
+            let driver = SessionFrameDriver(
+                session: session,
+                startPulses: { starts += 1 }, stopPulses: { stops += 1 }
+            )
+            XCTAssertFalse(driver.isRunning)
+            let start = Date(timeIntervalSince1970: 0)
+            session.setFPS(30)
+            session.setPlaying(true, now: start)
+            XCTAssertTrue(driver.isRunning)
+            XCTAssertEqual(starts, 1)
+            driver.pulse(now: start.addingTimeInterval(0.04))
+            XCTAssertEqual(session.plane, 1)
+            session.setPlaying(false)
+            XCTAssertFalse(driver.isRunning)
+            XCTAssertEqual(stops, 1)
+            session.toggleBlink(now: start)
+            XCTAssertTrue(driver.isRunning)
+            XCTAssertEqual(starts, 2)
+            session.toggleBlink(now: start)
+            XCTAssertFalse(driver.isRunning)
+            XCTAssertEqual(stops, 2)
+            driver.close()
+            session.setPlaying(true, now: start)
+            XCTAssertEqual(starts, 2)
+        }
+    }
+
     func testPlaybackRateAcceptsOnlyOneToThirtyFramesPerSecond() async throws {
         try await MainActor.run {
             let session = try makeSession()

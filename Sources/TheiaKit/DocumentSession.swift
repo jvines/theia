@@ -361,10 +361,15 @@ public struct HDUFacts {
             if hdu != target { selectHDU(target) }
         }
         let planeCount = facts[hdu].planeCount
-        guard playing, planeCount > 1,
-              now.timeIntervalSince(lastPlaneAdvance) >= 1 / fps else { return }
+        guard playing, planeCount > 1 else { return }
+        let interval = 1 / fps
+        let elapsed = now.timeIntervalSince(lastPlaneAdvance)
+        let completedIntervals = Int((elapsed + interval * 1e-6) / interval)
+        guard completedIntervals >= 1 else { return }
         selectPlane((plane + 1) % planeCount)
-        lastPlaneAdvance = now
+        // Keep the fractional remainder so a display pulse just past the
+        // threshold does not lower the average playback rate.
+        lastPlaneAdvance = lastPlaneAdvance.addingTimeInterval(Double(completedIntervals) * interval)
     }
 
     public func selectHDU(_ index: Int) {

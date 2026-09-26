@@ -11,12 +11,22 @@ final class DocumentWindowController: NSWindowController {
     let documentModel: DocumentModel
     let toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
+    private let pulseSource: PlaybackDisplayLink
+    private let frameDriver: SessionFrameDriver
 
     init(document: DocumentModel) {
         self.documentModel = document
         let state = ToolbarState()
         self.toolbarState = state
         self.toolbarController = FITSToolbarController(state: state)
+        let pulseSource = PlaybackDisplayLink()
+        self.pulseSource = pulseSource
+        let frameDriver = SessionFrameDriver(
+            session: document.session,
+            startPulses: { pulseSource.start() },
+            stopPulses: { pulseSource.stop() }
+        )
+        self.frameDriver = frameDriver
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
@@ -32,6 +42,7 @@ final class DocumentWindowController: NSWindowController {
         window.center()
         window.setFrameAutosaveName("FITSViewerDocumentWindow")
         super.init(window: window)
+        pulseSource.onPulse = { [weak frameDriver] now in frameDriver?.pulse(now: now) }
 
         let toolbar = toolbarController.makeToolbar()
         window.toolbar = toolbar
@@ -60,6 +71,8 @@ extension DocumentWindowController {
 
 extension DocumentWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        frameDriver.close()
+        pulseSource.stop()
         WindowSyncCoordinator.shared.unregister(self)
         AppDelegate.shared?.controllerDidClose(self)
     }

@@ -113,8 +113,6 @@ struct DocumentView: View {
         Binding(get: { selectedPlane }, set: { selectedPlane = $0 })
     }
 
-    private static let blinkTickRate: TimeInterval = 0.05
-
     init(document: DocumentModel,
          toolbarState: ToolbarState,
          toolbarController: FITSToolbarController) {
@@ -167,10 +165,6 @@ struct DocumentView: View {
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }
-            .onReceive(
-                Timer.publish(every: Self.blinkTickRate, on: .main, in: .common).autoconnect(),
-                perform: { session.tick(now: $0) }
-            )
             .focusable()
             .focusEffectDisabled()
             .onKeyPress(.leftArrow, phases: .down) { press in
