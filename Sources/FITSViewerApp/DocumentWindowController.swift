@@ -63,9 +63,9 @@ final class DocumentWindowController: NSWindowController {
 }
 
 extension DocumentWindowController {
-    func regionsForScripting() -> [Region] { documentModel.regionsBridge }
-    func setRegionsForScripting(_ regs: [Region]) { documentModel.setRegions(regs) }
-    func currentOverrideImage() -> FITSImage? { documentModel.currentImageProvider() }
+    func regionsForScripting() -> [Region] { documentModel.session.regions }
+    func setRegionsForScripting(_ regs: [Region]) { documentModel.session.regions = regs }
+    func currentOverrideImage() -> FITSImage? { documentModel.session.displayed }
 }
 
 extension DocumentWindowController: NSWindowDelegate {

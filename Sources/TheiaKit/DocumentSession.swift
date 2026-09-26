@@ -62,6 +62,23 @@ public struct HDUFacts {
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""
     public private(set) var derived: DerivedImage?
+    public var regions: [Region] = [] {
+        didSet {
+            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
+                self.selectedRegionIndex = nil
+            }
+            if regions.isEmpty { previewRegion = nil }
+        }
+    }
+    public var selectedRegionIndex: Int? {
+        didSet {
+            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
+                self.selectedRegionIndex = nil
+            }
+        }
+    }
+    public var previewRegion: Region?
+    public var remoteCrosshair: SIMD2<Double>?
     public var imageRevision: Int { view.imageRevision }
 
     private struct ImageKey: Hashable {

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import Observation
 import FITSCore
 @testable import TheiaKit
 
@@ -75,6 +76,37 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.facts[5].planeCount, 4)
             session.selectPlane(3)
             XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 12)
+        }
+    }
+
+    func testRegionsSelectionPreviewAndRemoteCrosshairBelongToSession() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 1, y: 2)), frame: .image)
+            session.regions = [region]
+            session.selectedRegionIndex = 0
+            session.previewRegion = region
+            session.remoteCrosshair = SIMD2(3, 4)
+
+            XCTAssertEqual(session.regions, [region])
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertEqual(session.previewRegion, region)
+            XCTAssertEqual(session.remoteCrosshair, SIMD2(3, 4))
+
+            session.selectedRegionIndex = 99
+            XCTAssertNil(session.selectedRegionIndex)
+            session.selectedRegionIndex = 0
+
+            var regionChangeObserved = false
+            withObservationTracking {
+                _ = session.regions
+            } onChange: {
+                regionChangeObserved = true
+            }
+            session.regions = []
+            XCTAssertTrue(regionChangeObserved)
+            XCTAssertNil(session.selectedRegionIndex)
+            XCTAssertNil(session.previewRegion)
         }
     }
 

@@ -6,7 +6,7 @@ import FITSRender
 import TheiaKit
 
 struct DocumentView: View {
-    @ObservedObject var document: DocumentModel
+    let document: DocumentModel
     @ObservedObject var toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
 
@@ -22,9 +22,6 @@ struct DocumentView: View {
     @State private var contourSegments: [Contours.LeveledSegments] = []
     @State private var profileGeometry: ProfileGeometry? = nil
     @State private var drawMode: DrawMode = .pan
-    @State private var regions: [Region] = []
-    @State private var selectedRegionIndex: Int? = nil
-    @State private var previewRegion: Region? = nil
     @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
@@ -38,6 +35,21 @@ struct DocumentView: View {
     private var colorMap: ColorMap {
         get { session.view.colorMap }
         nonmutating set { session.view.colorMap = newValue }
+    }
+    private var regions: [Region] {
+        get { session.regions }
+        nonmutating set { session.regions = newValue }
+    }
+    private var selectedRegionIndex: Int? {
+        get { session.selectedRegionIndex }
+        nonmutating set { session.selectedRegionIndex = newValue }
+    }
+    private var previewRegion: Region? {
+        get { session.previewRegion }
+        nonmutating set { session.previewRegion = newValue }
+    }
+    private var regionsBinding: Binding<[Region]> {
+        Binding(get: { session.regions }, set: { session.regions = $0 })
     }
 
     private var selectedHDU: Int {
@@ -110,7 +122,7 @@ struct DocumentView: View {
                 Divider()
                 InspectorPanel(
                     header: hdu.header,
-                    regions: $regions,
+                    regions: regionsBinding,
                     imageProvider: { currentImage() },
                     wcsProvider: { session.displayedWCS }
                 )
@@ -177,11 +189,7 @@ struct DocumentView: View {
             .onAppear {
                 loadSessionIfPresent()
                 syncToolbarState()
-                document.regionsBridge = regions
-                document.setRegions = { regs in regions = regs }
-                refreshCurrentImageProvider()
             }
-            .onChange(of: regions) { _, new in document.regionsBridge = new }
             .background(
                 SessionAutosaveWatcher(
                     regions: regions, stretch: stretch, colorMap: colorMap, drawMode: drawMode,
@@ -922,7 +930,7 @@ extension DocumentView {
             onCubeSpectrumAt: { p in handleCubeSpectrum(at: p) },
             onRegionContextMenu: { idx, event in showRegionContextMenu(index: idx, event: event) },
             onProfileDragPreview: { preview in handleProfileDragPreview(preview) },
-            remoteCrosshair: document.remoteCrosshair,
+            remoteCrosshair: session.remoteCrosshair,
             profileGeometry: profileGeometry
         )
     }
@@ -1201,10 +1209,6 @@ extension DocumentView {
         let levels = DocumentSession.recommendedLevels(for: image)
         viewport.vmin = levels.vmin
         viewport.vmax = levels.vmax
-    }
-
-    fileprivate func refreshCurrentImageProvider() {
-        document.currentImageProvider = { [session] in session.displayed }
     }
 
     fileprivate func snapshotSession() -> SessionState {

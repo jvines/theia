@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = controller.documentModel
         let toolbar = controller.toolbarState
         let viewport = model.session.view
-        guard let image = model.currentImageProvider() else { NSSound.beep(); return }
+        guard let image = model.session.displayed else { NSSound.beep(); return }
         let bytes = ImageExport.render(
             image,
             stretch: toolbar.stretch,
