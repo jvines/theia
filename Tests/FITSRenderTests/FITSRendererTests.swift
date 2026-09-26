@@ -61,6 +61,18 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(renderer.displayImage?.pixels, [7])
     }
 
+    func testRendererAcceptsDisplayBuiltByCaller() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(pixels: [1, 2], width: 2, height: 1)
+        let display = DisplayImage(image: image, revision: 17)
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setDisplayImage(display, sourceImage: image)
+        XCTAssertEqual(renderer.displayImage?.revision, 17)
+        XCTAssertEqual(renderer.texture?.width, 2)
+    }
+
     func testHistogramCDFTracksDisplayLevels() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("No Metal device")
@@ -98,6 +110,105 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertGreaterThan(renderer.vmax, renderer.vmin)
     }
 
+    func testOversizeImageUsesCPURasterFallback() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(
+            pixels: [Float](repeating: 1, count: 20_000 * 10), width: 20_000, height: 10
+        )
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image, revision: 9)
+        XCTAssertNil(renderer.texture)
+        XCTAssertEqual(renderer.displayImage?.revision, 9)
+        XCTAssertTrue(renderer.usesViewportRaster)
+    }
+
+    func testOffscreenMetalMatchesCPURasterAcrossStretchesMapsAndTransforms() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(
+            pixels: [0, 1, 2, 3, 4, 5, .nan, .infinity, -.infinity, 2, 1, 0],
+            width: 4, height: 3
+        )
+        let viewport = ViewportObservable()
+        let renderer = try FITSRenderer(device: device, viewport: viewport)
+        try renderer.setImage(image, revision: 1)
+        renderer.vmin = 0
+        renderer.vmax = 5
+        renderer.stretchParameter = 0.3
+        let size = CGSize(width: 8, height: 6)
+        let transforms = [
+            ViewTransform(scale: 2, centre: SIMD2(1.5, 1)),
+            ViewTransform(scale: 1, centre: SIMD2(1.5, 1)),
+            ViewTransform(scale: 0.5, centre: SIMD2(1.5, 1)),
+            ViewTransform(scale: 1.37, centre: SIMD2(0.72, 1.18)),
+        ]
+        for transform in transforms {
+            renderer.transform = transform
+            let mapping = ViewMapping(
+                transform: transform, viewSize: SIMD2(8, 6), backingScale: 1
+            )
+            for stretch in ImageStretch.allCases {
+                renderer.stretch = stretch
+                for colorMap in ColorMap.allCases {
+                    renderer.colorMap = colorMap
+                    let gpu = try renderer.renderOffscreen(viewSize: size, backingScale: 1)
+                    let cpu = ViewportRasterizer.renderViewport(
+                        try XCTUnwrap(renderer.displayImage), mapping: mapping,
+                        width: 8, height: 6, stretch: stretch,
+                        levels: RasterLevels(vmin: 0, vmax: 5), colorMap: colorMap,
+                        parameter: 0.3
+                    )
+                    for i in cpu.bytes.indices {
+                        let error = abs(Int(gpu.bytes[i]) - Int(cpu.bytes[i]))
+                        XCTAssertLessThanOrEqual(error, stretch == .linear ? 0 : 1,
+                                                 "\(stretch) \(colorMap) \(transform) byte \(i)")
+                    }
+                }
+            }
+        }
+    }
+
+    func testOversizeFallbackActuallyDrawsViewport() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(
+            pixels: [Float](repeating: 1, count: 20_000 * 10), width: 20_000, height: 10
+        )
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image, revision: 1)
+        renderer.vmin = 0
+        renderer.vmax = 1
+        renderer.transform = ViewTransform(scale: 1, centre: SIMD2(9_999.5, 4.5))
+        let gpu = try renderer.renderOffscreen(viewSize: CGSize(width: 8, height: 8), backingScale: 1)
+        XCTAssertEqual(gpu.pixel(x: 4, y: 4), RGBA8(r: 255, g: 255, b: 255))
+    }
+
+    func testRetinaDeviceCentresMatchCPURaster() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3], width: 2, height: 2)
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image, revision: 1)
+        renderer.vmin = 0
+        renderer.vmax = 3
+        renderer.colorMap = .plasma
+        let transform = ViewTransform(scale: 1.37, centre: SIMD2(0.45, 0.53))
+        renderer.transform = transform
+        let gpu = try renderer.renderOffscreen(viewSize: CGSize(width: 5, height: 5), backingScale: 2)
+        let cpu = ViewportRasterizer.renderViewport(
+            try XCTUnwrap(renderer.displayImage),
+            mapping: ViewMapping(transform: transform, viewSize: SIMD2(5, 5), backingScale: 2),
+            width: 10, height: 10, stretch: .linear,
+            levels: RasterLevels(vmin: 0, vmax: 3), colorMap: .plasma
+        )
+        XCTAssertEqual(gpu.bytes, cpu.bytes)
+    }
+
     func testResizePreservesUserZoom() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("No Metal device")
@@ -119,19 +230,6 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(renderer.transform.centre, pannedCentre)
     }
 
-    func testMetalProjectionPlacesTexelCentreOnMappedImagePoint() {
-        let transform = ViewTransform(scale: 6, centre: SIMD2(0.75, 0.25))
-        let viewSize = SIMD2(20.0, 20.0)
-        let mapping = ViewMapping(transform: transform, viewSize: viewSize, backingScale: 1)
-        let matrix = FITSRenderer.modelViewProjection(
-            imageSize: SIMD2(2.0, 2.0), viewSize: viewSize, transform: transform
-        )
-        let clip = matrix * SIMD4<Float>(0.25, 0.25, 0, 1)
-        let metalViewYUp = SIMD2(Double((clip.x + 1) * 10), Double((clip.y + 1) * 10))
-        let mapped = mapping.imageToViewYUp(SIMD2(0.0, 0.0))
-        XCTAssertEqual(metalViewYUp.x, mapped.x, accuracy: 1e-6)
-        XCTAssertEqual(metalViewYUp.y, mapped.y, accuracy: 1e-6)
-    }
 }
 
 enum MakeFITS {

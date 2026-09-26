@@ -2,6 +2,7 @@ import SwiftUI
 import MetalKit
 import simd
 import FITSCore
+import FITSRaster
 import TheiaKit
 
 /// SwiftUI wrapper around an `MTKView` driven by `FITSRenderer`, with mouse drag pan,
@@ -90,7 +91,6 @@ public struct FITSMetalView: NSViewRepresentable {
                 let renderer = try FITSRenderer(device: device, viewport: viewport)
                 renderer.stretch = stretch
                 renderer.colorMap = colorMap
-                try renderer.setImage(image, revision: imageRevision)
                 view.delegate = renderer
                 view.fitsRenderer = renderer
                 view.onCursorChange = onCursorChange
@@ -111,6 +111,7 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.wcs = wcs
                 view.drawMode = drawMode
                 context.coordinator.renderer = renderer
+                context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
             } catch {
                 print("FITSRenderer init failed: \(error)")
             }
@@ -123,6 +124,7 @@ public struct FITSMetalView: NSViewRepresentable {
         renderer.stretch = stretch
         renderer.colorMap = colorMap
         renderer.stretchParameter = viewport.stretchParameter
+        context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
         view.onCursorChange = onCursorChange
         view.onRegionCreated = onRegionCreated
         view.onRegionPreview = onRegionPreview
@@ -143,6 +145,36 @@ public struct FITSMetalView: NSViewRepresentable {
     public final class Coordinator {
         var renderer: FITSRenderer?
         var lastResetTrigger: Int = 0
+        private var requestedRevision: Int?
+        private var displayTask: Task<Void, Never>?
+
+        func requestDisplay(_ image: FITSImage, revision: Int, view: InteractiveMTKView) {
+            guard requestedRevision != revision, let renderer else { return }
+            requestedRevision = revision
+            displayTask?.cancel()
+            displayTask = Task.detached(priority: .userInitiated) { [weak self, weak view, weak renderer] in
+                let display = DisplayImage(image: image, revision: revision)
+                guard !Task.isCancelled else { return }
+                await self?.applyDisplay(
+                    display, sourceImage: image, revision: revision, view: view, renderer: renderer
+                )
+            }
+        }
+
+        @MainActor
+        private func applyDisplay(
+            _ display: DisplayImage, sourceImage: FITSImage, revision: Int,
+            view: InteractiveMTKView?, renderer: FITSRenderer?
+        ) {
+            guard requestedRevision == revision,
+                  let view, let renderer, view.fitsRenderer === renderer else { return }
+            do {
+                try renderer.setDisplayImage(display, sourceImage: sourceImage)
+                view.setNeedsDisplay(view.bounds)
+            } catch {
+                NSLog("FITS display upload failed: \(error)")
+            }
+        }
     }
 }
 

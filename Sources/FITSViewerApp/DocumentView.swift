@@ -11,6 +11,7 @@ struct DocumentView: View {
 
     @State private var selectedHDU: Int
     @State private var selectedPlane: Int = 0
+    @State private var imageRevision: Int = 0
     @State private var planePlaying: Bool = false
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
@@ -157,7 +158,7 @@ struct DocumentView: View {
                 syncToolbarState()
                 document.regionsBridge = regions
                 document.setRegions = { regs in regions = regs }
-                document.currentImageProvider = { displayOverride?.image ?? currentImage() }
+                refreshCurrentImageProvider()
             }
             .onChange(of: regions) { _, new in document.regionsBridge = new }
             .background(
@@ -173,8 +174,9 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
-            .onChange(of: selectedHDU)   { _, _ in recomputeContours() }
-            .onChange(of: selectedPlane) { _, _ in recomputeContours() }
+            .onChange(of: selectedHDU)   { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
+            .onChange(of: selectedPlane) { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
+            .onChange(of: displayOverride) { _, _ in imageRevision += 1; refreshCurrentImageProvider() }
     }
 
     /// Aggregate of every value that should trigger a toolbar refresh. Hashable
@@ -384,6 +386,7 @@ struct StatusBar: View {
 struct FITSImageView: View {
     let hdu: FITSHDU
     let plane: Int
+    let imageRevision: Int
     let displayOverride: DisplayOverride?
     let stretch: ImageStretch
     let colorMap: ColorMap
@@ -431,7 +434,7 @@ struct FITSImageView: View {
             ZStack {
                 FITSMetalView(
                     image: image,
-                    imageRevision: 0,
+                    imageRevision: imageRevision,
                     stretch: stretch,
                     colorMap: colorMap,
                     viewport: viewport,
@@ -817,12 +820,13 @@ extension Array {
 }
 
 struct DisplayOverride: Equatable {
+    let id = UUID()
     let image: FITSImage
     let wcs: WCS?
     let label: String
 
     static func == (lhs: DisplayOverride, rhs: DisplayOverride) -> Bool {
-        lhs.label == rhs.label
+        lhs.id == rhs.id
     }
 }
 
@@ -904,6 +908,7 @@ extension DocumentView {
         FITSImageView(
             hdu: hdu,
             plane: selectedPlane,
+            imageRevision: imageRevision,
             displayOverride: displayOverride,
             stretch: stretch,
             colorMap: colorMap,
@@ -1206,6 +1211,10 @@ extension DocumentView {
         guard let hdu = document.file.hdus[safe: selectedHDU] else { return nil }
         let plane = hdu.planeCount > 1 ? selectedPlane : 0
         return try? FITSImage(hdu: hdu, plane: plane)
+    }
+
+    fileprivate func refreshCurrentImageProvider() {
+        document.currentImageProvider = { displayOverride?.image ?? currentImage() }
     }
 
     fileprivate func snapshotSession() -> SessionState {

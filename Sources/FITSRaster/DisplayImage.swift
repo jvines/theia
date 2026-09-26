@@ -10,6 +10,7 @@ public struct DisplayImage: Sendable {
     public let pixels: [Float]
     /// A deterministic sample for rebuilding the display CDF as levels change.
     public let sortedFiniteSample: [Float]
+    public let initialLevels: RasterLevels
 
     public init(image: FITSImage, revision: Int) {
         self.width = image.width
@@ -18,6 +19,13 @@ public struct DisplayImage: Sendable {
         let pixels = image.normalizedFloat32()
         self.pixels = pixels
         self.sortedFiniteSample = Self.makeSortedFiniteSample(pixels)
+        if let range = image.defaultRange() {
+            self.initialLevels = RasterLevels(vmin: Float(range.z1), vmax: Float(range.z2))
+        } else if let first = sortedFiniteSample.first, let last = sortedFiniteSample.last {
+            self.initialLevels = RasterLevels(vmin: first, vmax: last)
+        } else {
+            self.initialLevels = RasterLevels(vmin: 0, vmax: 1)
+        }
     }
 
     private static func makeSortedFiniteSample(_ pixels: [Float]) -> [Float] {

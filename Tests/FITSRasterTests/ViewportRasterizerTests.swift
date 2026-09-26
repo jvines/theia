@@ -69,4 +69,16 @@ final class ViewportRasterizerTests: XCTestCase {
         )
         XCTAssertEqual(raster.pixel(x: 2, y: 0), RGBA8(r: 255, g: 255, b: 255))
     }
+
+    func testAllNaNPlaneRendersOpaqueBlack() {
+        let display = DisplayImage(
+            image: FITSImage.fromFloat32(pixels: [.nan, .nan], width: 2, height: 1), revision: 4
+        )
+        XCTAssertTrue(display.sortedFiniteSample.isEmpty)
+        let raster = ViewportRasterizer.renderNative(
+            display, stretch: .histogramEq,
+            levels: RasterLevels(vmin: .nan, vmax: .nan), colorMap: .magma
+        )
+        XCTAssertEqual(raster.bytes, [0, 0, 0, 255, 0, 0, 0, 255])
+    }
 }

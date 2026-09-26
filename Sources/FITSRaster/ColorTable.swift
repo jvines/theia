@@ -27,12 +27,30 @@ import FITSCore
 public struct ColorTable: Sendable {
     public let entries: [RGBA8]
 
+    public static func cached(_ map: ColorMap) -> ColorTable {
+        switch map {
+        case .gray: return gray
+        case .invertedGray: return invertedGray
+        case .viridis: return viridis
+        case .magma: return magma
+        case .plasma: return plasma
+        }
+    }
+
+    private static let gray = ColorTable(map: .gray)
+    private static let invertedGray = ColorTable(map: .invertedGray)
+    private static let viridis = ColorTable(map: .viridis)
+    private static let magma = ColorTable(map: .magma)
+    private static let plasma = ColorTable(map: .plasma)
+
     public init(map: ColorMap) {
-        let reference = (0...8192).map { RGBA8(map.sample(Float($0) / 8192)) }
+        let reference = (0...65_536).map { RGBA8(map.sample(Float($0) / 65_536)) }
         var size = 2
         while true {
             let entries = (0..<size).map { RGBA8(map.sample(Float($0) / Float(size - 1))) }
-            if Self.adjacentWithinOneLSB(entries), Self.sweepWithinOneLSB(entries, reference) {
+            if Self.adjacentWithinOneLSB(entries),
+               Self.uniformSweepWithinOneLSB(entries, reference),
+               Self.intervalSweepWithinOneLSB(entries, map: map) {
                 self.entries = entries
                 return
             }
@@ -54,11 +72,25 @@ public struct ColorTable: Sendable {
         return true
     }
 
-    private static func sweepWithinOneLSB(_ entries: [RGBA8], _ reference: [RGBA8]) -> Bool {
+    private static func uniformSweepWithinOneLSB(_ entries: [RGBA8], _ reference: [RGBA8]) -> Bool {
         for i in reference.indices {
             let n = Float(i) / Float(reference.count - 1)
             let index = Int((n * Float(entries.count - 1) + 0.5).rounded(.down))
             if !withinOneLSB(entries[index], reference[i]) { return false }
+        }
+        return true
+    }
+
+    private static func intervalSweepWithinOneLSB(_ entries: [RGBA8], map: ColorMap) -> Bool {
+        // Check inside each lookup interval, especially around the midpoint
+        // where the nearest-entry decision changes. A fixed uniform sweep can
+        // align with entries and miss the largest errors.
+        for i in 0..<(entries.count - 1) {
+            for fraction in [Float(0.25), 0.49, 0.5, 0.51, 0.75] {
+                let n = (Float(i) + fraction) / Float(entries.count - 1)
+                let index = Int((n * Float(entries.count - 1) + 0.5).rounded(.down))
+                if !withinOneLSB(entries[index], RGBA8(map.sample(n))) { return false }
+            }
         }
         return true
     }

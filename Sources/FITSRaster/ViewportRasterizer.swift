@@ -8,6 +8,14 @@ public struct RasterImage: Sendable {
     public let height: Int
     public let bytes: [UInt8]
 
+    public init(width: Int, height: Int, bytes: [UInt8]) {
+        precondition(width > 0 && height > 0 && width <= Int.max / 4 / height)
+        precondition(bytes.count == width * height * 4)
+        self.width = width
+        self.height = height
+        self.bytes = bytes
+    }
+
     public func pixel(x: Int, y: Int) -> RGBA8 {
         precondition((0..<width).contains(x) && (0..<height).contains(y))
         let offset = (y * width + x) * 4
@@ -35,33 +43,28 @@ public enum ViewportRasterizer {
         let outputWidth = 1 + (width - 1) / sampleStep
         let outputHeight = 1 + (height - 1) / sampleStep
         precondition(outputWidth <= Int.max / 4 / outputHeight)
-        let table = ColorTable(map: colorMap)
+        let table = ColorTable.cached(colorMap)
         let cdf = stretch == .histogramEq
             ? RasterCDF.make(sortedFiniteSample: display.sortedFiniteSample, levels: levels)
             : nil
 
-        let scale = Float(mapping.transform.scale)
-        let backing = Float(mapping.backingScale)
-        let deviceStep = Float(sampleStep) / (backing * scale)
-        let firstView = Float(sampleStep) * 0.5 / backing
-        let x0 = Float(mapping.transform.centre.x) + (firstView - Float(mapping.viewSize.x) * 0.5) / scale
-        let y0 = Float(mapping.transform.centre.y) - (firstView - Float(mapping.viewSize.y) * 0.5) / scale
+        let coordinates = RasterCoordinateMapping(mapping, sampleStep: sampleStep)
         var bytes = [UInt8](repeating: 0, count: outputWidth * outputHeight * 4)
         bytes.withUnsafeMutableBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
             let workers = min(outputHeight, ProcessInfo.processInfo.activeProcessorCount)
             DispatchQueue.concurrentPerform(iterations: workers) { worker in
                 for row in stride(from: worker, to: outputHeight, by: workers) {
-                    var imageY = fma(-Float(row), deviceStep, y0)
+                    var imageY = coordinates.imageY(row: row)
                     let remainingRows = height - row * sampleStep
                     if remainingRows < sampleStep {
-                        imageY -= Float(remainingRows - sampleStep) * 0.5 / (backing * scale)
+                        imageY -= Float(remainingRows - sampleStep) * 0.5 / (coordinates.backing * coordinates.scale)
                     }
                     for column in 0..<outputWidth {
-                        var imageX = fma(Float(column), deviceStep, x0)
+                        var imageX = coordinates.imageX(column: column)
                         let remainingColumns = width - column * sampleStep
                         if remainingColumns < sampleStep {
-                            imageX += Float(remainingColumns - sampleStep) * 0.5 / (backing * scale)
+                            imageX += Float(remainingColumns - sampleStep) * 0.5 / (coordinates.backing * coordinates.scale)
                         }
                         let color: RGBA8
                         if imageX.isFinite, imageY.isFinite,

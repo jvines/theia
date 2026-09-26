@@ -39,4 +39,48 @@ final class RasterStretchTests: XCTestCase {
         XCTAssertEqual(RasterStretch.apply(1, stretch: .histogramEq, levels: levels, cdf: cdf), cdf[85])
         XCTAssertEqual(RasterCDF.make(sortedFiniteSample: [], levels: levels), [Float](repeating: 0, count: 256))
     }
+
+    func testDenseFloatRasterColorAgainstDoubleReference() {
+        let levels = RasterLevels(vmin: 0, vmax: 1)
+        let values = (0...4096).map { Float($0) / 4096 } +
+            (0...256).map { Float(pow(10.0, -12.0 + Double($0) * 12.0 / 256.0)) }
+        let sample: [Float] = [0, 0.1, 0.1, 0.4, 0.9, 1]
+        let cdf = RasterCDF.make(sortedFiniteSample: sample, levels: levels)
+        for map in ColorMap.allCases {
+            let table = ColorTable(map: map)
+            for stretch in ImageStretch.allCases {
+                let parameters: [Float] = stretch == .power ? [0.1, 0.3, 2, 8] : [2]
+                for parameter in parameters {
+                    for value in values {
+                        let n = RasterStretch.apply(
+                            value, stretch: stretch, levels: levels,
+                            parameter: parameter, cdf: cdf
+                        )
+                        let referenceN = stretch.apply(
+                            Double(value), vmin: 0, vmax: 1,
+                            parameter: Double(parameter), cdf: cdf.map(Double.init)
+                        )
+                        let actual = table.color(for: n)
+                        let expected = RGBA8(map.sample(Float(referenceN)))
+                        let caseLabel = "\(map) \(stretch) p=\(parameter) value=\(value) n=\(n) expectedN=\(referenceN) table=\(table.entries.count) actual=\(actual) expected=\(expected)"
+                        XCTAssertLessThanOrEqual(abs(Int(actual.r) - Int(expected.r)), 1, caseLabel)
+                        XCTAssertLessThanOrEqual(abs(Int(actual.g) - Int(expected.g)), 1, caseLabel)
+                        XCTAssertLessThanOrEqual(abs(Int(actual.b) - Int(expected.b)), 1, caseLabel)
+                    }
+                }
+            }
+        }
+    }
+
+    func testLevelCDFMatchesFullImageHistogramOnFixture() {
+        let values = (0..<4096).map { Float(($0 * 37) % 101) }
+        let levels = RasterLevels(vmin: 10, vmax: 90)
+        let sampled = RasterCDF.make(sortedFiniteSample: values.sorted(), levels: levels)
+        let full = PixelStatistics.histogram(
+            values.map(Double.init), bins: 256, range: 10...90
+        ).cdf()
+        for i in 0..<256 {
+            XCTAssertEqual(Double(sampled[i]), full[i], accuracy: 1.0 / 255.0)
+        }
+    }
 }

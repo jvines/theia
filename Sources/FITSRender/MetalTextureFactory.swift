@@ -7,12 +7,16 @@ public enum RenderError: Error {
     case textureCreationFailed
     case metalUnavailable
     case shaderCompilationFailed(String)
+    case renderFailed
 }
 
 public enum MetalTextureFactory {
     /// Uploads the image's physical pixel values into a single-channel `r32Float`
     /// 2D texture, preserving NaN (from BLANK / float NaN) for downstream stretches.
     public static func makeTexture(from image: DisplayImage, device: MTLDevice) throws -> MTLTexture {
+        guard image.width <= 16_384, image.height <= 16_384 else {
+            throw RenderError.textureCreationFailed
+        }
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r32Float,
             width: image.width,
