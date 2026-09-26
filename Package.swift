@@ -109,7 +109,13 @@ let package = Package(
             dependencies: ["CFITSIO"],
             path: "Sources/FITSCore"
         ),
-        .target(name: "FITSRaster", dependencies: ["FITSCore"], path: "Sources/FITSRaster"),
+        .target(
+            name: "CZlib",
+            path: "Sources/CZlib",
+            publicHeadersPath: "include",
+            linkerSettings: [.linkedLibrary("z")]
+        ),
+        .target(name: "FITSRaster", dependencies: ["FITSCore", "CZlib"], path: "Sources/FITSRaster"),
         .target(name: "TheiaKit", dependencies: ["FITSRaster"], path: "Sources/TheiaKit"),
         .testTarget(
             name: "FITSCoreTests",
@@ -117,7 +123,7 @@ let package = Package(
             path: "Tests/FITSCoreTests",
             resources: [.copy("Fixtures")]
         ),
-        .testTarget(name: "FITSRasterTests", dependencies: ["FITSRaster"], path: "Tests/FITSRasterTests"),
+        .testTarget(name: "FITSRasterTests", dependencies: ["FITSRaster", "CZlib"], path: "Tests/FITSRasterTests"),
         .testTarget(name: "TheiaKitTests", dependencies: ["TheiaKit"], path: "Tests/TheiaKitTests"),
         .testTarget(
             name: "XPABridgeTests",

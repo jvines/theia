@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import FITSCore
 @testable import FITSRender
 
@@ -46,6 +47,37 @@ final class ImageExportTests: XCTestCase {
         XCTAssertEqual(bytes[5], 0)
         XCTAssertEqual(bytes[6], 0)
         XCTAssertEqual(bytes[7], 255)
+    }
+
+    func testRenderUsesSelectedMapAndFITSPixelOrientation() {
+        let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3], width: 2, height: 2)
+        let bytes = ImageExport.render(
+            image, stretch: .linear, vmin: 0, vmax: 3, colorMap: .invertedGray
+        )
+        // Encoded row zero is the image's upper row; FITS (1,1) is lower left.
+        XCTAssertEqual(Array(bytes[0..<4]), [85, 85, 85, 255])
+        XCTAssertEqual(Array(bytes[4..<8]), [0, 0, 0, 255])
+        XCTAssertEqual(Array(bytes[8..<12]), [255, 255, 255, 255])
+    }
+
+    func testPNGAndTIFFDecodeAtNativeResolution() throws {
+        let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3], width: 2, height: 2)
+        for format in [ExportFormat.png, .tiff] {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("theia-export-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: url) }
+            try ImageExport.writeImage(
+                image, stretch: .linear, vmin: 0, vmax: 3, format: format, to: url
+            )
+            let data = try Data(contentsOf: url)
+            let decoded = try XCTUnwrap(NSBitmapImageRep(data: data))
+            XCTAssertEqual(decoded.pixelsWide, 2)
+            XCTAssertEqual(decoded.pixelsHigh, 2)
+            let topLeft = try XCTUnwrap(decoded.colorAt(x: 0, y: 0))
+            let bottomLeft = try XCTUnwrap(decoded.colorAt(x: 0, y: 1))
+            XCTAssertEqual(topLeft.redComponent, 2.0 / 3.0, accuracy: 0.01)
+            XCTAssertEqual(bottomLeft.redComponent, 0, accuracy: 0.01)
+        }
     }
 }
 

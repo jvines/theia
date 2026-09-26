@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import AVFoundation
 import FITSCore
+import FITSRaster
 
 public enum MPEGExportError: Error {
     case noPlanes
@@ -21,6 +22,7 @@ public enum MPEGExport {
         vmin: Double,
         vmax: Double,
         colorMap: ColorMap,
+        parameter: Float = 2,
         fps: Int = 8
     ) throws {
         // The encoder ends with a semaphore wait, so calling this on the main
@@ -34,7 +36,10 @@ public enum MPEGExport {
         for p in 0..<depth {
             let img = try FITSImage(hdu: hdu, plane: p)
             width = img.width; height = img.height
-            let cg = try render(image: img, stretch: stretch, vmin: vmin, vmax: vmax, colorMap: colorMap)
+            let cg = try render(
+                image: img, stretch: stretch, vmin: vmin, vmax: vmax,
+                colorMap: colorMap, parameter: parameter
+            )
             frames.append(cg)
         }
         guard !frames.isEmpty else { throw MPEGExportError.noPlanes }
@@ -43,26 +48,27 @@ public enum MPEGExport {
 
     // MARK: - Frame rendering
 
-    private static func render(image: FITSImage, stretch: ImageStretch, vmin: Double, vmax: Double, colorMap: ColorMap) throws -> CGImage {
+    static func renderFrameBytes(
+        image: FITSImage, stretch: ImageStretch, vmin: Double, vmax: Double,
+        colorMap: ColorMap, parameter: Float
+    ) -> [UInt8] {
+        let display = DisplayImage(image: image, revision: 0)
+        return ViewportRasterizer.renderNative(
+            display, stretch: stretch,
+            levels: RasterLevels(vmin: Float(vmin), vmax: Float(vmax)),
+            colorMap: colorMap, parameter: parameter
+        ).bytes
+    }
+
+    private static func render(
+        image: FITSImage, stretch: ImageStretch, vmin: Double, vmax: Double,
+        colorMap: ColorMap, parameter: Float
+    ) throws -> CGImage {
         let w = image.width, h = image.height
-        var bytes = [UInt8](repeating: 0, count: w * h * 4)
-        for y in 0..<h {
-            for x in 0..<w {
-                let v = image.physicalValue(x: x, y: y)
-                let n = stretch.apply(v, vmin: vmin, vmax: vmax)
-                let i = (y * w + x) * 4
-                if n.isNaN {
-                    bytes[i] = 0; bytes[i+1] = 0; bytes[i+2] = 0; bytes[i+3] = 255
-                } else {
-                    let t = Float(max(0, min(1, n)))
-                    let c = colorMap.sample(t)
-                    bytes[i]   = UInt8(max(0, min(255, c.x * 255)))
-                    bytes[i+1] = UInt8(max(0, min(255, c.y * 255)))
-                    bytes[i+2] = UInt8(max(0, min(255, c.z * 255)))
-                    bytes[i+3] = 255
-                }
-            }
-        }
+        let bytes = renderFrameBytes(
+            image: image, stretch: stretch, vmin: vmin, vmax: vmax,
+            colorMap: colorMap, parameter: parameter
+        )
         let cs = (CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB())
         let info = CGImageAlphaInfo.premultipliedLast.rawValue
         guard let provider = CGDataProvider(data: Data(bytes) as CFData),

@@ -107,11 +107,14 @@ public enum ColorMap: String, CaseIterable, Sendable {
     /// Horner evaluation of a polynomial with vector coefficients. `c[0]` is the
     /// constant term, `c[k]` the coefficient of `t^k`.
     private func horner(_ t: Float, _ c: [SIMD3<Float>]) -> SIMD3<Float> {
-        guard var acc = c.last else { return .zero }
+        guard let last = c.last else { return .zero }
+        var acc = SIMD3<Double>(Double(last.x), Double(last.y), Double(last.z))
+        let x = Double(t)
         for k in stride(from: c.count - 2, through: 0, by: -1) {
-            acc = c[k] + t * acc
+            let term = c[k]
+            acc = SIMD3<Double>(Double(term.x), Double(term.y), Double(term.z)) + x * acc
         }
-        return acc
+        return SIMD3<Float>(Float(acc.x), Float(acc.y), Float(acc.z))
     }
 
     private func clamp(_ v: SIMD3<Float>, _ lo: Float, _ hi: Float) -> SIMD3<Float> {

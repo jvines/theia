@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import FITSCore
+import FITSRaster
 @testable import FITSRender
 
 final class MetalTextureFactoryTests: XCTestCase {
@@ -12,7 +13,9 @@ final class MetalTextureFactoryTests: XCTestCase {
         let data = makeFITS(bitpix: 8, naxis1: 3, naxis2: 2, pixelBytes: Data(pixels))
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
-        let texture = try MetalTextureFactory.makeTexture(from: image, device: device)
+        let texture = try MetalTextureFactory.makeTexture(
+            from: DisplayImage(image: image, revision: 0), device: device
+        )
 
         var readback = [Float](repeating: 0, count: 6)
         let region = MTLRegionMake2D(0, 0, 3, 2)
@@ -37,10 +40,30 @@ final class MetalTextureFactoryTests: XCTestCase {
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
 
-        let texture = try MetalTextureFactory.makeTexture(from: image, device: device)
+        let texture = try MetalTextureFactory.makeTexture(
+            from: DisplayImage(image: image, revision: 0), device: device
+        )
         XCTAssertEqual(texture.width, 2)
         XCTAssertEqual(texture.height, 2)
         XCTAssertEqual(texture.pixelFormat, .r32Float)
+    }
+
+    func testUploadsDisplayImagePixelsIncludingNaN() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(pixels: [1, .nan], width: 2, height: 1)
+        let display = DisplayImage(image: image, revision: 14)
+        let texture = try MetalTextureFactory.makeTexture(from: display, device: device)
+        var readback = [Float](repeating: 0, count: 2)
+        readback.withUnsafeMutableBytes { bytes in
+            texture.getBytes(
+                bytes.baseAddress!, bytesPerRow: 2 * MemoryLayout<Float>.size,
+                from: MTLRegionMake2D(0, 0, 2, 1), mipmapLevel: 0
+            )
+        }
+        XCTAssertEqual(readback[0], 1)
+        XCTAssertTrue(readback[1].isNaN)
     }
 
     // MARK: - Test FITS builder (duplicated from FITSCoreTests since SwiftPM

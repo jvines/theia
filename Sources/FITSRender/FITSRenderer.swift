@@ -3,21 +3,26 @@ import Metal
 import MetalKit
 import simd
 import FITSCore
+import FITSRaster
 import TheiaKit
 
 private struct Vertex {
     var position: SIMD2<Float>
-    var uv: SIMD2<Float>
 }
 
 private struct Uniforms {
-    var mvp: simd_float4x4
     var vmin: Float
     var vmax: Float
     var stretchType: Int32
     var cdfLength: Int32
     var stretchParam: Float
-    var _pad: Float = 0
+    var imageX0: Float
+    var imageY0: Float
+    var deviceStep: Float
+    var imageWidth: Int32
+    var imageHeight: Int32
+    var lutLength: Int32
+    var usesViewportRaster: Int32
 }
 
 extension ImageStretch {
@@ -41,11 +46,12 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
 
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
-    private let samplerState: MTLSamplerState
     private let vertexBuffer: MTLBuffer
 
     public var texture: MTLTexture?
     public private(set) var image: FITSImage?
+    public private(set) var displayImage: DisplayImage?
+    public var usesViewportRaster: Bool { displayImage != nil && texture == nil }
     public let viewport: ViewportObservable
     public var transform: ViewTransform {
         get { viewport.transform }
@@ -73,8 +79,10 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
 
     private var cdfBuffer: MTLBuffer?
     private var cdfLength: Int = 0
-    private var lutTexture: MTLTexture?
-    private let lutSampler: MTLSamplerState
+    private var cdfLevels: RasterLevels?
+    private(set) var currentCDF: [Float] = []
+    private var lutBuffer: MTLBuffer?
+    private var lutLength: Int = 0
 
     public init(
         device: MTLDevice,
@@ -92,7 +100,9 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             throw RenderError.shaderCompilationFailed("Shaders.metal not found in bundle")
         }
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
-        let library = try device.makeLibrary(source: source, options: nil)
+        let compileOptions = MTLCompileOptions()
+        compileOptions.fastMathEnabled = false
+        let library = try device.makeLibrary(source: source, options: compileOptions)
         guard
             let vertexFn = library.makeFunction(name: "vertexMain"),
             let fragmentFn = library.makeFunction(name: "fragmentMain")
@@ -106,32 +116,12 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         desc.colorAttachments[0].pixelFormat = pixelFormat
         self.pipelineState = try device.makeRenderPipelineState(descriptor: desc)
 
-        let samplerDesc = MTLSamplerDescriptor()
-        samplerDesc.minFilter = .nearest
-        samplerDesc.magFilter = .nearest
-        samplerDesc.sAddressMode = .clampToEdge
-        samplerDesc.tAddressMode = .clampToEdge
-        guard let sampler = device.makeSamplerState(descriptor: samplerDesc) else {
-            throw RenderError.metalUnavailable
-        }
-        self.samplerState = sampler
-
-        let lutDesc = MTLSamplerDescriptor()
-        lutDesc.minFilter = .linear
-        lutDesc.magFilter = .linear
-        lutDesc.sAddressMode = .clampToEdge
-        lutDesc.tAddressMode = .clampToEdge
-        guard let ls = device.makeSamplerState(descriptor: lutDesc) else {
-            throw RenderError.metalUnavailable
-        }
-        self.lutSampler = ls
-
-        // Quad in unit image-pixel coords (0,0)-(1,1); MVP scales to actual image dims.
+        // A full-screen quad; the fragment maps device-pixel centres to image pixels.
         let vertices: [Vertex] = [
-            Vertex(position: SIMD2(0, 0), uv: SIMD2(0, 0)),
-            Vertex(position: SIMD2(1, 0), uv: SIMD2(1, 0)),
-            Vertex(position: SIMD2(0, 1), uv: SIMD2(0, 1)),
-            Vertex(position: SIMD2(1, 1), uv: SIMD2(1, 1)),
+            Vertex(position: SIMD2(0, 0)),
+            Vertex(position: SIMD2(1, 0)),
+            Vertex(position: SIMD2(0, 1)),
+            Vertex(position: SIMD2(1, 1)),
         ]
         guard
             let buf = device.makeBuffer(
@@ -146,38 +136,25 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     }
 
     private func rebuildLUT() {
-        let lut = colorMap.lut()
-        var rgba = [Float]()
-        rgba.reserveCapacity(lut.count * 4)
-        for c in lut {
-            rgba.append(c.x)
-            rgba.append(c.y)
-            rgba.append(c.z)
-            rgba.append(1)
-        }
-        let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba32Float,
-            width: lut.count,
-            height: 1,
-            mipmapped: false
-        )
-        desc.usage = [.shaderRead]
-        desc.storageMode = .shared
-        guard let tex = device.makeTexture(descriptor: desc) else { return }
-        rgba.withUnsafeBufferPointer { ptr in
-            tex.replace(
-                region: MTLRegionMake2D(0, 0, lut.count, 1),
-                mipmapLevel: 0,
-                withBytes: ptr.baseAddress!,
-                bytesPerRow: lut.count * MemoryLayout<Float>.size * 4
+        let entries = ColorTable.cached(colorMap).entries
+        lutLength = entries.count
+        lutBuffer = entries.withUnsafeBufferPointer { ptr in
+            device.makeBuffer(
+                bytes: ptr.baseAddress!, length: entries.count * MemoryLayout<RGBA8>.stride,
+                options: .storageModeShared
             )
         }
-        lutTexture = tex
     }
 
-    public func setImage(_ image: FITSImage) throws {
+    public func setImage(_ image: FITSImage, revision: Int) throws {
+        let display = DisplayImage(image: image, revision: revision)
+        try setDisplayImage(display, sourceImage: image)
+    }
+
+    public func setDisplayImage(_ display: DisplayImage, sourceImage image: FITSImage) throws {
         self.image = image
-        self.texture = try MetalTextureFactory.makeTexture(from: image, device: device)
+        self.displayImage = display
+        self.texture = try? MetalTextureFactory.makeTexture(from: display, device: device)
         hasFittedImage = false
         let size = viewport.viewSizePoints
         if size.width > 0, size.height > 0 {
@@ -187,24 +164,24 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             )
             hasFittedImage = true
         }
-        let values = image.physicalValues()
-        if let r = image.defaultRange() {
-            self.vmin = Float(r.z1)
-            self.vmax = Float(r.z2)
-        } else if let mm = PixelStatistics.minMax(values) {
-            self.vmin = Float(mm.min)
-            self.vmax = Float(mm.max)
+        self.vmin = display.initialLevels.vmin
+        self.vmax = display.initialLevels.vmax
+        cdfLevels = nil
+        updateCDFIfNeeded()
+    }
+
+    func updateCDFIfNeeded() {
+        guard let displayImage else { return }
+        let levels = RasterLevels(vmin: vmin, vmax: vmax)
+        guard levels != cdfLevels else { return }
+        let cdf = RasterCDF.make(sortedFiniteSample: displayImage.sortedFiniteSample, levels: levels)
+        let bytes = cdf.count * MemoryLayout<Float>.size
+        cdfBuffer = cdf.withUnsafeBufferPointer {
+            device.makeBuffer(bytes: $0.baseAddress!, length: bytes, options: .storageModeShared)
         }
-        // CDF for histogram-equalization stretch.
-        if let mm = PixelStatistics.minMax(values), mm.max > mm.min {
-            let histogram = PixelStatistics.histogram(values, bins: 256, range: mm.min...mm.max)
-            let cdf = histogram.cdf().map(Float.init)
-            let bytes = cdf.count * MemoryLayout<Float>.size
-            cdfBuffer = cdf.withUnsafeBufferPointer {
-                device.makeBuffer(bytes: $0.baseAddress!, length: bytes, options: .storageModeShared)
-            }
-            cdfLength = cdf.count
-        }
+        currentCDF = cdf
+        cdfLength = cdf.count
+        cdfLevels = levels
     }
 
     // MARK: - MTKViewDelegate
@@ -213,9 +190,9 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         let pointSize = view.bounds.size
         guard pointSize.width > 0, pointSize.height > 0 else { return }
         viewport.viewSizePoints = pointSize
-        if let tex = texture, !hasFittedImage {
+        if let displayImage, !hasFittedImage {
             transform = ViewTransform.fit(
-                imageSize: SIMD2(Double(tex.width), Double(tex.height)),
+                imageSize: SIMD2(Double(displayImage.width), Double(displayImage.height)),
                 viewSize: SIMD2(Double(pointSize.width), Double(pointSize.height))
             )
             hasFittedImage = true
@@ -224,71 +201,136 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard
-            let texture,
             let drawable = view.currentDrawable,
             let descriptor = view.currentRenderPassDescriptor,
-            let command = commandQueue.makeCommandBuffer(),
-            let encoder = command.makeRenderCommandEncoder(descriptor: descriptor)
+            let command = commandQueue.makeCommandBuffer()
         else { return }
-
-        // Use bounds (points) so the transform and shader are in the same coord system
-        // as the SwiftUI canvas overlay and mouse events. NDC math is unit-invariant —
-        // the system stretches the drawable to the bounds automatically.
         let bounds = view.bounds
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let mvp = Self.modelViewProjection(
-            imageSize: SIMD2(Double(texture.width), Double(texture.height)),
-            viewSize: SIMD2(Double(bounds.width), Double(bounds.height)),
-            transform: transform
-        )
-
-        var uniforms = Uniforms(
-            mvp: mvp,
-            vmin: vmin,
-            vmax: vmax,
-            stretchType: stretch.shaderID,
-            cdfLength: Int32(cdfLength),
-            stretchParam: stretchParameter
-        )
-
-        encoder.setRenderPipelineState(pipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-        encoder.setFragmentTexture(texture, index: 0)
-        if let lutTexture {
-            encoder.setFragmentTexture(lutTexture, index: 1)
-        }
-        encoder.setFragmentSamplerState(samplerState, index: 0)
-        encoder.setFragmentSamplerState(lutSampler, index: 1)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-        if let cdfBuffer {
-            encoder.setFragmentBuffer(cdfBuffer, offset: 0, index: 2)
-        }
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        encoder.endEncoding()
+        guard encodeRender(
+            command: command, descriptor: descriptor, target: drawable.texture,
+            viewSize: bounds.size
+        ) else { return }
         command.present(drawable)
         command.commit()
     }
 
-    /// Projects unit quad vertices through image edges into Metal's Y-up NDC.
-    /// The centre of texel j lies at image coordinate j, half a pixel from each edge.
-    static func modelViewProjection(
-        imageSize: SIMD2<Double>,
-        viewSize: SIMD2<Double>,
-        transform: ViewTransform
-    ) -> simd_float4x4 {
-        let mapping = ViewMapping(transform: transform, viewSize: viewSize, backingScale: 1)
-        let lowerLeft = mapping.imageToViewYUp(SIMD2(-0.5, -0.5))
-        let upperRight = mapping.imageToViewYUp(imageSize - SIMD2(repeating: 0.5))
-        let a = 2 * Float(upperRight.x - lowerLeft.x) / Float(viewSize.x)
-        let b = 2 * Float(upperRight.y - lowerLeft.y) / Float(viewSize.y)
-        let cx = 2 * Float(lowerLeft.x) / Float(viewSize.x) - 1
-        let cy = 2 * Float(lowerLeft.y) / Float(viewSize.y) - 1
-        return simd_float4x4(rows: [
-            SIMD4(a, 0, 0, cx),
-            SIMD4(0, b, 0, cy),
-            SIMD4(0, 0, 1, 0),
-            SIMD4(0, 0, 0, 1),
-        ])
+    /// Shared encoding path for the on-screen drawable and parity tests.
+    @discardableResult
+    private func encodeRender(
+        command: MTLCommandBuffer,
+        descriptor: MTLRenderPassDescriptor,
+        target: MTLTexture,
+        viewSize: CGSize
+    ) -> Bool {
+        guard let displayImage, let lutBuffer,
+              viewSize.width > 0, viewSize.height > 0 else { return false }
+        updateCDFIfNeeded()
+        let backingScale = Double(target.width) / Double(viewSize.width)
+        let mapping = ViewMapping(
+            transform: transform,
+            viewSize: SIMD2(Double(viewSize.width), Double(viewSize.height)),
+            backingScale: backingScale
+        )
+        let sourceTexture: MTLTexture
+        if let texture {
+            sourceTexture = texture
+        } else {
+            guard let viewportTexture = makeViewportTexture(
+                displayImage, mapping: mapping, width: target.width, height: target.height
+            ) else { return false }
+            sourceTexture = viewportTexture
+        }
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { return false }
+        let coordinates = RasterCoordinateMapping(mapping)
+        let levels = RasterLevels(vmin: vmin, vmax: vmax)
+        var uniforms = Uniforms(
+            vmin: levels.vmin,
+            vmax: levels.vmax,
+            stretchType: stretch.shaderID,
+            cdfLength: Int32(cdfLength),
+            stretchParam: stretchParameter,
+            imageX0: coordinates.x0,
+            imageY0: coordinates.y0,
+            deviceStep: coordinates.step,
+            imageWidth: Int32(displayImage.width),
+            imageHeight: Int32(displayImage.height),
+            lutLength: Int32(lutLength),
+            usesViewportRaster: usesViewportRaster ? 1 : 0
+        )
+
+        encoder.setRenderPipelineState(pipelineState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        encoder.setFragmentTexture(sourceTexture, index: 0)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+        if let cdfBuffer {
+            encoder.setFragmentBuffer(cdfBuffer, offset: 0, index: 2)
+        }
+        encoder.setFragmentBuffer(lutBuffer, offset: 0, index: 3)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        encoder.endEncoding()
+        return true
     }
+
+    private func makeViewportTexture(
+        _ display: DisplayImage, mapping: ViewMapping, width: Int, height: Int
+    ) -> MTLTexture? {
+        let raster = ViewportRasterizer.renderViewport(
+            display, mapping: mapping, width: width, height: height,
+            stretch: stretch, levels: RasterLevels(vmin: vmin, vmax: vmax),
+            colorMap: colorMap, parameter: stretchParameter
+        )
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false
+        )
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        raster.bytes.withUnsafeBufferPointer { bytes in
+            texture.replace(
+                region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+                withBytes: bytes.baseAddress!, bytesPerRow: width * 4
+            )
+        }
+        return texture
+    }
+
+    /// Renders through the production shader into a readable texture for
+    /// CPU/Metal parity tests and diagnostics.
+    func renderOffscreen(viewSize: CGSize, backingScale: Double) throws -> RasterImage {
+        let width = Int((Double(viewSize.width) * backingScale).rounded())
+        let height = Int((Double(viewSize.height) * backingScale).rounded())
+        guard width > 0, height > 0 else { throw RenderError.renderFailed }
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
+        )
+        textureDescriptor.usage = [.renderTarget, .shaderRead]
+        textureDescriptor.storageMode = .shared
+        guard let target = device.makeTexture(descriptor: textureDescriptor),
+              let command = commandQueue.makeCommandBuffer() else {
+            throw RenderError.renderFailed
+        }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        guard encodeRender(
+            command: command, descriptor: pass, target: target, viewSize: viewSize
+        ) else { throw RenderError.renderFailed }
+        command.commit()
+        command.waitUntilCompleted()
+        guard command.status == .completed else { throw RenderError.renderFailed }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBufferPointer { buffer in
+            target.getBytes(
+                buffer.baseAddress!, bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0
+            )
+        }
+        for offset in stride(from: 0, to: bytes.count, by: 4) {
+            bytes.swapAt(offset, offset + 2) // BGRA target -> RGBA raster
+        }
+        return RasterImage(width: width, height: height, bytes: bytes)
+    }
+
 }

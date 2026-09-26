@@ -49,6 +49,7 @@ private struct PVDiagramView: View {
         VStack(spacing: 0) {
             FITSMetalView(
                 image: image,
+                imageRevision: 0,
                 stretch: .linear,
                 colorMap: .viridis,
                 viewport: viewport,

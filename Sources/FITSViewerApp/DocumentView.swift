@@ -11,6 +11,7 @@ struct DocumentView: View {
 
     @State private var selectedHDU: Int
     @State private var selectedPlane: Int = 0
+    @State private var imageRevision: Int = 0
     @State private var planePlaying: Bool = false
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
@@ -157,7 +158,7 @@ struct DocumentView: View {
                 syncToolbarState()
                 document.regionsBridge = regions
                 document.setRegions = { regs in regions = regs }
-                document.currentImageProvider = { currentImage() }
+                refreshCurrentImageProvider()
             }
             .onChange(of: regions) { _, new in document.regionsBridge = new }
             .background(
@@ -173,8 +174,9 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
-            .onChange(of: selectedHDU)   { _, _ in recomputeContours() }
-            .onChange(of: selectedPlane) { _, _ in recomputeContours() }
+            .onChange(of: selectedHDU)   { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
+            .onChange(of: selectedPlane) { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
+            .onChange(of: displayOverride) { _, _ in imageRevision += 1; refreshCurrentImageProvider() }
     }
 
     /// Aggregate of every value that should trigger a toolbar refresh. Hashable
@@ -384,6 +386,7 @@ struct StatusBar: View {
 struct FITSImageView: View {
     let hdu: FITSHDU
     let plane: Int
+    let imageRevision: Int
     let displayOverride: DisplayOverride?
     let stretch: ImageStretch
     let colorMap: ColorMap
@@ -431,6 +434,7 @@ struct FITSImageView: View {
             ZStack {
                 FITSMetalView(
                     image: image,
+                    imageRevision: imageRevision,
                     stretch: stretch,
                     colorMap: colorMap,
                     viewport: viewport,
@@ -816,12 +820,13 @@ extension Array {
 }
 
 struct DisplayOverride: Equatable {
+    let id = UUID()
     let image: FITSImage
     let wcs: WCS?
     let label: String
 
     static func == (lhs: DisplayOverride, rhs: DisplayOverride) -> Bool {
-        lhs.label == rhs.label
+        lhs.id == rhs.id
     }
 }
 
@@ -903,6 +908,7 @@ extension DocumentView {
         FITSImageView(
             hdu: hdu,
             plane: selectedPlane,
+            imageRevision: imageRevision,
             displayOverride: displayOverride,
             stretch: stretch,
             colorMap: colorMap,
@@ -1205,6 +1211,10 @@ extension DocumentView {
         guard let hdu = document.file.hdus[safe: selectedHDU] else { return nil }
         let plane = hdu.planeCount > 1 ? selectedPlane : 0
         return try? FITSImage(hdu: hdu, plane: plane)
+    }
+
+    fileprivate func refreshCurrentImageProvider() {
+        document.currentImageProvider = { displayOverride?.image ?? currentImage() }
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1556,6 +1566,7 @@ extension DocumentView {
                         vmin: Double(viewport.vmin),
                         vmax: Double(viewport.vmax),
                         colorMap: colorMap,
+                        parameter: viewport.stretchParameter,
                         fps: 8
                     )
                     DispatchQueue.main.async {
@@ -1910,8 +1921,12 @@ extension DocumentView {
     }
 
     fileprivate func exportImage() {
-        guard let hdu = document.file.hdus[safe: selectedHDU],
-              let image = try? FITSImage(hdu: hdu) else { return }
+        guard let image = displayOverride?.image ?? currentImage() else { return }
+        let exportStretch = stretch
+        let exportMap = colorMap
+        let exportVmin = Double(viewport.vmin)
+        let exportVmax = Double(viewport.vmax)
+        let exportParameter = viewport.stretchParameter
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png, .tiff]
         panel.nameFieldStringValue = "image.png"
@@ -1920,7 +1935,10 @@ extension DocumentView {
             guard response == .OK, let url = panel.url else { return }
             let format: ExportFormat = url.pathExtension.lowercased() == "tiff" ? .tiff : .png
             do {
-                try ImageExport.writeImage(image, stretch: stretch, format: format, to: url)
+                try ImageExport.writeImage(
+                    image, stretch: exportStretch, vmin: exportVmin, vmax: exportVmax,
+                    colorMap: exportMap, parameter: exportParameter, format: format, to: url
+                )
             } catch {
                 NSLog("export failed: \(error)")
             }
