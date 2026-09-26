@@ -14,8 +14,6 @@ struct DocumentView: View {
     @State private var planePlaying: Bool = false
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
-    @State private var showInspector: Bool = true
-    @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
     private let viewport: ImageViewState
     private let pixelTableBridge = PixelTableCursorBridge()
@@ -68,6 +66,17 @@ struct DocumentView: View {
     private var cursor: CursorInfo? {
         get { session.cursor }
         nonmutating set { session.cursor = newValue }
+    }
+    private var showInspector: Bool {
+        get { session.inspectorVisible }
+        nonmutating set { session.inspectorVisible = newValue }
+    }
+    private var isFetchingCatalog: Bool {
+        get { session.catalogFetchInProgress }
+        nonmutating set { session.catalogFetchInProgress = newValue }
+    }
+    private var inspectorTabBinding: Binding<InspectorTab> {
+        Binding(get: { session.inspectorTab }, set: { session.inspectorTab = $0 })
     }
     private var regionsBinding: Binding<[Region]> {
         Binding(get: { session.regions }, set: { session.regions = $0 })
@@ -143,6 +152,7 @@ struct DocumentView: View {
                 Divider()
                 InspectorPanel(
                     header: hdu.header,
+                    tab: inspectorTabBinding,
                     regions: regionsBinding,
                     imageProvider: { currentImage() },
                     wcsProvider: { session.displayedWCS }
@@ -549,23 +559,15 @@ struct BetaWatermarkOverlay: View {
 
 struct InspectorPanel: View {
     let header: FITSHeader
+    @Binding var tab: InspectorTab
     @Binding var regions: [Region]
     let imageProvider: () -> FITSImage?
     let wcsProvider: () -> WCS?
-    @State private var tab: Tab = .header
-
-    enum Tab: String, CaseIterable, Identifiable {
-        case header = "Header"
-        case regions = "Regions"
-        case photometry = "Photometry"
-        case stats = "Stats"
-        var id: String { rawValue }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(8)

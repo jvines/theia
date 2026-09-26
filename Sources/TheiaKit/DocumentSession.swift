@@ -82,6 +82,9 @@ public struct HDUFacts {
     public var mode: DrawMode = .pan
     public var profileMarker: ProfileGeometry?
     public var cursor: CursorInfo?
+    public var inspectorVisible = true
+    public var inspectorTab: InspectorTab = .header
+    public var catalogFetchInProgress = false
     public var showGrid = false
     public var showCompass = false
     public var showColorBar = false

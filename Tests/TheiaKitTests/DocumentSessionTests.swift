@@ -250,6 +250,29 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testInspectorSelectionAndCatalogStatusStayWithDocument() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertTrue(session.inspectorVisible)
+            XCTAssertEqual(session.inspectorTab, .header)
+            XCTAssertFalse(session.catalogFetchInProgress)
+
+            let changed = expectation(description: "catalog status invalidates observers")
+            withObservationTracking {
+                _ = session.catalogFetchInProgress
+            } onChange: {
+                changed.fulfill()
+            }
+            session.inspectorTab = .photometry
+            session.inspectorVisible = false
+            session.catalogFetchInProgress = true
+            wait(for: [changed], timeout: 1)
+            session.inspectorVisible = true
+            XCTAssertEqual(session.inspectorTab, .photometry)
+            XCTAssertTrue(session.catalogFetchInProgress)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()
