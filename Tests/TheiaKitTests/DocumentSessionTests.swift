@@ -273,6 +273,63 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testPlaybackAdvancesAtSelectedRateAndStopsWhenHDUChanges() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let start = Date(timeIntervalSince1970: 0)
+            session.setFPS(30)
+            session.setPlaying(true, now: start)
+            XCTAssertTrue(session.playing)
+            session.tick(now: start.addingTimeInterval(0.02))
+            XCTAssertEqual(session.plane, 0)
+            session.tick(now: start.addingTimeInterval(0.04))
+            XCTAssertEqual(session.plane, 1)
+            session.tick(now: start.addingTimeInterval(0.06))
+            XCTAssertEqual(session.plane, 1)
+            session.tick(now: start.addingTimeInterval(0.08))
+            XCTAssertEqual(session.plane, 0)
+
+            session.selectHDU(2)
+            XCTAssertFalse(session.playing)
+            session.tick(now: start.addingTimeInterval(1))
+            XCTAssertEqual(session.hdu, 2)
+        }
+    }
+
+    func testPlaybackRateAcceptsOnlyOneToThirtyFramesPerSecond() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.fps, 5)
+            session.setFPS(0)
+            XCTAssertEqual(session.fps, 1)
+            session.setFPS(100)
+            XCTAssertEqual(session.fps, 30)
+            session.setFPS(.nan)
+            XCTAssertEqual(session.fps, 5)
+        }
+    }
+
+    func testBlinkAlternatesMatchingHDUsAndStopsOnPrimary() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let start = Date(timeIntervalSince1970: 0)
+            session.toggleBlink(now: start)
+            XCTAssertEqual(session.blink?.primary, 1)
+            XCTAssertEqual(session.blink?.partner, 2)
+            session.tick(now: start.addingTimeInterval(0.6))
+            XCTAssertEqual(session.hdu, 2)
+            session.tick(now: start.addingTimeInterval(1.1))
+            XCTAssertEqual(session.hdu, 1)
+            session.toggleBlink(now: start.addingTimeInterval(1.2))
+            XCTAssertNil(session.blink)
+            XCTAssertEqual(session.hdu, 1)
+
+            session.selectHDU(3)
+            session.toggleBlink(now: start)
+            XCTAssertNil(session.blink)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()

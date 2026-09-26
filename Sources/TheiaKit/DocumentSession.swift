@@ -85,6 +85,9 @@ public struct HDUFacts {
     public var inspectorVisible = true
     public var inspectorTab: InspectorTab = .header
     public var catalogFetchInProgress = false
+    public private(set) var playing = false
+    public private(set) var fps: Double = 5
+    public private(set) var blink: BlinkState?
     public var showGrid = false
     public var showCompass = false
     public var showColorBar = false
@@ -98,6 +101,7 @@ public struct HDUFacts {
     }
     @ObservationIgnored private var imageCache: [ImageKey: FITSImage] = [:]
     @ObservationIgnored internal private(set) var decodedImageCount = 0
+    @ObservationIgnored private var lastPlaneAdvance: Date = .now
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
         let fileFacts = file.hdus.map(HDUFacts.init)
@@ -204,8 +208,41 @@ public struct HDUFacts {
         return nil
     }
 
+    public func setPlaying(_ value: Bool, now: Date = .now) {
+        guard !value || facts[hdu].planeCount > 1 else { return }
+        if value && !playing { lastPlaneAdvance = now }
+        playing = value
+    }
+
+    public func setFPS(_ value: Double) {
+        fps = value.isFinite ? min(30, max(1, value)) : 5
+    }
+
+    public func toggleBlink(now: Date = .now) {
+        if let blink {
+            selectHDU(blink.primary)
+            self.blink = nil
+        } else if let partner = blinkPartner {
+            blink = BlinkState(primary: hdu, partner: partner,
+                               intervalSeconds: 1, startedAt: now)
+        }
+    }
+
+    public func tick(now: Date) {
+        if let blink {
+            let target = blink.currentHDU(at: now)
+            if hdu != target { selectHDU(target) }
+        }
+        let planeCount = facts[hdu].planeCount
+        guard playing, planeCount > 1,
+              now.timeIntervalSince(lastPlaneAdvance) >= 1 / fps else { return }
+        selectPlane((plane + 1) % planeCount)
+        lastPlaneAdvance = now
+    }
+
     public func selectHDU(_ index: Int) {
         guard facts.indices.contains(index), index != hdu else { return }
+        playing = false
         hdu = index
         plane = 0
         derived = nil
