@@ -3,15 +3,14 @@ import AppKit
 import UniformTypeIdentifiers
 import FITSCore
 import FITSRender
+import TheiaKit
 
 struct DocumentView: View {
     @ObservedObject var document: DocumentModel
     @ObservedObject var toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
 
-    @State private var selectedHDU: Int
-    @State private var selectedPlane: Int = 0
-    @State private var imageRevision: Int = 0
+    @State private var session: DocumentSession
     @State private var planePlaying: Bool = false
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
@@ -23,7 +22,6 @@ struct DocumentView: View {
     @State private var showColorBar: Bool = false
     @State private var contourSpec: ContourSpec = ContourSpec()
     @State private var contourSegments: [Contours.LeveledSegments] = []
-    @State private var activeWCSVariant: String = ""
     @State private var profileGeometry: ProfileGeometry? = nil
     @State private var drawMode: DrawMode = .pan
     @State private var regions: [Region] = []
@@ -33,9 +31,32 @@ struct DocumentView: View {
     @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
-    @State private var displayOverride: DisplayOverride? = nil
     @ObservedObject private var viewport: ViewportObservable
     private let pixelTableBridge = PixelTableCursorBridge()
+
+    private var selectedHDU: Int {
+        get { session.hdu }
+        nonmutating set { session.selectHDU(newValue) }
+    }
+    private var selectedPlane: Int {
+        get { session.plane }
+        nonmutating set { session.selectPlane(newValue) }
+    }
+    private var activeWCSVariant: String {
+        get { session.wcsVariant }
+        nonmutating set { session.selectWCSVariant(newValue) }
+    }
+    private var displayOverride: DerivedImage? {
+        get { session.derived }
+        nonmutating set { session.setDerived(newValue) }
+    }
+    private var imageRevision: Int { session.imageRevision }
+    private var hduBinding: Binding<Int> {
+        Binding(get: { selectedHDU }, set: { selectedHDU = $0 })
+    }
+    private var planeBinding: Binding<Int> {
+        Binding(get: { selectedPlane }, set: { selectedPlane = $0 })
+    }
 
     private static let blinkTickRate: TimeInterval = 0.05
     private static let blinkIntervalDefault: TimeInterval = 1.0
@@ -47,13 +68,13 @@ struct DocumentView: View {
         self.toolbarState = toolbarState
         self.toolbarController = toolbarController
         self.viewport = document.viewport
-        self._selectedHDU = State(initialValue: document.file.firstImageHDUIndex ?? 0)
+        self._session = State(initialValue: document.session)
     }
 
     var body: some View {
         // Manual three-column layout (NavigationSplitView would hijack the NSToolbar).
         HStack(spacing: 0) {
-            HDUSidebar(file: document.file, selection: $selectedHDU)
+            HDUSidebar(file: document.file, selection: hduBinding)
                 .frame(width: 200)
                 .background(Color(nsColor: .windowBackgroundColor))
             Divider()
@@ -62,10 +83,11 @@ struct DocumentView: View {
                     makeImageView(hdu: hdu)
                     StatusBar(
                         hdu: hdu,
-                        plane: $selectedPlane,
+                        plane: planeBinding,
                         planePlaying: $planePlaying,
                         planeFPS: $planeFPS,
                         cursor: cursor,
+                        wcs: session.displayedWCS,
                         viewport: viewport
                     )
                 } else {
@@ -83,7 +105,7 @@ struct DocumentView: View {
                     header: hdu.header,
                     regions: $regions,
                     imageProvider: { currentImage() },
-                    wcsProvider: { WCS(header: hdu.header) }
+                    wcsProvider: { session.displayedWCS }
                 )
                     .frame(width: 340)
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -93,13 +115,7 @@ struct DocumentView: View {
                 Timer.publish(every: Self.blinkTickRate, on: .main, in: .common).autoconnect(),
                 perform: tick(_:)
             )
-            .onChange(of: selectedHDU) { _, _ in
-                // Switching HDUs invalidates any image override (reproject / diff)
-                // and resets the cube plane.
-                displayOverride = nil
-                selectedPlane = 0
-                planePlaying = false
-            }
+            .onChange(of: selectedHDU) { _, _ in planePlaying = false }
             .focusable()
             .focusEffectDisabled()
             .onKeyPress(.leftArrow, phases: .down) { press in
@@ -174,9 +190,7 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
-            .onChange(of: selectedHDU)   { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
-            .onChange(of: selectedPlane) { _, _ in imageRevision += 1; refreshCurrentImageProvider(); recomputeContours() }
-            .onChange(of: displayOverride) { _, _ in imageRevision += 1; refreshCurrentImageProvider() }
+            .onChange(of: imageRevision) { _, _ in recomputeContours() }
     }
 
     /// Aggregate of every value that should trigger a toolbar refresh. Hashable
@@ -245,13 +259,12 @@ struct StatusBar: View {
     @Binding var planePlaying: Bool
     @Binding var planeFPS: Double
     let cursor: CursorInfo?
+    let wcs: WCS?
     @ObservedObject var viewport: ViewportObservable
 
     /// Persisted readout frame (shared across windows/sessions).
     @AppStorage("readoutFrame") private var coordFrameRaw = CelestialFrame.icrs.rawValue
     private var coordFrame: CelestialFrame { CelestialFrame(rawValue: coordFrameRaw) ?? .icrs }
-
-    private var wcs: WCS? { WCS(header: hdu.header) }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -385,9 +398,9 @@ struct StatusBar: View {
 
 struct FITSImageView: View {
     let hdu: FITSHDU
-    let plane: Int
+    let displayed: FITSImage?
+    let displayedWCS: WCS?
     let imageRevision: Int
-    let displayOverride: DisplayOverride?
     let stretch: ImageStretch
     let colorMap: ColorMap
     let viewport: ViewportObservable
@@ -412,25 +425,14 @@ struct FITSImageView: View {
     let onCubeSpectrumAt: (SIMD2<Double>) -> Void
     let onRegionContextMenu: (Int, NSEvent) -> Void
     let onProfileDragPreview: (((SIMD2<Double>, Double, DrawMode)?) -> Void)
-    let activeVariant: String
     let remoteCrosshair: SIMD2<Double>?
     let profileGeometry: ProfileGeometry?
-
-    private var resolved: (image: FITSImage, wcs: WCS?)? {
-        if let o = displayOverride {
-            return (o.image, o.wcs)
-        }
-        guard hdu.isImage, hdu.naxis >= 2,
-              let image = try? FITSImage(hdu: hdu, plane: plane) else { return nil }
-        return (image, WCS(header: hdu.header, variant: activeVariant))
-    }
 
     var body: some View {
         if hdu.isTable, let table = FITSTableLoader.load(hdu) {
             TableExtensionView(table: table)
-        } else if let resolved {
-            let image = resolved.image
-            let wcs = resolved.wcs
+        } else if let image = displayed {
+            let wcs = displayedWCS
             ZStack {
                 FITSMetalView(
                     image: image,
@@ -819,16 +821,7 @@ extension Array {
     }
 }
 
-struct DisplayOverride: Equatable {
-    let id = UUID()
-    let image: FITSImage
-    let wcs: WCS?
-    let label: String
-
-    static func == (lhs: DisplayOverride, rhs: DisplayOverride) -> Bool {
-        lhs.id == rhs.id
-    }
-}
+typealias DisplayOverride = DerivedImage
 
 extension DocumentView {
     fileprivate func syncToolbarState() {
@@ -842,18 +835,11 @@ extension DocumentView {
         toolbarState.isFetchingCatalog = isFetchingCatalog
         let selected = document.file.hdus[safe: selectedHDU]
         toolbarState.hasSelectedImage = selected != nil
-        toolbarState.hasWCS = selected.flatMap { WCS(header: $0.header, variant: activeWCSVariant) } != nil
-        if let hdu = selected {
-            let variants = WCS.availableVariants(in: hdu.header)
+        toolbarState.hasWCS = session.displayedWCS != nil
+        if selected != nil {
+            let variants = session.facts[selectedHDU].wcsVariants
             toolbarState.wcsVariants = variants
-            var labels: [String: String] = [:]
-            for v in variants {
-                if let name = hdu.header["WCSNAME\(v)"]?.stringValue { labels[v] = name }
-            }
-            toolbarState.wcsVariantLabels = labels
-            if !variants.contains(activeWCSVariant), let first = variants.first {
-                activeWCSVariant = first
-            }
+            toolbarState.wcsVariantLabels = session.facts[selectedHDU].wcsVariantLabels
             toolbarState.activeWCSVariant = activeWCSVariant
         }
         toolbarState.hasMultipleHDUs = document.file.hdus.count >= 2
@@ -907,9 +893,9 @@ extension DocumentView {
     fileprivate func makeImageView(hdu: FITSHDU) -> some View {
         FITSImageView(
             hdu: hdu,
-            plane: selectedPlane,
+            displayed: session.displayed,
+            displayedWCS: session.displayedWCS,
             imageRevision: imageRevision,
-            displayOverride: displayOverride,
             stretch: stretch,
             colorMap: colorMap,
             viewport: viewport,
@@ -934,7 +920,6 @@ extension DocumentView {
             onCubeSpectrumAt: { p in handleCubeSpectrum(at: p) },
             onRegionContextMenu: { idx, event in showRegionContextMenu(index: idx, event: event) },
             onProfileDragPreview: { preview in handleProfileDragPreview(preview) },
-            activeVariant: activeWCSVariant,
             remoteCrosshair: document.remoteCrosshair,
             profileGeometry: profileGeometry
         )
@@ -985,8 +970,7 @@ extension DocumentView {
         let dx = to.x - from.x, dy = to.y - from.y
         let pixelDist = (dx * dx + dy * dy).squareRoot()
         var lines = [String(format: "Pixel distance: %.2f px", pixelDist)]
-        if let hdu = document.file.hdus[safe: selectedHDU],
-           let wcs = WCS(header: hdu.header, variant: activeWCSVariant),
+        if let wcs = session.displayedWCS,
            let s = wcs.pixelToSky(imageX: Int(from.x.rounded()), imageY: Int(from.y.rounded())),
            let e = wcs.pixelToSky(imageX: Int(to.x.rounded()), imageY: Int(to.y.rounded())) {
             let arcsec = haversineArcsec(ra1: s.ra, dec1: s.dec, ra2: e.ra, dec2: e.dec)
@@ -1068,10 +1052,9 @@ extension DocumentView {
         pixelTableBridge.cursor = info
         // Broadcast for crosshair sync.
         if let info, let parent = AppDelegate.shared?.controllerForCurrentDocument(matching: document.url) {
-            let wcs = document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header, variant: activeWCSVariant) }
             WindowSyncCoordinator.shared.broadcastCursor(
                 imagePoint: SIMD2(Double(info.imageX), Double(info.imageY)),
-                from: parent, sourceWCS: wcs
+                from: parent, sourceWCS: session.displayedWCS
             )
         }
     }
@@ -1208,13 +1191,11 @@ extension DocumentView {
     }
 
     fileprivate func currentImage() -> FITSImage? {
-        guard let hdu = document.file.hdus[safe: selectedHDU] else { return nil }
-        let plane = hdu.planeCount > 1 ? selectedPlane : 0
-        return try? FITSImage(hdu: hdu, plane: plane)
+        session.displayed
     }
 
     fileprivate func refreshCurrentImageProvider() {
-        document.currentImageProvider = { displayOverride?.image ?? currentImage() }
+        document.currentImageProvider = { [session] in session.displayed }
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1302,7 +1283,7 @@ extension DocumentView {
         case .gaussian(let s):  label = String(format: "Gaussian σ=%.1f", s)
         }
         displayOverride = DisplayOverride(image: filtered,
-                                          wcs: document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header) },
+                                          wcs: session.displayedWCS,
                                           label: label)
         resetLevelsTrigger &+= 1
     }
@@ -1311,7 +1292,7 @@ extension DocumentView {
         guard let image = currentImage() else { return }
         let transformed = ImageArithmetic.unary(image, op: op)
         displayOverride = DisplayOverride(image: transformed,
-                                          wcs: document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header) },
+                                          wcs: session.displayedWCS,
                                           label: op.label)
         resetLevelsTrigger &+= 1
     }
@@ -1322,7 +1303,7 @@ extension DocumentView {
               let b = try? FITSImage(hdu: otherHdu),
               let result = try? ImageArithmetic.combined(a, b, op: op) else { return }
         displayOverride = DisplayOverride(image: result,
-                                          wcs: document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header) },
+                                          wcs: session.displayedWCS,
                                           label: "\(op.label) vs HDU \(otherIdx)")
         resetLevelsTrigger &+= 1
     }
@@ -1336,7 +1317,7 @@ extension DocumentView {
                                           width: image.width, height: image.height)
         guard let result = try? ImageArithmetic.combined(image, bgImg, op: .difference) else { return }
         displayOverride = DisplayOverride(image: result,
-                                          wcs: document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header) },
+                                          wcs: session.displayedWCS,
                                           label: String(format: "BG sub (μ=%.3g, σ=%.3g, n=%d)", bg.mean, bg.stddev, bg.count))
         resetLevelsTrigger &+= 1
     }
@@ -1465,8 +1446,7 @@ extension DocumentView {
             a.runModal(); return
         }
         let reference = regions[idx]
-        guard let refHDU = document.file.hdus.first(where: { $0.isImage && $0.naxis >= 2 }),
-              let refWCS = WCS(header: refHDU.header) else {
+        guard let refWCS = session.displayedWCS else {
             let a = NSAlert()
             a.messageText = "Reference image has no WCS"
             a.informativeText = "Light curves need WCS to project the aperture onto each open document."
@@ -1482,9 +1462,9 @@ extension DocumentView {
         var timeLabel = "MJD"
         for c in controllers {
             let model = c.documentModel
-            guard let hdu = model.file.hdus.first(where: { $0.isImage && $0.naxis >= 2 }),
-                  let img = try? FITSImage(hdu: hdu),
-                  let wcs = WCS(header: hdu.header),
+            guard let hdu = model.file.hdus[safe: model.session.hdu],
+                  let img = model.session.displayed,
+                  let wcs = model.session.displayedWCS,
                   let p = wcs.skyToPixel(ra: sky.ra, dec: sky.dec) else { continue }
             // Reproject the region to this image's pixel frame as an image-frame copy.
             let projected = reprojectRegion(reference, toImagePixel: (p.x, p.y))
@@ -1634,7 +1614,7 @@ extension DocumentView {
         guard let idx = selectedRegionIndex, regions.indices.contains(idx),
               let image = currentImage() else { NSSound.beep(); return }
         let region = regions[idx]
-        let wcs = document.file.hdus[safe: selectedHDU].flatMap { WCS(header: $0.header) }
+        let wcs = session.displayedWCS
         guard let bbox = boundingBox(of: region, wcs: wcs, in: image) else { NSSound.beep(); return }
         let w = bbox.maxX - bbox.minX + 1
         let h = bbox.maxY - bbox.minY + 1
@@ -1736,7 +1716,7 @@ extension DocumentView {
     fileprivate func collapseCube(_ mode: FITSImage.CollapseMode) {
         guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3,
               let collapsed = try? FITSImage.collapsed(hdu: hdu, mode: mode) else { return }
-        displayOverride = DisplayOverride(image: collapsed, wcs: WCS(header: hdu.header), label: "\(mode.label) over plane axis")
+        displayOverride = DisplayOverride(image: collapsed, wcs: session.displayedWCS, label: "\(mode.label) over plane axis")
         resetLevelsTrigger &+= 1
     }
 
@@ -1817,23 +1797,22 @@ extension DocumentView {
     }
 
     fileprivate func canReproject(onto referenceIdx: Int) -> Bool {
-        guard let active = document.file.hdus[safe: selectedHDU],
-              let reference = document.file.hdus[safe: referenceIdx] else { return false }
-        return WCS(header: active.header) != nil && WCS(header: reference.header) != nil
+        guard document.file.hdus.indices.contains(referenceIdx) else { return false }
+        return session.displayedWCS != nil && session.facts[referenceIdx].wcs(variant: "") != nil
     }
 
     fileprivate func canDifference(against referenceIdx: Int) -> Bool {
-        guard let active = document.file.hdus[safe: selectedHDU],
-              let reference = document.file.hdus[safe: referenceIdx] else { return false }
-        return active.axes == reference.axes
+        guard let active = session.displayed,
+              document.file.hdus.indices.contains(referenceIdx),
+              let shape = session.facts[referenceIdx].shape else { return false }
+        return active.width == shape.x && active.height == shape.y
     }
 
     fileprivate func reproject(onto referenceIdx: Int) {
-        guard let activeHdu = document.file.hdus[safe: selectedHDU],
-              let refHdu = document.file.hdus[safe: referenceIdx],
-              let activeImage = try? FITSImage(hdu: activeHdu),
-              let sourceWCS = WCS(header: activeHdu.header),
-              let targetWCS = WCS(header: refHdu.header),
+        guard let refHdu = document.file.hdus[safe: referenceIdx],
+              let activeImage = session.displayed,
+              let sourceWCS = session.displayedWCS,
+              let targetWCS = session.facts[referenceIdx].wcs(variant: ""),
               let refImage = try? FITSImage(hdu: refHdu) else { return }
         let reprojected = WCSReproject.reproject(
             source: activeImage,
@@ -1850,15 +1829,14 @@ extension DocumentView {
     }
 
     fileprivate func computeDifference(against referenceIdx: Int) {
-        guard let activeHdu = document.file.hdus[safe: selectedHDU],
-              let refHdu = document.file.hdus[safe: referenceIdx],
-              let activeImage = try? FITSImage(hdu: activeHdu),
+        guard let refHdu = document.file.hdus[safe: referenceIdx],
+              let activeImage = session.displayed,
               let refImage = try? FITSImage(hdu: refHdu) else { return }
         do {
             let diff = try ImageArithmetic.difference(activeImage, minus: refImage)
             displayOverride = DisplayOverride(
                 image: diff,
-                wcs: WCS(header: activeHdu.header),
+                wcs: session.displayedWCS,
                 label: "Difference vs HDU \(referenceIdx)"
             )
         } catch {
@@ -1871,9 +1849,7 @@ extension DocumentView {
             selectedHDU = bs.primary
             blinkState = nil
         } else {
-            let count = document.file.hdus.count
-            guard count >= 2 else { return }
-            let partner = (selectedHDU + 1) % count
+            guard let partner = session.blinkPartner else { return }
             blinkState = BlinkState(
                 primary: selectedHDU,
                 partner: partner,
@@ -1884,9 +1860,8 @@ extension DocumentView {
     }
 
     fileprivate func fetchCatalog() async {
-        guard let hdu = document.file.hdus[safe: selectedHDU],
-              let image = try? FITSImage(hdu: hdu),
-              let wcs = WCS(header: hdu.header),
+        guard let image = session.displayed,
+              let wcs = session.displayedWCS,
               let cs = CatalogQuery.coneSearch(
                   wcs: wcs, imageWidth: image.width, imageHeight: image.height
               ) else { return }

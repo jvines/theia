@@ -100,8 +100,7 @@ final class WindowSyncCoordinator: ObservableObject {
             // Try to translate via WCS if both sides have it.
             var localPoint = imagePoint
             if let sky,
-               let targetHDU = c.documentModel.file.hdus.first(where: { $0.isImage }),
-               let targetWCS = WCS(header: targetHDU.header),
+               let targetWCS = c.documentModel.session.displayedWCS,
                let p = targetWCS.skyToPixel(ra: sky.ra, dec: sky.dec) {
                 localPoint = SIMD2(p.x, p.y)
             }

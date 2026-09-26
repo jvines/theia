@@ -116,7 +116,7 @@ let package = Package(
             linkerSettings: [.linkedLibrary("z")]
         ),
         .target(name: "FITSRaster", dependencies: ["FITSCore", "CZlib"], path: "Sources/FITSRaster"),
-        .target(name: "TheiaKit", dependencies: ["FITSRaster"], path: "Sources/TheiaKit"),
+        .target(name: "TheiaKit", dependencies: ["FITSCore", "FITSRaster"], path: "Sources/TheiaKit"),
         .testTarget(
             name: "FITSCoreTests",
             dependencies: ["FITSCore"],
@@ -124,7 +124,7 @@ let package = Package(
             resources: [.copy("Fixtures")]
         ),
         .testTarget(name: "FITSRasterTests", dependencies: ["FITSRaster", "CZlib"], path: "Tests/FITSRasterTests"),
-        .testTarget(name: "TheiaKitTests", dependencies: ["TheiaKit"], path: "Tests/TheiaKitTests"),
+        .testTarget(name: "TheiaKitTests", dependencies: ["TheiaKit", "FITSCore"], path: "Tests/TheiaKitTests"),
         .testTarget(
             name: "XPABridgeTests",
             dependencies: ["XPABridge"],

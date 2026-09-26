@@ -273,15 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
         guard let controller else { NSSound.beep(); return }
         let model = controller.documentModel
-        // Try the displayed override first (cropped / filtered / collapsed result),
-        // else fall back to HDU 0 raw image.
-        let image: FITSImage?
-        if let override = controller.currentOverrideImage() {
-            image = override
-        } else if let hdu = model.file.hdus.first, let raw = try? FITSImage(hdu: hdu) {
-            image = raw
-        } else { image = nil }
-        guard let image else { NSSound.beep(); return }
+        guard let image = model.session.displayed else { NSSound.beep(); return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "fits") ?? .data]
         panel.nameFieldStringValue = model.url.deletingPathExtension().lastPathComponent + "-modified.fits"
