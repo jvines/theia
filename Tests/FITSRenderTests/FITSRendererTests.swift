@@ -3,6 +3,7 @@ import Metal
 import MetalKit
 import simd
 import FITSCore
+import FITSRaster
 import TheiaKit
 @testable import FITSRender
 
@@ -31,7 +32,7 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(image.height, 200)
 
         let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
-        try renderer.setImage(image)
+        try renderer.setImage(image, revision: 0)
         XCTAssertEqual(renderer.texture?.width, 200)
         XCTAssertGreaterThan(renderer.vmax, renderer.vmin)
     }
@@ -44,9 +45,40 @@ final class FITSRendererTests: XCTestCase {
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
         let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
-        try renderer.setImage(image)
+        try renderer.setImage(image, revision: 0)
         XCTAssertNotNil(renderer.image)
         XCTAssertEqual(renderer.image?.physicalValue(x: 1, y: 1), 4)
+    }
+
+    func testSetImageRetainsCallerRevisionInDisplayBuffer() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(pixels: [7], width: 1, height: 1)
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image, revision: 23)
+        XCTAssertEqual(renderer.displayImage?.revision, 23)
+        XCTAssertEqual(renderer.displayImage?.pixels, [7])
+    }
+
+    func testHistogramCDFTracksDisplayLevels() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3, 100], width: 5, height: 1)
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image, revision: 1)
+        renderer.vmin = 0
+        renderer.vmax = 3
+        renderer.updateCDFIfNeeded()
+        XCTAssertEqual(renderer.currentCDF[0], 0.25)
+        XCTAssertEqual(renderer.currentCDF[255], 1)
+
+        renderer.vmin = 2
+        renderer.vmax = 3
+        renderer.updateCDFIfNeeded()
+        XCTAssertEqual(renderer.currentCDF[0], 0.5)
+        XCTAssertEqual(renderer.currentCDF[255], 1)
     }
 
     func testSetImagePopulatesTextureAndDefaultRange() throws {
@@ -59,7 +91,7 @@ final class FITSRendererTests: XCTestCase {
         let image = try FITSImage(hdu: file.hdus[0])
 
         let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
-        try renderer.setImage(image)
+        try renderer.setImage(image, revision: 0)
 
         XCTAssertEqual(renderer.texture?.width, 10)
         XCTAssertEqual(renderer.texture?.height, 10)
@@ -74,7 +106,7 @@ final class FITSRendererTests: XCTestCase {
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
         let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
-        try renderer.setImage(image)
+        try renderer.setImage(image, revision: 0)
         let view = MTKView(frame: CGRect(x: 0, y: 0, width: 200, height: 150), device: device)
         renderer.mtkView(view, drawableSizeWillChange: view.drawableSize)
         let fittedScale = renderer.transform.scale

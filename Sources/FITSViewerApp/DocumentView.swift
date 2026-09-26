@@ -431,6 +431,7 @@ struct FITSImageView: View {
             ZStack {
                 FITSMetalView(
                     image: image,
+                    imageRevision: 0,
                     stretch: stretch,
                     colorMap: colorMap,
                     viewport: viewport,

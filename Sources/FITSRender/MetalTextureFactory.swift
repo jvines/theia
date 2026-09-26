@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import FITSCore
+import FITSRaster
 
 public enum RenderError: Error {
     case textureCreationFailed
@@ -11,7 +12,7 @@ public enum RenderError: Error {
 public enum MetalTextureFactory {
     /// Uploads the image's physical pixel values into a single-channel `r32Float`
     /// 2D texture, preserving NaN (from BLANK / float NaN) for downstream stretches.
-    public static func makeTexture(from image: FITSImage, device: MTLDevice) throws -> MTLTexture {
+    public static func makeTexture(from image: DisplayImage, device: MTLDevice) throws -> MTLTexture {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r32Float,
             width: image.width,
@@ -23,7 +24,7 @@ public enum MetalTextureFactory {
         guard let texture = device.makeTexture(descriptor: desc) else {
             throw RenderError.textureCreationFailed
         }
-        let pixels = image.normalizedFloat32()
+        let pixels = image.pixels
         let region = MTLRegionMake2D(0, 0, image.width, image.height)
         let bytesPerRow = image.width * MemoryLayout<Float>.size
         pixels.withUnsafeBufferPointer { buf in

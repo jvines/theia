@@ -8,6 +8,7 @@ import TheiaKit
 /// pinch zoom, and scroll-wheel zoom hooked into the renderer's `ViewTransform`.
 public struct FITSMetalView: NSViewRepresentable {
     public let image: FITSImage
+    public let imageRevision: Int
     public let stretch: ImageStretch
     public let colorMap: ColorMap
     public let viewport: ViewportObservable
@@ -31,6 +32,7 @@ public struct FITSMetalView: NSViewRepresentable {
 
     public init(
         image: FITSImage,
+        imageRevision: Int,
         stretch: ImageStretch = .linear,
         colorMap: ColorMap = .gray,
         viewport: ViewportObservable,
@@ -52,6 +54,7 @@ public struct FITSMetalView: NSViewRepresentable {
         onProfileDragPreview: (((SIMD2<Double>, Double, DrawMode)?) -> Void)? = nil
     ) {
         self.image = image
+        self.imageRevision = imageRevision
         self.stretch = stretch
         self.colorMap = colorMap
         self.viewport = viewport
@@ -87,7 +90,7 @@ public struct FITSMetalView: NSViewRepresentable {
                 let renderer = try FITSRenderer(device: device, viewport: viewport)
                 renderer.stretch = stretch
                 renderer.colorMap = colorMap
-                try renderer.setImage(image)
+                try renderer.setImage(image, revision: imageRevision)
                 view.delegate = renderer
                 view.fitsRenderer = renderer
                 view.onCursorChange = onCursorChange

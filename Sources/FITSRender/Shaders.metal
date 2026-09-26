@@ -46,8 +46,10 @@ fragment float4 fragmentMain(
     if (isnan(v)) {
         return float4(0.0, 0.0, 0.0, 1.0);
     }
+    // Mirror RasterStretch: clamp before arithmetic, including both infinities.
+    float clamped = clamp(v, u.vmin, u.vmax);
     float range = max(u.vmax - u.vmin, 1e-6);
-    float x = clamp((v - u.vmin) / range, 0.0, 1.0);
+    float x = (clamped - u.vmin) / range;
 
     float n;
     if (u.stretchType == 0) {

@@ -3,6 +3,7 @@ import Metal
 import MetalKit
 import simd
 import FITSCore
+import FITSRaster
 import TheiaKit
 
 private struct Vertex {
@@ -46,6 +47,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
 
     public var texture: MTLTexture?
     public private(set) var image: FITSImage?
+    public private(set) var displayImage: DisplayImage?
     public let viewport: ViewportObservable
     public var transform: ViewTransform {
         get { viewport.transform }
@@ -73,6 +75,8 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
 
     private var cdfBuffer: MTLBuffer?
     private var cdfLength: Int = 0
+    private var cdfLevels: RasterLevels?
+    private(set) var currentCDF: [Float] = []
     private var lutTexture: MTLTexture?
     private let lutSampler: MTLSamplerState
 
@@ -92,7 +96,9 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             throw RenderError.shaderCompilationFailed("Shaders.metal not found in bundle")
         }
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
-        let library = try device.makeLibrary(source: source, options: nil)
+        let compileOptions = MTLCompileOptions()
+        compileOptions.fastMathEnabled = false
+        let library = try device.makeLibrary(source: source, options: compileOptions)
         guard
             let vertexFn = library.makeFunction(name: "vertexMain"),
             let fragmentFn = library.makeFunction(name: "fragmentMain")
@@ -175,9 +181,11 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         lutTexture = tex
     }
 
-    public func setImage(_ image: FITSImage) throws {
+    public func setImage(_ image: FITSImage, revision: Int) throws {
+        let display = DisplayImage(image: image, revision: revision)
         self.image = image
-        self.texture = try MetalTextureFactory.makeTexture(from: image, device: device)
+        self.texture = try MetalTextureFactory.makeTexture(from: display, device: device)
+        self.displayImage = display
         hasFittedImage = false
         let size = viewport.viewSizePoints
         if size.width > 0, size.height > 0 {
@@ -195,16 +203,22 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             self.vmin = Float(mm.min)
             self.vmax = Float(mm.max)
         }
-        // CDF for histogram-equalization stretch.
-        if let mm = PixelStatistics.minMax(values), mm.max > mm.min {
-            let histogram = PixelStatistics.histogram(values, bins: 256, range: mm.min...mm.max)
-            let cdf = histogram.cdf().map(Float.init)
-            let bytes = cdf.count * MemoryLayout<Float>.size
-            cdfBuffer = cdf.withUnsafeBufferPointer {
-                device.makeBuffer(bytes: $0.baseAddress!, length: bytes, options: .storageModeShared)
-            }
-            cdfLength = cdf.count
+        cdfLevels = nil
+        updateCDFIfNeeded()
+    }
+
+    func updateCDFIfNeeded() {
+        guard let displayImage else { return }
+        let levels = RasterLevels(vmin: vmin, vmax: vmax)
+        guard levels != cdfLevels else { return }
+        let cdf = RasterCDF.make(sortedFiniteSample: displayImage.sortedFiniteSample, levels: levels)
+        let bytes = cdf.count * MemoryLayout<Float>.size
+        cdfBuffer = cdf.withUnsafeBufferPointer {
+            device.makeBuffer(bytes: $0.baseAddress!, length: bytes, options: .storageModeShared)
         }
+        currentCDF = cdf
+        cdfLength = cdf.count
+        cdfLevels = levels
     }
 
     // MARK: - MTKViewDelegate
@@ -223,6 +237,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     }
 
     public func draw(in view: MTKView) {
+        updateCDFIfNeeded()
         guard
             let texture,
             let drawable = view.currentDrawable,
@@ -242,10 +257,11 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             transform: transform
         )
 
+        let levels = RasterLevels(vmin: vmin, vmax: vmax)
         var uniforms = Uniforms(
             mvp: mvp,
-            vmin: vmin,
-            vmax: vmax,
+            vmin: levels.vmin,
+            vmax: levels.vmax,
             stretchType: stretch.shaderID,
             cdfLength: Int32(cdfLength),
             stretchParam: stretchParameter
