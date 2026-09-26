@@ -130,7 +130,17 @@ public struct FITSMetalView: NSViewRepresentable {
         view.onRegionPreview = onRegionPreview
         view.onRegionEdited = onRegionEdited
         view.onRegionSelected = onRegionSelected
+        view.onLineProfile = onLineProfile
+        view.onRadialProfile = onRadialProfile
+        view.onGrowthCurve = onGrowthCurve
+        view.onMeasure = onMeasure
+        view.onCubeSpectrumAt = onCubeSpectrumAt
+        view.onRegionContextMenu = onRegionContextMenu
+        view.onProfileDragPreview = { preview in
+            onProfileDragPreview?(preview)
+        }
         view.regions = regions
+        view.wcs = wcs
         view.drawMode = drawMode
         if context.coordinator.lastResetTrigger != resetLevelsTrigger {
             context.coordinator.lastResetTrigger = resetLevelsTrigger
@@ -147,14 +157,15 @@ public struct FITSMetalView: NSViewRepresentable {
         var lastResetTrigger: Int = 0
         private var requestedRevision: Int?
         private var displayTask: Task<Void, Never>?
+        private let displayBuilder = DisplayImageBuilder()
 
         func requestDisplay(_ image: FITSImage, revision: Int, view: InteractiveMTKView) {
             guard requestedRevision != revision, let renderer else { return }
             requestedRevision = revision
             displayTask?.cancel()
+            let builder = displayBuilder
             displayTask = Task.detached(priority: .userInitiated) { [weak self, weak view, weak renderer] in
-                let display = DisplayImage(image: image, revision: revision)
-                guard !Task.isCancelled else { return }
+                guard let display = await builder.build(image: image, revision: revision) else { return }
                 await self?.applyDisplay(
                     display, sourceImage: image, revision: revision, view: view, renderer: renderer
                 )
