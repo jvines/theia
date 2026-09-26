@@ -9,7 +9,7 @@ import FITSCore
 /// All values are in **points** (bounds-space), not drawable pixels. The renderer
 /// applies backing-scale internally when generating its MVP.
 public final class ViewportObservable: ObservableObject {
-    @Published public var transform: ViewportTransform
+    @Published public var transform: ViewTransform
     @Published public var viewSizePoints: CGSize
     @Published public var vmin: Float
     @Published public var vmax: Float
@@ -17,7 +17,7 @@ public final class ViewportObservable: ObservableObject {
     @Published public var stretchParameter: Float
 
     public init(
-        transform: ViewportTransform = ViewportTransform(),
+        transform: ViewTransform = ViewTransform(),
         viewSizePoints: CGSize = .zero,
         vmin: Float = 0,
         vmax: Float = 1,

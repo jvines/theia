@@ -2,6 +2,7 @@ import SwiftUI
 import simd
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// SwiftUI overlay drawing contour segments computed from `FITSImage` data.
 /// Segments are extracted on demand for the current spec; the calling view should
@@ -13,15 +14,19 @@ struct ContourOverlay: View {
 
     var body: some View {
         Canvas { context, size in
-            let t = viewport.transform
+            let mapping = ViewMapping(
+                transform: viewport.transform,
+                viewSize: SIMD2(Double(size.width), Double(size.height)),
+                backingScale: 1
+            )
             // Match WCS grid colour family: faint cyan, denser per level.
             for (idx, lvl) in leveled.enumerated() {
                 let alpha = 0.45 + 0.55 * Double(idx + 1) / Double(max(leveled.count, 1))
                 let colour = Color.cyan.opacity(alpha)
                 var path = Path()
                 for s in lvl.segments {
-                    let a = canvasPoint(s.a, t: t, h: size.height)
-                    let b = canvasPoint(s.b, t: t, h: size.height)
+                    let a = canvasPoint(s.a, mapping: mapping)
+                    let b = canvasPoint(s.b, mapping: mapping)
                     path.move(to: a)
                     path.addLine(to: b)
                 }
@@ -31,11 +36,9 @@ struct ContourOverlay: View {
         .allowsHitTesting(false)
     }
 
-    private func canvasPoint(_ image: SIMD2<Double>, t: ViewportTransform, h: Double) -> CGPoint {
-        CGPoint(
-            x: t.scale * image.x + t.translation.x,
-            y: h - (t.scale * image.y + t.translation.y)
-        )
+    private func canvasPoint(_ image: SIMD2<Double>, mapping: ViewMapping) -> CGPoint {
+        let point = mapping.imageToView(image)
+        return CGPoint(x: point.x, y: point.y)
     }
 }
 
