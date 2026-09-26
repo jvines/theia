@@ -63,6 +63,13 @@ final class PixelStatisticsTests: XCTestCase {
         XCTAssertEqual(r!.z2, 10, accuracy: 1)
     }
 
+    func testZScaleSkipsInfiniteSamples() {
+        let values: [Double] = [-.infinity, 1, 2, 3, 4, 5, .infinity]
+        let result = PixelStatistics.zscale(values, contrast: 1)
+        XCTAssertEqual(result?.z1, 1)
+        XCTAssertEqual(result?.z2, 5)
+    }
+
     func testZScaleOnUniformRampApproximatesFullRangeAtContrastOne() {
         let values = (1...600).map(Double.init)
         let r = PixelStatistics.zscale(values, contrast: 1.0)

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Floating panel showing a position-velocity diagram extracted from a cube. The PV
 /// image is rendered as a standalone Metal view so it gets the same stretch / colour
@@ -43,7 +44,13 @@ extension PVDiagramWindowController: NSWindowDelegate {
 
 private struct PVDiagramView: View {
     let image: FITSImage
-    @StateObject private var viewport = ViewportObservable()
+    @StateObject private var viewport: ViewportObservable
+
+    init(image: FITSImage) {
+        self.image = image
+        let levels = DocumentSession.recommendedLevels(for: image)
+        self._viewport = StateObject(wrappedValue: ViewportObservable(vmin: levels.vmin, vmax: levels.vmax))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,8 +59,7 @@ private struct PVDiagramView: View {
                 imageRevision: 0,
                 stretch: .linear,
                 colorMap: .viridis,
-                viewport: viewport,
-                resetLevelsTrigger: 0
+                viewport: viewport
             )
             HStack {
                 Text("position →").font(.caption).foregroundStyle(.secondary)

@@ -40,5 +40,10 @@ import TheiaKit
         self.file = try FITSFile(data: data)
         self.session = DocumentSession(url: url, file: file)
         self.currentImageProvider = { [session] in session.displayed }
+        if let image = session.displayed {
+            let levels = DocumentSession.recommendedLevels(for: image)
+            viewport.vmin = levels.vmin
+            viewport.vmax = levels.vmax
+        }
     }
 }

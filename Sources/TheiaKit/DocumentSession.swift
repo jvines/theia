@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import FITSCore
+import FITSRaster
 
 /// An image operation's result, kept separate from the source HDU and its cube.
 public struct DerivedImage: Equatable {
@@ -58,7 +59,7 @@ public struct HDUFacts {
     public let facts: [HDUFacts]
     public private(set) var hdu: Int
     public private(set) var plane: Int = 0
-    public private(set) var wcsVariant: String = ""
+    public private(set) var sourceWCSVariant: String = ""
     public private(set) var derived: DerivedImage?
     public private(set) var imageRevision: Int = 0
 
@@ -74,7 +75,19 @@ public struct HDUFacts {
         self.file = file
         self.facts = file.hdus.map(HDUFacts.init)
         self.hdu = file.firstImageHDUIndex ?? 0
-        self.wcsVariant = facts[hdu].wcsVariants.first ?? ""
+        self.sourceWCSVariant = facts[hdu].wcsVariants.first ?? ""
+    }
+
+    public var wcsVariant: String { derived?.wcs?.variant ?? sourceWCSVariant }
+    public var availableWCSVariants: [String] {
+        if let derived { return derived.wcs.map { [$0.variant] } ?? [] }
+        return facts[hdu].wcsVariants
+    }
+    public var wcsVariantLabels: [String: String] {
+        if let derived, let wcs = derived.wcs {
+            return wcs.name.map { [wcs.variant: $0] } ?? [:]
+        }
+        return facts[hdu].wcsVariantLabels
     }
 
     public var displayed: FITSImage? {
@@ -91,7 +104,19 @@ public struct HDUFacts {
     public var displayedWCS: WCS? {
         if let derived { return derived.wcs }
         guard facts.indices.contains(hdu), displayed != nil else { return nil }
-        return facts[hdu].wcs(variant: wcsVariant)
+        return facts[hdu].wcs(variant: sourceWCSVariant)
+    }
+
+    /// The default levels for a newly displayed image. Zscale reads at most 600
+    /// source pixels; a full finite scan is only needed if that sample is empty.
+    public static func recommendedLevels(for image: FITSImage) -> RasterLevels {
+        let range = image.defaultRange().map { ($0.z1, $0.z2) }
+            ?? image.physicalMinMax().map { ($0.min, $0.max) }
+        guard let range else { return RasterLevels(vmin: 0, vmax: 1) }
+        let lo = Float(range.0)
+        let hi = Float(range.1)
+        guard lo.isFinite, hi.isFinite else { return RasterLevels(vmin: 0, vmax: 1) }
+        return RasterLevels(vmin: lo, vmax: hi)
     }
 
     /// The next image HDU of the same width and height, wrapping at the end.
@@ -109,7 +134,7 @@ public struct HDUFacts {
         hdu = index
         plane = 0
         derived = nil
-        wcsVariant = facts[index].wcsVariants.first ?? ""
+        sourceWCSVariant = facts[index].wcsVariants.first ?? ""
         imageRevision &+= 1
     }
 
@@ -123,8 +148,9 @@ public struct HDUFacts {
     }
 
     public func selectWCSVariant(_ variant: String) {
-        guard facts[hdu].wcsVariants.contains(variant), variant != wcsVariant else { return }
-        wcsVariant = variant
+        guard derived == nil, facts[hdu].wcsVariants.contains(variant),
+              variant != sourceWCSVariant else { return }
+        sourceWCSVariant = variant
     }
 
     public func setDerived(_ image: DerivedImage?) {

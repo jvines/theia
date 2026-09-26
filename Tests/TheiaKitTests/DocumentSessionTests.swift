@@ -33,13 +33,20 @@ final class DocumentSessionTests: XCTestCase {
         XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
         session.selectWCSVariant("A")
         XCTAssertEqual(session.displayedWCS?.crval.ra, 20)
+        XCTAssertEqual(session.availableWCSVariants, ["", "A"])
 
         let derived = FITSImage.fromFloat32(pixels: [99, 99, 99, 99], width: 2, height: 2)
         let revision = session.imageRevision
         session.setDerived(DerivedImage(image: derived, wcs: nil, label: "Filtered"))
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 99)
         XCTAssertNil(session.displayedWCS)
+        XCTAssertEqual(session.availableWCSVariants, [])
+        session.selectWCSVariant("")
+        XCTAssertEqual(session.wcsVariant, "A")
         XCTAssertEqual(session.imageRevision, revision + 1)
+
+        session.setDerived(DerivedImage(image: derived, wcs: session.facts[1].wcs(variant: "A"), label: "Same geometry"))
+        XCTAssertEqual(session.availableWCSVariants, ["A"])
 
         session.selectHDU(2)
         XCTAssertNil(session.derived)
@@ -57,6 +64,16 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testFourDimensionalCubeExposesEveryFlattenedPlane() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.selectHDU(5)
+            XCTAssertEqual(session.facts[5].planeCount, 4)
+            session.selectPlane(3)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 12)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()
@@ -65,12 +82,14 @@ final class DocumentSessionTests: XCTestCase {
         appendHDU(&data, cards: imageCards(width: 2, height: 2), pixels: [11, 12, 13, 14])
         appendHDU(&data, cards: imageCards(width: 3, height: 2), pixels: [1, 2, 3, 4, 5, 6])
         appendHDU(&data, cards: ["XTENSION= 'BINTABLE'", "BITPIX  =                    8", "NAXIS   =                    2", "NAXIS1  =                    0", "NAXIS2  =                    0", "PCOUNT  =                    0", "GCOUNT  =                    1", "TFIELDS =                    0"], pixels: [])
+        appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2, fourthAxis: 2), pixels: Array(0..<16).map(UInt8.init))
         return DocumentSession(url: URL(fileURLWithPath: "/tmp/session.fits"), file: try FITSFile(data: data))
     }
 
-    private func imageCards(width: Int, height: Int, depth: Int? = nil) -> [String] {
-        ["XTENSION= 'IMAGE   '", "BITPIX  =                    8", "NAXIS   = \(String(format: "%20d", depth == nil ? 2 : 3))", "NAXIS1  = \(String(format: "%20d", width))", "NAXIS2  = \(String(format: "%20d", height))"]
+    private func imageCards(width: Int, height: Int, depth: Int? = nil, fourthAxis: Int? = nil) -> [String] {
+        ["XTENSION= 'IMAGE   '", "BITPIX  =                    8", "NAXIS   = \(String(format: "%20d", fourthAxis != nil ? 4 : depth == nil ? 2 : 3))", "NAXIS1  = \(String(format: "%20d", width))", "NAXIS2  = \(String(format: "%20d", height))"]
         + (depth.map { ["NAXIS3  = \(String(format: "%20d", $0))"] } ?? [])
+        + (fourthAxis.map { ["NAXIS4  = \(String(format: "%20d", $0))"] } ?? [])
         + ["PCOUNT  =                    0", "GCOUNT  =                    1"]
     }
 

@@ -233,6 +233,21 @@ public struct FITSImage: Sendable {
         }
     }
 
+    /// Full finite range without allocating a decoded pixel array.
+    public func physicalMinMax() -> (min: Double, max: Double)? {
+        var lo = Double.infinity
+        var hi = -Double.infinity
+        for y in 0..<height {
+            for x in 0..<width {
+                let value = physicalValue(x: x, y: y)
+                guard value.isFinite else { continue }
+                lo = Swift.min(lo, value)
+                hi = Swift.max(hi, value)
+            }
+        }
+        return lo <= hi ? (lo, hi) : nil
+    }
+
     /// How to combine values along the planes of a cube into a single 2D image.
     public enum CollapseMode: String, CaseIterable, Sendable {
         case sum, mean, median, max

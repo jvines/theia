@@ -86,7 +86,7 @@ public enum PixelStatistics {
         var i = 0
         while i < nPix && sample.count < nSamples {
             let v = sampleAt(i)
-            if !v.isNaN { sample.append(v) }
+            if v.isFinite { sample.append(v) }
             i += stride
         }
         guard !sample.isEmpty else { return nil }

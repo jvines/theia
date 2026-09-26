@@ -27,7 +27,6 @@ struct DocumentView: View {
     @State private var regions: [Region] = []
     @State private var selectedRegionIndex: Int? = nil
     @State private var previewRegion: Region? = nil
-    @State private var resetLevelsTrigger: Int = 0
     @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
@@ -36,11 +35,19 @@ struct DocumentView: View {
 
     private var selectedHDU: Int {
         get { session.hdu }
-        nonmutating set { session.selectHDU(newValue) }
+        nonmutating set {
+            let oldRevision = session.imageRevision
+            session.selectHDU(newValue)
+            if session.imageRevision != oldRevision { resetLevels() }
+        }
     }
     private var selectedPlane: Int {
         get { session.plane }
-        nonmutating set { session.selectPlane(newValue) }
+        nonmutating set {
+            let oldRevision = session.imageRevision
+            session.selectPlane(newValue)
+            if session.imageRevision != oldRevision { resetLevels() }
+        }
     }
     private var activeWCSVariant: String {
         get { session.wcsVariant }
@@ -48,7 +55,11 @@ struct DocumentView: View {
     }
     private var displayOverride: DerivedImage? {
         get { session.derived }
-        nonmutating set { session.setDerived(newValue) }
+        nonmutating set {
+            let oldRevision = session.imageRevision
+            session.setDerived(newValue)
+            if session.imageRevision != oldRevision { resetLevels() }
+        }
     }
     private var imageRevision: Int { session.imageRevision }
     private var hduBinding: Binding<Int> {
@@ -83,6 +94,7 @@ struct DocumentView: View {
                     makeImageView(hdu: hdu)
                     StatusBar(
                         hdu: hdu,
+                        planeCount: session.facts[selectedHDU].planeCount,
                         plane: planeBinding,
                         planePlaying: $planePlaying,
                         planeFPS: $planeFPS,
@@ -123,23 +135,22 @@ struct DocumentView: View {
                 if selectedRegionIndex != nil {
                     return nudgeSelected(dx: -1, dy: 0, shift: press.modifiers.contains(.shift))
                 }
-                guard let hdu = document.file.hdus[safe: selectedHDU],
-                      hdu.planeCount > 1 else { return .ignored }
-                selectedPlane = (selectedPlane - 1 + hdu.planeCount) % hdu.planeCount
+                let planeCount = session.facts[selectedHDU].planeCount
+                guard planeCount > 1 else { return .ignored }
+                selectedPlane = (selectedPlane - 1 + planeCount) % planeCount
                 return .handled
             }
             .onKeyPress(.rightArrow, phases: .down) { press in
                 if selectedRegionIndex != nil {
                     return nudgeSelected(dx: 1, dy: 0, shift: press.modifiers.contains(.shift))
                 }
-                guard let hdu = document.file.hdus[safe: selectedHDU],
-                      hdu.planeCount > 1 else { return .ignored }
-                selectedPlane = (selectedPlane + 1) % hdu.planeCount
+                let planeCount = session.facts[selectedHDU].planeCount
+                guard planeCount > 1 else { return .ignored }
+                selectedPlane = (selectedPlane + 1) % planeCount
                 return .handled
             }
             .onKeyPress(.space) {
-                guard let hdu = document.file.hdus[safe: selectedHDU],
-                      hdu.planeCount > 1 else { return .ignored }
+                guard session.facts[selectedHDU].planeCount > 1 else { return .ignored }
                 planePlaying.toggle()
                 return .handled
             }
@@ -163,8 +174,7 @@ struct DocumentView: View {
                     let noMods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
                     let inTextEditor = (NSApp.keyWindow?.firstResponder as? NSText) != nil
                     guard isSpace, noMods, !inTextEditor,
-                          let hdu = document.file.hdus[safe: selectedHDU],
-                          hdu.planeCount > 1 else { return event }
+                          session.facts[selectedHDU].planeCount > 1 else { return event }
                     planePlaying.toggle()
                     return nil   // consume
                 }
@@ -206,6 +216,7 @@ struct DocumentView: View {
             blinking: blinkState != nil,
             fetchingCatalog: isFetchingCatalog,
             selectedHDU: selectedHDU,
+            imageRevision: imageRevision,
             hasDisplayOverride: displayOverride != nil,
             wcsVariant: activeWCSVariant
         )
@@ -222,6 +233,7 @@ private struct ToolbarSyncSnapshot: Hashable {
     let blinking: Bool
     let fetchingCatalog: Bool
     let selectedHDU: Int
+    let imageRevision: Int
     let hasDisplayOverride: Bool
     let wcsVariant: String
 }
@@ -255,6 +267,7 @@ struct HDUSidebar: View {
 
 struct StatusBar: View {
     let hdu: FITSHDU
+    let planeCount: Int
     @Binding var plane: Int
     @Binding var planePlaying: Bool
     @Binding var planeFPS: Double
@@ -285,10 +298,10 @@ struct StatusBar: View {
 
     @ViewBuilder
     private var planePicker: some View {
-        if hdu.planeCount > 1 {
+        if planeCount > 1 {
             CubePlaneControl(
                 plane: $plane,
-                planeCount: hdu.planeCount,
+                planeCount: planeCount,
                 playing: $planePlaying,
                 fps: $planeFPS
             )
@@ -412,7 +425,6 @@ struct FITSImageView: View {
     let regions: [Region]
     let selectedRegionIndex: Int?
     let previewRegion: Region?
-    let resetLevelsTrigger: Int
     let onCursorChange: (CursorInfo?) -> Void
     let onRegionCreated: (Region) -> Void
     let onRegionPreview: (Region?) -> Void
@@ -429,7 +441,7 @@ struct FITSImageView: View {
     let profileGeometry: ProfileGeometry?
 
     var body: some View {
-        if hdu.isTable, let table = FITSTableLoader.load(hdu) {
+        if displayed == nil, hdu.isTable, let table = FITSTableLoader.load(hdu) {
             TableExtensionView(table: table)
         } else if let image = displayed {
             let wcs = displayedWCS
@@ -441,7 +453,6 @@ struct FITSImageView: View {
                     colorMap: colorMap,
                     viewport: viewport,
                     drawMode: drawMode,
-                    resetLevelsTrigger: resetLevelsTrigger,
                     regions: regions,
                     wcs: wcs,
                     onCursorChange: onCursorChange,
@@ -834,12 +845,11 @@ extension DocumentView {
         toolbarState.blinkActive = blinkState != nil
         toolbarState.isFetchingCatalog = isFetchingCatalog
         let selected = document.file.hdus[safe: selectedHDU]
-        toolbarState.hasSelectedImage = selected != nil
+        toolbarState.hasSelectedImage = session.displayed != nil
         toolbarState.hasWCS = session.displayedWCS != nil
         if selected != nil {
-            let variants = session.facts[selectedHDU].wcsVariants
-            toolbarState.wcsVariants = variants
-            toolbarState.wcsVariantLabels = session.facts[selectedHDU].wcsVariantLabels
+            toolbarState.wcsVariants = session.availableWCSVariants
+            toolbarState.wcsVariantLabels = session.wcsVariantLabels
             toolbarState.activeWCSVariant = activeWCSVariant
         }
         toolbarState.hasMultipleHDUs = document.file.hdus.count >= 2
@@ -853,7 +863,7 @@ extension DocumentView {
         toolbarState.onSelectStretch    = { v in stretch = v }
         toolbarState.onSelectMap        = { v in colorMap = v }
         toolbarState.onSelectMode       = { v in drawMode = v }
-        toolbarState.onZScale           = { resetLevelsTrigger &+= 1 }
+        toolbarState.onZScale           = { resetLevels() }
         toolbarState.onExport           = { exportImage() }
         toolbarState.onToggleGrid       = { showWCSGrid.toggle() }
         toolbarState.onToggleCompass    = { showCompass.toggle() }
@@ -907,7 +917,6 @@ extension DocumentView {
             regions: regions,
             selectedRegionIndex: selectedRegionIndex,
             previewRegion: previewRegion,
-            resetLevelsTrigger: resetLevelsTrigger,
             onCursorChange: handleCursor,
             onRegionCreated: appendRegion,
             onRegionPreview: { previewRegion = $0 },
@@ -1081,11 +1090,11 @@ extension DocumentView {
             let target = bs.currentHDU(at: now)
             if selectedHDU != target { selectedHDU = target }
         }
+        let planeCount = session.facts[selectedHDU].planeCount
         guard planePlaying,
-              let hdu = document.file.hdus[safe: selectedHDU],
-              hdu.planeCount > 1,
+              planeCount > 1,
               now.timeIntervalSince(lastPlaneAdvance) >= 1.0 / planeFPS else { return }
-        selectedPlane = (selectedPlane + 1) % hdu.planeCount
+        selectedPlane = (selectedPlane + 1) % planeCount
         lastPlaneAdvance = now
     }
 
@@ -1194,6 +1203,13 @@ extension DocumentView {
         session.displayed
     }
 
+    private func resetLevels() {
+        guard let image = session.displayed else { return }
+        let levels = DocumentSession.recommendedLevels(for: image)
+        viewport.vmin = levels.vmin
+        viewport.vmax = levels.vmax
+    }
+
     fileprivate func refreshCurrentImageProvider() {
         document.currentImageProvider = { [session] in session.displayed }
     }
@@ -1237,9 +1253,7 @@ extension DocumentView {
         let url = SessionState.sidecarURL(for: document.url)
         guard let data = try? Data(contentsOf: url),
               let session = try? SessionState.fromJSON(data) else {
-            // No saved session → trigger one zscale pass so the freshly-opened file
-            // looks like data, not a black square.
-            resetLevelsTrigger &+= 1
+            // DocumentModel already set levels before the first renderer upload.
             return
         }
         if document.file.hdus.indices.contains(session.selectedHDU) {
@@ -1285,7 +1299,6 @@ extension DocumentView {
         displayOverride = DisplayOverride(image: filtered,
                                           wcs: session.displayedWCS,
                                           label: label)
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func applyUnary(_ op: ImageArithmetic.UnaryOp) {
@@ -1294,7 +1307,6 @@ extension DocumentView {
         displayOverride = DisplayOverride(image: transformed,
                                           wcs: session.displayedWCS,
                                           label: op.label)
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func applyBinary(_ op: ImageArithmetic.BinaryOp, other otherIdx: Int) {
@@ -1305,7 +1317,6 @@ extension DocumentView {
         displayOverride = DisplayOverride(image: result,
                                           wcs: session.displayedWCS,
                                           label: "\(op.label) vs HDU \(otherIdx)")
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func subtractBackground() {
@@ -1319,7 +1330,6 @@ extension DocumentView {
         displayOverride = DisplayOverride(image: result,
                                           wcs: session.displayedWCS,
                                           label: String(format: "BG sub (μ=%.3g, σ=%.3g, n=%d)", bg.mean, bg.stddev, bg.count))
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func binImage(by n: Int) {
@@ -1342,7 +1352,6 @@ extension DocumentView {
         }
         let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
         displayOverride = DisplayOverride(image: result, wcs: nil, label: "Binned \(n)×\(n)")
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func promptForSlab() {
@@ -1391,9 +1400,8 @@ extension DocumentView {
         for i in 0..<out.count where cnt[i] == 0 { out[i] = .nan }
         let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
         displayOverride = DisplayOverride(image: result,
-                                          wcs: WCS(header: hdu.header),
+                                          wcs: session.facts[selectedHDU].wcs(variant: session.sourceWCSVariant),
                                           label: "Slab \(from)…\(to) (sum)")
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func stackOpenDocuments(mode: StackMode) {
@@ -1435,7 +1443,6 @@ extension DocumentView {
         let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
         displayOverride = DisplayOverride(image: result, wcs: nil,
                                           label: "Stack \(mode.label) of \(images.count) windows")
-        resetLevelsTrigger &+= 1
     }
 
     fileprivate func generateLightCurve() {
@@ -1628,7 +1635,6 @@ extension DocumentView {
         let cropped = FITSImage.fromFloat32(pixels: out, width: w, height: h)
         displayOverride = DisplayOverride(image: cropped, wcs: nil,
                                           label: "Crop \(bbox.minX),\(bbox.minY) → \(bbox.maxX),\(bbox.maxY)")
-        resetLevelsTrigger &+= 1
     }
 
     private func boundingBox(of region: Region, wcs: WCS?, in image: FITSImage) -> (minX: Int, minY: Int, maxX: Int, maxY: Int)? {
@@ -1716,8 +1722,11 @@ extension DocumentView {
     fileprivate func collapseCube(_ mode: FITSImage.CollapseMode) {
         guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3,
               let collapsed = try? FITSImage.collapsed(hdu: hdu, mode: mode) else { return }
-        displayOverride = DisplayOverride(image: collapsed, wcs: session.displayedWCS, label: "\(mode.label) over plane axis")
-        resetLevelsTrigger &+= 1
+        displayOverride = DisplayOverride(
+            image: collapsed,
+            wcs: session.facts[selectedHDU].wcs(variant: session.sourceWCSVariant),
+            label: "\(mode.label) over plane axis"
+        )
     }
 
     fileprivate func openContourLevelsPanel() {
@@ -1764,20 +1773,16 @@ extension DocumentView {
 
     fileprivate func applyScalePreset(_ preset: ScalePreset) {
         guard let image = currentImage() else { return }
-        let values = image.physicalValues()
         switch preset {
         case .zscale:
-            if let r = PixelStatistics.zscale(values) {
-                viewport.vmin = Float(r.z1)
-                viewport.vmax = Float(r.z2)
-            }
+            resetLevels()
         case .minMax:
-            if let r = PixelStatistics.minMax(values) {
+            if let r = image.physicalMinMax() {
                 viewport.vmin = Float(r.min)
                 viewport.vmax = Float(r.max)
             }
         case .percentile(let lo, let hi):
-            if let r = PixelStatistics.percentiles(values, lower: lo, upper: hi) {
+            if let r = PixelStatistics.percentiles(image.physicalValues(), lower: lo, upper: hi) {
                 viewport.vmin = Float(r.vmin)
                 viewport.vmax = Float(r.vmax)
             }

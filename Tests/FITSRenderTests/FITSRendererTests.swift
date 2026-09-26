@@ -73,6 +73,18 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(renderer.texture?.width, 2)
     }
 
+    func testUploadingDisplayKeepsCallerLevels() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let viewport = ViewportObservable(vmin: 42, vmax: 99)
+        let renderer = try FITSRenderer(device: device, viewport: viewport)
+        let image = FITSImage.fromFloat32(pixels: [1, 2], width: 2, height: 1)
+        try renderer.setDisplayImage(DisplayImage(image: image, revision: 1), sourceImage: image)
+        XCTAssertEqual(viewport.vmin, 42)
+        XCTAssertEqual(viewport.vmax, 99)
+    }
+
     func testHistogramCDFTracksDisplayLevels() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("No Metal device")

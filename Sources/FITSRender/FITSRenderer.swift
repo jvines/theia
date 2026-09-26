@@ -164,8 +164,6 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
             )
             hasFittedImage = true
         }
-        self.vmin = display.initialLevels.vmin
-        self.vmax = display.initialLevels.vmax
         cdfLevels = nil
         updateCDFIfNeeded()
     }
