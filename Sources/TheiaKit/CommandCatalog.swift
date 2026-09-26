@@ -1,4 +1,5 @@
 import Foundation
+import FITSCore
 
 public enum CommandSelectionState: Sendable, Equatable {
     case none
@@ -14,9 +15,80 @@ public struct CommandDescriptor: Sendable, Equatable {
     public let state: CommandSelectionState
 }
 
+public struct CommandMenuItem: Sendable {
+    public let identifier: String
+    public let title: String
+    public let enabled: Bool
+    public let state: CommandSelectionState
+    public let command: SessionCommand?
+}
+
+public enum CommandMenuEntry: Sendable {
+    case item(CommandMenuItem)
+    case separator
+
+    public var item: CommandMenuItem? {
+        if case .item(let value) = self { return value }
+        return nil
+    }
+}
+
 /// Platform-neutral toolbar metadata and state. Identifiers match the Mac's
 /// existing NSToolbarItem identifiers so saved toolbar layouts remain valid.
 @MainActor public enum CommandCatalog {
+    public static func sessionMenu(
+        _ identifier: String, for session: DocumentSession
+    ) -> [CommandMenuEntry]? {
+        let image = session.displayed != nil
+        func item(
+            _ id: String, _ title: String, _ command: SessionCommand?,
+            enabled: Bool = true, selected: Bool = false
+        ) -> CommandMenuEntry {
+            .item(CommandMenuItem(identifier: id, title: title, enabled: enabled,
+                                  state: .checked(selected), command: command))
+        }
+        switch identifier {
+        case "stretch":
+            return ImageStretch.allCases.map { value in
+                item("stretch.\(value.rawValue)", value.label, .setStretch(value),
+                     enabled: image, selected: session.view.stretch == value)
+            }
+        case "map":
+            return ColorMap.allCases.map { value in
+                item("map.\(value.rawValue)", value.label, .setColormap(value),
+                     enabled: image, selected: session.view.colorMap == value)
+            }
+        case "mode":
+            return DrawMode.allCases.map { value in
+                item("mode.\(value.rawValue)", value.label, .setDrawMode(value),
+                     enabled: image, selected: session.mode == value)
+            }
+        case "scale":
+            let presets = ScalePreset.toolbarPresets.map { preset in
+                item("scale.preset.\(preset.identifier)", preset.label, .applyScalePreset(preset),
+                     enabled: image)
+            }
+            return presets + [
+                .separator,
+                item("scale.parameters", "Scale Parameters…", .showPanel(.scaleParameters),
+                     enabled: image),
+            ]
+        case "wcsVariant":
+            let variants = session.availableWCSVariants
+            guard !variants.isEmpty else {
+                return [item("wcs.empty", "No WCS in this HDU", nil, enabled: false)]
+            }
+            return variants.map { variant in
+                let name = variant.isEmpty ? "Primary" : "Variant \(variant)"
+                let title = session.wcsVariantLabels[variant].map { "\(name) — \($0)" } ?? name
+                return item("wcs.\(variant.isEmpty ? "primary" : variant)", title,
+                            .selectWCSVariant(variant), enabled: image && session.derived == nil,
+                            selected: session.wcsVariant == variant)
+            }
+        default: return nil
+        }
+    }
+
     public static func toolbarItem(
         _ identifier: String, for session: DocumentSession, workspaceImageCount: Int = 0
     ) -> CommandDescriptor? {
@@ -62,7 +134,7 @@ public struct CommandDescriptor: Sendable, Equatable {
             return item("Sync", "Synchronise zoom / scale / colormap across open windows")
         case "wcsVariant":
             return item("WCS", "Pick which WCS variant drives coordinates",
-                        enabled: wcs && !session.availableWCSVariants.isEmpty,
+                        enabled: wcs && session.derived == nil && !session.availableWCSVariants.isEmpty,
                         state: .selected(session.wcsVariant))
         case "blink":
             return item("Blink", "Cycle between current HDU and next", enabled: session.blinkPartner != nil,

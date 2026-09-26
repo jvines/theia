@@ -67,53 +67,22 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
             guard let menuItem = item as? NSMenuToolbarItem else { continue }
             switch item.itemIdentifier {
             case ID.stretch:
-                menuItem.menu = buildSimpleMenu(ImageStretch.allCases,
-                                                label: { $0.label },
-                                                selected: state.stretch,
-                                                action: #selector(stretchSelected(_:)))
+                menuItem.menu = buildSessionMenu("stretch")
             case ID.map:
-                menuItem.menu = buildSimpleMenu(ColorMap.allCases,
-                                                label: { $0.label },
-                                                selected: state.colorMap,
-                                                action: #selector(mapSelected(_:)))
+                menuItem.menu = buildSessionMenu("map")
             case ID.mode:
-                menuItem.menu = buildSimpleMenu(DrawMode.allCases,
-                                                label: { $0.label },
-                                                selected: state.drawMode,
-                                                action: #selector(modeSelected(_:)))
+                menuItem.menu = buildSessionMenu("mode")
             case ID.tools:
                 menuItem.menu = buildToolsMenu()
             case ID.scale:
-                menuItem.menu = buildScaleMenu()
+                menuItem.menu = buildSessionMenu("scale")
             case ID.sync:
                 menuItem.menu = buildSyncMenu()
             case ID.wcsVariant:
-                menuItem.menu = buildWCSVariantMenu()
+                menuItem.menu = buildSessionMenu("wcsVariant")
             default: break
             }
         }
-    }
-
-    private func buildWCSVariantMenu() -> NSMenu {
-        let menu = NSMenu()
-        if state.wcsVariants.isEmpty {
-            let mi = NSMenuItem(title: "No WCS in this HDU", action: nil, keyEquivalent: "")
-            mi.isEnabled = false
-            menu.addItem(mi)
-            return menu
-        }
-        for v in state.wcsVariants {
-            let label = v.isEmpty ? "Primary" : "Variant \(v)"
-            let title: String
-            if let nice = state.wcsVariantLabels[v] { title = "\(label) — \(nice)" }
-            else { title = label }
-            let mi = NSMenuItem(title: title, action: #selector(wcsVariantSelected(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = v as NSString
-            mi.state = (v == state.activeWCSVariant) ? .on : .off
-            menu.addItem(mi)
-        }
-        return menu
     }
 
     private func buildSyncMenu() -> NSMenu {
@@ -142,21 +111,6 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         return menu
     }
 
-    private func buildScaleMenu() -> NSMenu {
-        let menu = NSMenu()
-        for p in ScalePreset.toolbarPresets {
-            let mi = NSMenuItem(title: p.label, action: #selector(presetSelected(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = ScalePresetBox(preset: p)
-            menu.addItem(mi)
-        }
-        menu.addItem(.separator())
-        let params = NSMenuItem(title: "Scale Parameters…", action: #selector(openParametersAction), keyEquivalent: "")
-        params.target = self
-        menu.addItem(params)
-        return menu
-    }
-
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -182,25 +136,19 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         switch id {
         case ID.stretch:
             return makeMenu(id: id, symbol: "slider.horizontal.3",
-                            menu: buildSimpleMenu(ImageStretch.allCases, label: { $0.label },
-                                                  selected: state.stretch,
-                                                  action: #selector(stretchSelected(_:))))
+                            menu: buildSessionMenu("stretch"))
         case ID.map:
             return makeMenu(id: id, symbol: "paintpalette",
-                            menu: buildSimpleMenu(ColorMap.allCases, label: { $0.label },
-                                                  selected: state.colorMap,
-                                                  action: #selector(mapSelected(_:))))
+                            menu: buildSessionMenu("map"))
         case ID.mode:
             return makeMenu(id: id, symbol: "hand.draw",
-                            menu: buildSimpleMenu(DrawMode.allCases, label: { $0.label },
-                                                  selected: state.drawMode,
-                                                  action: #selector(modeSelected(_:))))
+                            menu: buildSessionMenu("mode"))
         case ID.zscale:
             return makeButton(id: id, symbol: "wand.and.stars",
                               action: #selector(zscaleAction))
         case ID.scale:
             return makeMenu(id: id, symbol: "slider.vertical.3",
-                            menu: buildScaleMenu())
+                            menu: buildSessionMenu("scale"))
         case ID.export:
             return makeButton(id: id, symbol: "square.and.arrow.up",
                               action: #selector(exportAction))
@@ -224,7 +172,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                             menu: buildSyncMenu())
         case ID.wcsVariant:
             return makeMenu(id: id, symbol: "globe",
-                            menu: buildWCSVariantMenu())
+                            menu: buildSessionMenu("wcsVariant"))
         case ID.blink:
             return makeButton(id: id, symbol: "rectangle.on.rectangle",
                               action: #selector(blinkAction))
@@ -280,16 +228,22 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         return item
     }
 
-    private func buildSimpleMenu<T: Equatable>(_ values: [T],
-                                               label: (T) -> String,
-                                               selected: T,
-                                               action: Selector) -> NSMenu {
+    private func buildSessionMenu(_ identifier: String) -> NSMenu {
         let menu = NSMenu()
-        for v in values {
-            let mi = NSMenuItem(title: label(v), action: action, keyEquivalent: "")
+        menu.autoenablesItems = false
+        for entry in CommandCatalog.sessionMenu(identifier, for: state.session) ?? [] {
+            guard let descriptor = entry.item else {
+                menu.addItem(.separator())
+                continue
+            }
+            let mi = NSMenuItem(title: descriptor.title, action: #selector(sessionMenuAction(_:)),
+                                keyEquivalent: "")
             mi.target = self
-            mi.representedObject = v
-            mi.state = (v == selected) ? .on : .off
+            mi.representedObject = descriptor.command.map(SessionCommandBox.init)
+            mi.isEnabled = descriptor.enabled
+            if case .checked(let checked) = descriptor.state {
+                mi.state = checked ? .on : .off
+            }
             menu.addItem(mi)
         }
         return menu
@@ -297,6 +251,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
 
     private func buildToolsMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         if state.hasCube {
             menu.addItem(NSMenuItem.sectionHeader(title: "Collapse cube"))
             for mode in FITSImage.CollapseMode.allCases {
@@ -410,10 +365,12 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     // MARK: - Actions
 
     @objc private func zscaleAction()        { state.onZScale() }
-    @objc private func openParametersAction(){ state.onOpenScaleParameters() }
-    @objc private func presetSelected(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? ScalePresetBox else { return }
-        state.onApplyScalePreset(box.preset)
+    @objc private func sessionMenuAction(_ sender: NSMenuItem) {
+        guard let box = sender.representedObject as? SessionCommandBox else { return }
+        let outcome = state.session.perform(box.command, origin: .user)
+        if outcome.failure == nil {
+            for effect in outcome.effects { state.onEffect(effect) }
+        }
     }
     @objc private func exportAction()        { state.onExport() }
     @objc private func gridAction()          { state.onToggleGrid() }
@@ -436,18 +393,6 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     @objc private func headerAction()        { state.onToggleInspector() }
     @objc private func clearOverrideAction() { state.onClearOverride() }
 
-    @objc private func stretchSelected(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? ImageStretch else { return }
-        state.onSelectStretch(v)
-    }
-    @objc private func mapSelected(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? ColorMap else { return }
-        state.onSelectMap(v)
-    }
-    @objc private func modeSelected(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? DrawMode else { return }
-        state.onSelectMode(v)
-    }
     @objc private func reprojectSelected(_ sender: NSMenuItem) {
         state.onReproject(sender.tag)
     }
@@ -465,10 +410,6 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         state.onStackOpenDocuments(m)
     }
     @objc private func lightCurveAction() { state.onLightCurve() }
-    @objc private func wcsVariantSelected(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? String else { return }
-        state.onSelectWCSVariant(v)
-    }
 
     @objc private func collapseSelected(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? CollapseModeBox else { return }
@@ -492,6 +433,11 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         guard let box = sender.representedObject as? BinaryOpBox else { return }
         state.onApplyBinary(box.op, box.otherIndex)
     }
+}
+
+private final class SessionCommandBox: NSObject {
+    let command: SessionCommand
+    init(_ command: SessionCommand) { self.command = command }
 }
 
 final class CollapseModeBox: NSObject {

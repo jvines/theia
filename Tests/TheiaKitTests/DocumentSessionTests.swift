@@ -141,6 +141,47 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testCommandCatalogueProvidesDynamicWCSAndScaleMenus() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let variants = CommandCatalog.sessionMenu("wcsVariant", for: session)
+            XCTAssertEqual(variants?.compactMap(\.item?.title), ["Primary", "Variant A"])
+            XCTAssertEqual(variants?.first?.item?.state, .checked(true))
+            if case .selectWCSVariant("A")? = variants?.last?.item?.command {} else {
+                XCTFail("Variant menu should dispatch its selected WCS")
+            }
+
+            let scale = CommandCatalog.sessionMenu("scale", for: session)
+            XCTAssertEqual(scale?.count, ScalePreset.toolbarPresets.count + 2)
+            XCTAssertEqual(scale?.first?.item?.title, "ZScale")
+            XCTAssertEqual(scale?.compactMap(\.item?.identifier), [
+                "scale.preset.zscale", "scale.preset.minmax",
+                "scale.preset.percentile.0.5.99.5",
+                "scale.preset.percentile.0.25.99.75",
+                "scale.preset.percentile.0.05.99.95",
+                "scale.parameters",
+            ])
+            if case .applyScalePreset(.zscale)? = scale?.first?.item?.command {} else {
+                XCTFail("Scale menu should dispatch a shared preset")
+            }
+            if case .showPanel(.scaleParameters)? = scale?.last?.item?.command {} else {
+                XCTFail("Scale menu should open parameters")
+            }
+
+            session.selectHDU(2)
+            let unavailable = CommandCatalog.sessionMenu("wcsVariant", for: session)
+            XCTAssertEqual(unavailable?.first?.item?.title, "No WCS in this HDU")
+            XCTAssertEqual(unavailable?.first?.item?.enabled, false)
+
+            session.selectHDU(1)
+            session.setDerived(DerivedImage(image: session.displayed!,
+                                            wcs: session.displayedWCS, label: "derived"))
+            XCTAssertEqual(CommandCatalog.sessionMenu("wcsVariant", for: session)?
+                .first?.item?.enabled, false)
+            XCTAssertEqual(CommandCatalog.toolbarItem("wcsVariant", for: session)?.enabled, false)
+        }
+    }
+
     func testNestedEventContextInheritsEchoTagAndRestoresOuterContext() async throws {
         try await MainActor.run {
             let session = try makeSession()

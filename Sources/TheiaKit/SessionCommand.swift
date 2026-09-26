@@ -14,6 +14,14 @@ public enum ScalePreset: Hashable, Sendable {
         .percentile(lower: 0.05, upper: 99.95),
     ]
 
+    public var identifier: String {
+        switch self {
+        case .zscale: return "zscale"
+        case .minMax: return "minmax"
+        case .percentile(let lower, let upper): return "percentile.\(lower).\(upper)"
+        }
+    }
+
     public var label: String {
         switch self {
         case .zscale: return "ZScale"

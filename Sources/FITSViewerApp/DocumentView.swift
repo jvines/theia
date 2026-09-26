@@ -879,9 +879,7 @@ extension DocumentView {
         toolbarState.reprojectCandidates = candidates.map { ($0, hduLabel($0), canReproject(onto: $0)) }
         toolbarState.differenceCandidates = candidates.map { ($0, hduLabel($0), canDifference(against: $0)) }
 
-        toolbarState.onSelectStretch    = { v in stretch = v }
-        toolbarState.onSelectMap        = { v in colorMap = v }
-        toolbarState.onSelectMode       = { v in drawMode = v }
+        toolbarState.onEffect           = { effect in applyEffect(effect) }
         toolbarState.onZScale           = { resetLevels() }
         toolbarState.onExport           = { exportImage() }
         toolbarState.onToggleGrid       = { showWCSGrid.toggle() }
@@ -899,7 +897,6 @@ extension DocumentView {
         toolbarState.onCollapseCube = { mode in collapseCube(mode) }
         toolbarState.onDetectSources = { detectSourcesAndAddRegions() }
         toolbarState.onCropToSelection = { cropToSelectedRegion() }
-        toolbarState.onSelectWCSVariant = { v in activeWCSVariant = v }
         toolbarState.onExportCubeMP4 = { exportCubeAsMP4() }
         toolbarState.onSubtractBackground = { subtractBackground() }
         toolbarState.onBinImage = { n in binImage(by: n) }
@@ -909,7 +906,6 @@ extension DocumentView {
         toolbarState.onApplyFilter = { spec in applyFilter(spec) }
         toolbarState.onApplyUnary = { op in applyUnary(op) }
         toolbarState.onApplyBinary = { op, idx in applyBinary(op, other: idx) }
-        toolbarState.onApplyScalePreset = { preset in applyScalePreset(preset) }
     }
 
     @ViewBuilder
@@ -1713,17 +1709,19 @@ extension DocumentView {
     fileprivate func performAndApply(_ command: SessionCommand) {
         let outcome = session.perform(command, origin: .user)
         guard outcome.failure == nil else { return }
-        for effect in outcome.effects {
-            switch effect {
-            case .showPanel(.scaleParameters): openScaleParametersPanel()
-            case .showPanel(.pixelTable):
-                PixelTableWindowController.show(
-                    provider: { currentImage() },
-                    cursorPublisher: pixelTableBridge,
-                    attachedTo: NSApp.keyWindow
-                )
-            case .showPanel(.contourLevels): openContourLevelsPanel()
-            }
+        for effect in outcome.effects { applyEffect(effect) }
+    }
+
+    fileprivate func applyEffect(_ effect: Effect) {
+        switch effect {
+        case .showPanel(.scaleParameters): openScaleParametersPanel()
+        case .showPanel(.pixelTable):
+            PixelTableWindowController.show(
+                provider: { currentImage() },
+                cursorPublisher: pixelTableBridge,
+                attachedTo: NSApp.keyWindow
+            )
+        case .showPanel(.contourLevels): openContourLevelsPanel()
         }
     }
 

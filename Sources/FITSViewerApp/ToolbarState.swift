@@ -31,9 +31,7 @@ final class ToolbarState: ObservableObject {
     @Published var reprojectCandidates: [(Int, String, Bool)] = []
     @Published var differenceCandidates: [(Int, String, Bool)] = []
 
-    var onSelectStretch: (ImageStretch) -> Void = { _ in }
-    var onSelectMap: (ColorMap) -> Void = { _ in }
-    var onSelectMode: (DrawMode) -> Void = { _ in }
+    var onEffect: (Effect) -> Void = { _ in }
     var onZScale: () -> Void = {}
     var onExport: () -> Void = {}
     var onToggleGrid: () -> Void = {}
@@ -52,10 +50,8 @@ final class ToolbarState: ObservableObject {
     var onApplyFilter: (FilterSpec) -> Void = { _ in }
     var onApplyUnary: (ImageArithmetic.UnaryOp) -> Void = { _ in }
     var onApplyBinary: (ImageArithmetic.BinaryOp, Int) -> Void = { _, _ in }
-    var onApplyScalePreset: (ScalePreset) -> Void = { _ in }
     var onDetectSources: () -> Void = {}
     var onCropToSelection: () -> Void = {}
-    var onSelectWCSVariant: (String) -> Void = { _ in }
     var onExportCubeMP4: () -> Void = {}
     var onSubtractBackground: () -> Void = {}
     var onBinImage: (Int) -> Void = { _ in }
@@ -75,10 +71,4 @@ enum FilterSpec {
     case boxcar(size: Int)
     case median(size: Int)
     case gaussian(sigma: Double)
-}
-
-/// Reference wrapper so a `ScalePreset` enum value can ride in `NSMenuItem.representedObject`.
-final class ScalePresetBox: NSObject {
-    let preset: ScalePreset
-    init(preset: ScalePreset) { self.preset = preset }
 }
