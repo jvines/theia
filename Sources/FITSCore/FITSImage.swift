@@ -228,7 +228,24 @@ public struct FITSImage: Sendable {
 
     /// Default display range via IRAF zscale.
     public func defaultRange(contrast: Double = 0.25) -> (z1: Double, z2: Double)? {
-        PixelStatistics.zscale(physicalValues(), contrast: contrast)
+        PixelStatistics.zscaleSampled(pixelCount: width * height, contrast: contrast) { index in
+            physicalValue(x: index % width, y: index / width)
+        }
+    }
+
+    /// Full finite range without allocating a decoded pixel array.
+    public func physicalMinMax() -> (min: Double, max: Double)? {
+        var lo = Double.infinity
+        var hi = -Double.infinity
+        for y in 0..<height {
+            for x in 0..<width {
+                let value = physicalValue(x: x, y: y)
+                guard value.isFinite else { continue }
+                lo = Swift.min(lo, value)
+                hi = Swift.max(hi, value)
+            }
+        }
+        return lo <= hi ? (lo, hi) : nil
     }
 
     /// How to combine values along the planes of a cube into a single 2D image.

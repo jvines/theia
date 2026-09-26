@@ -14,8 +14,6 @@ public struct FITSMetalView: NSViewRepresentable {
     public let colorMap: ColorMap
     public let viewport: ViewportObservable
     public let drawMode: DrawMode
-    /// Bumping this value triggers a recompute of vmin/vmax via image.defaultRange().
-    public let resetLevelsTrigger: Int
     public let onCursorChange: ((CursorInfo?) -> Void)?
     public let onRegionCreated: ((Region) -> Void)?
     public let onRegionPreview: ((Region?) -> Void)?
@@ -38,7 +36,6 @@ public struct FITSMetalView: NSViewRepresentable {
         colorMap: ColorMap = .gray,
         viewport: ViewportObservable,
         drawMode: DrawMode = .pan,
-        resetLevelsTrigger: Int = 0,
         regions: [Region] = [],
         wcs: WCS? = nil,
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
@@ -60,7 +57,6 @@ public struct FITSMetalView: NSViewRepresentable {
         self.colorMap = colorMap
         self.viewport = viewport
         self.drawMode = drawMode
-        self.resetLevelsTrigger = resetLevelsTrigger
         self.regions = regions
         self.wcs = wcs
         self.onLineProfile = onLineProfile
@@ -142,19 +138,11 @@ public struct FITSMetalView: NSViewRepresentable {
         view.regions = regions
         view.wcs = wcs
         view.drawMode = drawMode
-        if context.coordinator.lastResetTrigger != resetLevelsTrigger {
-            context.coordinator.lastResetTrigger = resetLevelsTrigger
-            if let img = renderer.image, let range = img.defaultRange() {
-                renderer.vmin = Float(range.z1)
-                renderer.vmax = Float(range.z2)
-            }
-        }
         view.setNeedsDisplay(view.bounds)
     }
 
     public final class Coordinator {
         var renderer: FITSRenderer?
-        var lastResetTrigger: Int = 0
         private var requestedRevision: Int?
         private var displayTask: Task<Void, Never>?
         private let displayBuilder = DisplayImageBuilder()

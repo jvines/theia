@@ -2,6 +2,15 @@ import XCTest
 @testable import FITSCore
 
 final class FITSImageTests: XCTestCase {
+    func testPhysicalMinMaxSkipsUndefinedAndNonFinitePixels() {
+        let image = FITSImage.fromFloat32(
+            pixels: [.nan, 7, -.infinity, -3, .infinity, 2], width: 3, height: 2
+        )
+        let range = image.physicalMinMax()
+        XCTAssertEqual(range?.min, -3)
+        XCTAssertEqual(range?.max, 7)
+    }
+
     func testNormalizedFloat32ProducesRowMajorBuffer() throws {
         let pixels: [UInt8] = [1, 2, 3, 4, 5, 6]
         let data = makeFITS(bitpix: 8, naxis1: 3, naxis2: 2, pixelBytes: Data(pixels))
