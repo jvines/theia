@@ -10,6 +10,7 @@ import TheiaKit
 /// toolbar controller reads from it and invokes callbacks back on click.
 @MainActor
 final class ToolbarState: ObservableObject {
+    let session: DocumentSession
     @Published var stretch: ImageStretch = .linear
     @Published var colorMap: ColorMap = .gray
     @Published var drawMode: DrawMode = .pan
@@ -62,7 +63,7 @@ final class ToolbarState: ObservableObject {
     var onStackOpenDocuments: (StackMode) -> Void = { _ in }
     var onLightCurve: () -> Void = {}
 
-    init() {}
+    init(session: DocumentSession) { self.session = session }
 }
 
 enum StackMode: String, CaseIterable, Sendable {
@@ -80,24 +81,4 @@ enum FilterSpec {
 final class ScalePresetBox: NSObject {
     let preset: ScalePreset
     init(preset: ScalePreset) { self.preset = preset }
-}
-
-/// Built-in vmin/vmax presets surfaced from the Scale menu and Scale Parameters panel.
-enum ScalePreset: Equatable, Hashable {
-    case zscale
-    case minMax
-    case percentile(lower: Double, upper: Double)
-
-    var label: String {
-        switch self {
-        case .zscale:                       return "ZScale"
-        case .minMax:                       return "Min / Max"
-        case .percentile(let lo, let hi):
-            let span = hi - lo
-            if abs(span - 99.0) < 1e-9      { return "99 %" }
-            if abs(span - 99.5) < 1e-9      { return "99.5 %" }
-            if abs(span - 99.9) < 1e-9      { return "99.9 %" }
-            return String(format: "%.2f – %.2f %%", lo, hi)
-        }
-    }
 }

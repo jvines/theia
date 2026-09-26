@@ -1,0 +1,162 @@
+import Foundation
+import FITSCore
+
+/// Built-in brightness presets shared by menus, panels and scripted commands.
+public enum ScalePreset: Hashable, Sendable {
+    case zscale
+    case minMax
+    case percentile(lower: Double, upper: Double)
+
+    public static let toolbarPresets: [ScalePreset] = [
+        .zscale, .minMax,
+        .percentile(lower: 0.5, upper: 99.5),
+        .percentile(lower: 0.25, upper: 99.75),
+        .percentile(lower: 0.05, upper: 99.95),
+    ]
+
+    public var label: String {
+        switch self {
+        case .zscale: return "ZScale"
+        case .minMax: return "Min / Max"
+        case .percentile(let lower, let upper):
+            let span = upper - lower
+            if abs(span - 99.0) < 1e-9 { return "99 %" }
+            if abs(span - 99.5) < 1e-9 { return "99.5 %" }
+            if abs(span - 99.9) < 1e-9 { return "99.9 %" }
+            return String(format: "%.2f – %.2f %%", lower, upper)
+        }
+    }
+}
+
+/// State-changing document commands currently handled synchronously.
+public enum SessionCommand: Sendable {
+    case setStretch(ImageStretch)
+    case setColormap(ColorMap)
+    case setLevels(min: Float, max: Float)
+    case setStretchParameter(Float)
+    case applyScalePreset(ScalePreset)
+    case selectHDU(Int)
+    case selectPlane(Int)
+    case selectWCSVariant(String)
+    case setDrawMode(DrawMode)
+    case setGridVisible(Bool)
+    case setCompassVisible(Bool)
+    case setColorBarVisible(Bool)
+    case setContourSpec(ContourSpec)
+    case setPlaying(Bool)
+    case setFPS(Double)
+    case toggleBlink
+    case clearDerivedImage
+    case showPanel(PanelKind)
+}
+
+public enum CommandFailure: Error, Sendable, Equatable {
+    case noDisplayedImage
+    case invalidHDU(Int)
+    case invalidPlane(Int)
+    case unavailableWCSVariant(String)
+    case unavailableBlinkPartner
+    case invalidPercentileBounds
+    case requiresUserInterface
+    case unavailablePlayback
+
+    public var message: String {
+        switch self {
+        case .noDisplayedImage: "No image is displayed"
+        case .invalidHDU(let index): "Invalid HDU \(index)"
+        case .invalidPlane(let index): "Invalid plane \(index)"
+        case .unavailableWCSVariant(let variant): "Unavailable WCS variant \(variant)"
+        case .unavailableBlinkPartner: "No matching image HDU for blink"
+        case .invalidPercentileBounds: "Percentile bounds must be finite"
+        case .requiresUserInterface: "Command requires a user interface"
+        case .unavailablePlayback: "Current HDU has no playback planes"
+        }
+    }
+}
+
+public enum PanelKind: Sendable, Equatable {
+    case scaleParameters
+    case pixelTable
+    case contourLevels
+}
+
+public enum Effect: Sendable, Equatable {
+    case showPanel(PanelKind)
+}
+
+public struct CommandOutcome: Sendable {
+    public let effects: [Effect]
+    public let failure: CommandFailure?
+
+    public init(effects: [Effect] = [], failure: CommandFailure? = nil) {
+        self.effects = effects
+        self.failure = failure
+    }
+}
+
+extension DocumentSession {
+    @discardableResult public func perform(
+        _ command: SessionCommand, origin: CommandOrigin
+    ) -> CommandOutcome {
+        withEventContext(origin: origin) {
+            switch command {
+            case .setStretch(let value): view.stretch = value
+            case .setColormap(let value): view.colorMap = value
+            case .setLevels(let min, let max):
+                view.vmin = min
+                view.vmax = max
+            case .setStretchParameter(let value): view.stretchParameter = value
+            case .applyScalePreset(let preset):
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                switch preset {
+                case .zscale: resetLevels()
+                case .minMax: setMinMaxLevels()
+                case .percentile(let lower, let upper):
+                    guard lower.isFinite, upper.isFinite else {
+                        return CommandOutcome(failure: .invalidPercentileBounds)
+                    }
+                    setPercentileLevels(lower: lower, upper: upper)
+                }
+            case .selectHDU(let index):
+                guard facts.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidHDU(index))
+                }
+                selectHDU(index)
+            case .selectPlane(let index):
+                guard facts[hdu].isDisplayableImage,
+                      index >= 0, index < facts[hdu].planeCount else {
+                    return CommandOutcome(failure: .invalidPlane(index))
+                }
+                selectPlane(index)
+            case .selectWCSVariant(let variant):
+                guard derived == nil, facts[hdu].wcsVariants.contains(variant) else {
+                    return CommandOutcome(failure: .unavailableWCSVariant(variant))
+                }
+                selectWCSVariant(variant)
+            case .setDrawMode(let value): mode = value
+            case .setGridVisible(let value): showGrid = value
+            case .setCompassVisible(let value): showCompass = value
+            case .setColorBarVisible(let value): showColorBar = value
+            case .setContourSpec(let spec): setContourSpec(spec)
+            case .setPlaying(let value):
+                guard !value || facts[hdu].planeCount > 1 else {
+                    return CommandOutcome(failure: .unavailablePlayback)
+                }
+                setPlaying(value)
+            case .setFPS(let value): setFPS(value)
+            case .toggleBlink:
+                guard blink != nil || blinkPartner != nil else {
+                    return CommandOutcome(failure: .unavailableBlinkPartner)
+                }
+                toggleBlink()
+            case .clearDerivedImage: setDerived(nil)
+            case .showPanel(let panel):
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return CommandOutcome(effects: [.showPanel(panel)])
+            }
+            return CommandOutcome()
+        }
+    }
+}

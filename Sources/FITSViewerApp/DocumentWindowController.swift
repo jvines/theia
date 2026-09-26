@@ -16,7 +16,7 @@ final class DocumentWindowController: NSWindowController {
 
     init(document: DocumentModel) {
         self.documentModel = document
-        let state = ToolbarState()
+        let state = ToolbarState(session: document.session)
         self.toolbarState = state
         self.toolbarController = FITSToolbarController(state: state)
         let pulseSource = PlaybackDisplayLink()

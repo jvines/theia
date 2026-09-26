@@ -144,14 +144,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
 
     private func buildScaleMenu() -> NSMenu {
         let menu = NSMenu()
-        let presets: [ScalePreset] = [
-            .zscale,
-            .minMax,
-            .percentile(lower: 0.5, upper: 99.5),
-            .percentile(lower: 0.25, upper: 99.75),
-            .percentile(lower: 0.05, upper: 99.95),
-        ]
-        for p in presets {
+        for p in ScalePreset.toolbarPresets {
             let mi = NSMenuItem(title: p.label, action: #selector(presetSelected(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = ScalePresetBox(preset: p)
@@ -188,78 +181,61 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch id {
         case ID.stretch:
-            return makeMenu(id: id, label: "Stretch", symbol: "slider.horizontal.3",
-                            tooltip: "Image stretch function",
+            return makeMenu(id: id, symbol: "slider.horizontal.3",
                             menu: buildSimpleMenu(ImageStretch.allCases, label: { $0.label },
                                                   selected: state.stretch,
                                                   action: #selector(stretchSelected(_:))))
         case ID.map:
-            return makeMenu(id: id, label: "Map", symbol: "paintpalette",
-                            tooltip: "Colour map for stretched values",
+            return makeMenu(id: id, symbol: "paintpalette",
                             menu: buildSimpleMenu(ColorMap.allCases, label: { $0.label },
                                                   selected: state.colorMap,
                                                   action: #selector(mapSelected(_:))))
         case ID.mode:
-            return makeMenu(id: id, label: "Mode", symbol: "hand.draw",
-                            tooltip: "What the mouse does on the image",
+            return makeMenu(id: id, symbol: "hand.draw",
                             menu: buildSimpleMenu(DrawMode.allCases, label: { $0.label },
                                                   selected: state.drawMode,
                                                   action: #selector(modeSelected(_:))))
         case ID.zscale:
-            return makeButton(id: id, label: "ZScale", symbol: "wand.and.stars",
-                              tooltip: "Reset brightness limits to zscale defaults",
+            return makeButton(id: id, symbol: "wand.and.stars",
                               action: #selector(zscaleAction))
         case ID.scale:
-            return makeMenu(id: id, label: "Scale", symbol: "slider.vertical.3",
-                            tooltip: "Choose vmin/vmax preset or open Scale Parameters…",
+            return makeMenu(id: id, symbol: "slider.vertical.3",
                             menu: buildScaleMenu())
         case ID.export:
-            return makeButton(id: id, label: "Export…", symbol: "square.and.arrow.up",
-                              tooltip: "Export current view as PNG or TIFF",
+            return makeButton(id: id, symbol: "square.and.arrow.up",
                               action: #selector(exportAction))
         case ID.grid:
-            return makeButton(id: id, label: "Grid", symbol: "grid.circle",
-                              tooltip: "Toggle WCS gridlines",
+            return makeButton(id: id, symbol: "grid.circle",
                               action: #selector(gridAction))
         case ID.compass:
-            return makeButton(id: id, label: "Compass", symbol: "location.north",
-                              tooltip: "Toggle compass + scale bar",
+            return makeButton(id: id, symbol: "location.north",
                               action: #selector(compassAction))
         case ID.colorbar:
-            return makeButton(id: id, label: "Color Bar", symbol: "barometer",
-                              tooltip: "Toggle the color bar overlay",
+            return makeButton(id: id, symbol: "barometer",
                               action: #selector(colorBarAction))
         case ID.pixeltable:
-            return makeButton(id: id, label: "Pixel Table", symbol: "tablecells",
-                              tooltip: "Open the pixel-value table at the cursor",
+            return makeButton(id: id, symbol: "tablecells",
                               action: #selector(pixelTableAction))
         case ID.contour:
-            return makeButton(id: id, label: "Contours", symbol: "circle.hexagonpath",
-                              tooltip: "Open contour levels panel",
+            return makeButton(id: id, symbol: "circle.hexagonpath",
                               action: #selector(contourAction))
         case ID.sync:
-            return makeMenu(id: id, label: "Sync", symbol: "rectangle.split.2x1",
-                            tooltip: "Synchronise zoom / scale / colormap across open windows",
+            return makeMenu(id: id, symbol: "rectangle.split.2x1",
                             menu: buildSyncMenu())
         case ID.wcsVariant:
-            return makeMenu(id: id, label: "WCS", symbol: "globe",
-                            tooltip: "Pick which WCS variant (primary / A / B / …) drives coords",
+            return makeMenu(id: id, symbol: "globe",
                             menu: buildWCSVariantMenu())
         case ID.blink:
-            return makeButton(id: id, label: "Blink", symbol: "rectangle.on.rectangle",
-                              tooltip: "Cycle between current HDU and next",
+            return makeButton(id: id, symbol: "rectangle.on.rectangle",
                               action: #selector(blinkAction))
         case ID.tools:
-            return makeMenu(id: id, label: "Tools", symbol: "wrench.and.screwdriver",
-                            tooltip: "Reproject / Difference",
+            return makeMenu(id: id, symbol: "wrench.and.screwdriver",
                             menu: buildToolsMenu())
         case ID.catalog:
-            return makeButton(id: id, label: "Catalog", symbol: "sparkles",
-                              tooltip: "Fetch Gaia sources in field",
+            return makeButton(id: id, symbol: "sparkles",
                               action: #selector(catalogAction))
         case ID.header:
-            return makeButton(id: id, label: "Header", symbol: "sidebar.right",
-                              tooltip: "Toggle header / regions inspector",
+            return makeButton(id: id, symbol: "sidebar.right",
                               action: #selector(headerAction))
         default:
             return nil
@@ -267,37 +243,39 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        switch item.itemIdentifier {
-        case ID.export:           return state.hasSelectedImage
-        case ID.grid, ID.compass: return state.hasWCS
-        case ID.blink:            return state.hasMultipleHDUs
-        case ID.tools:            return state.hasMultipleHDUs || state.hasCube
-        case ID.catalog:          return !state.isFetchingCatalog && state.hasWCS
-        default:                  return true
-        }
+        CommandCatalog.toolbarItem(item.itemIdentifier.rawValue, for: state.session,
+                                   workspaceImageCount: workspaceImageCount)?.enabled ?? true
+    }
+
+    private var workspaceImageCount: Int {
+        AppDelegate.shared?.allControllersForScripting().filter {
+            $0.documentModel.session.displayed != nil
+        }.count ?? 0
     }
 
     // MARK: - Factories
 
-    private func makeButton(id: NSToolbarItem.Identifier, label: String,
-                            symbol: String, tooltip: String, action: Selector) -> NSToolbarItem {
+    private func makeButton(id: NSToolbarItem.Identifier,
+                            symbol: String, action: Selector) -> NSToolbarItem {
+        let descriptor = CommandCatalog.toolbarItem(id.rawValue, for: state.session)!
         let item = NSToolbarItem(itemIdentifier: id)
-        item.label = label
-        item.paletteLabel = label
-        item.toolTip = tooltip
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        item.label = descriptor.title
+        item.paletteLabel = descriptor.title
+        item.toolTip = descriptor.tooltip
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: descriptor.title)
         item.target = self
         item.action = action
         return item
     }
 
-    private func makeMenu(id: NSToolbarItem.Identifier, label: String,
-                          symbol: String, tooltip: String, menu: NSMenu) -> NSMenuToolbarItem {
+    private func makeMenu(id: NSToolbarItem.Identifier,
+                          symbol: String, menu: NSMenu) -> NSMenuToolbarItem {
+        let descriptor = CommandCatalog.toolbarItem(id.rawValue, for: state.session)!
         let item = NSMenuToolbarItem(itemIdentifier: id)
-        item.label = label
-        item.paletteLabel = label
-        item.toolTip = tooltip
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        item.label = descriptor.title
+        item.paletteLabel = descriptor.title
+        item.toolTip = descriptor.tooltip
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: descriptor.title)
         item.menu = menu
         return item
     }
@@ -340,10 +318,12 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
             let mi = NSMenuItem(title: "Stack: \(mode.label)", action: #selector(stackAction(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = mode.rawValue as NSString
+            mi.isEnabled = workspaceImageCount >= 2
             menu.addItem(mi)
         }
         let lc = NSMenuItem(title: "Light curve (selected region)", action: #selector(lightCurveAction), keyEquivalent: "")
         lc.target = self
+        lc.isEnabled = state.session.displayed != nil
         menu.addItem(lc)
         if state.hasSelectedImage {
             menu.addItem(NSMenuItem.sectionHeader(title: "Analysis"))

@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static private(set) weak var shared: AppDelegate?
 
     private var controllers: [DocumentWindowController] = []
+    private var imageObserverIDs: [ObjectIdentifier: UUID] = [:]
+    private var imageAvailability: [ObjectIdentifier: Bool] = [:]
 
     /// Stable, monotonic scripting id per controller. Assigned at open and never
     /// reused, so closing a middle window doesn't renumber the others (a positional
@@ -208,11 +210,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log("loaded \(document.file.hdus.count) HDUs")
         let controller = DocumentWindowController(document: document)
         controllers.append(controller)
+        let controllerID = ObjectIdentifier(controller)
+        imageAvailability[controllerID] = document.session.displayed != nil
+        imageObserverIDs[controllerID] = document.session.addEventObserver { [weak self, weak session = document.session] event in
+            guard event.kind == .imageRevisionChanged, let session else { return }
+            let available = session.displayed != nil
+            guard self?.imageAvailability[controllerID] != available else { return }
+            self?.imageAvailability[controllerID] = available
+            self?.refreshDocumentToolbars()
+        }
         documentIDs[ObjectIdentifier(controller)] = nextDocumentID
         nextDocumentID += 1
         currentController = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        refreshDocumentToolbars()
         NSDocumentController.shared.noteNewRecentDocumentURL(url)
         WelcomeWindowController.closeIfOpen()
         log("window shown, toolbar items=\(controller.window?.toolbar?.items.count ?? -1)")
@@ -246,8 +258,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func controllerDidClose(_ controller: DocumentWindowController) {
+        let id = ObjectIdentifier(controller)
+        if let observerID = imageObserverIDs.removeValue(forKey: id) {
+            controller.documentModel.session.removeEventObserver(observerID)
+        }
+        imageAvailability[id] = nil
         controllers.removeAll { $0 === controller }
-        documentIDs[ObjectIdentifier(controller)] = nil   // don't renumber the survivors
+        documentIDs[id] = nil   // don't renumber the survivors
+        refreshDocumentToolbars()
+    }
+
+    private func refreshDocumentToolbars() {
+        for controller in controllers { controller.toolbarController.refresh() }
     }
 
     // MARK: - Scripting bridge

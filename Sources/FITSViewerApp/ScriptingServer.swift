@@ -3,6 +3,7 @@ import Network
 import AppKit
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Localhost-only HTTP scripting server. Lets external tools (curl, Python, AppleScript,
 /// shell pipelines) drive an already-open Theia. Bound to 127.0.0.1 only — never
@@ -222,8 +223,9 @@ final class ScriptingServer {
                 case ("POST", "scale"):
                     return setScaleResponse(controller: controller, body: body)
                 case ("POST", "zscale"):
-                    controller.documentModel.session.resetLevels()
-                    return httpResponse(200, json: ["ok": true])
+                    return commandResponse(controller.documentModel.session.perform(
+                        .applyScalePreset(.zscale), origin: .script
+                    ))
                 case ("GET", "regions"):
                     return regionsGetResponse(controller: controller)
                 case ("POST", "regions"):
@@ -272,14 +274,20 @@ final class ScriptingServer {
         let session = controller.documentModel.session
         session.withEventContext(origin: .script) {
             if let s = obj["stretch"] as? String, let stretch = ImageStretch(rawValue: s) {
-                session.view.stretch = stretch
+                session.perform(.setStretch(stretch), origin: .script)
             }
             if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
-                session.view.colorMap = cm
+                session.perform(.setColormap(cm), origin: .script)
             }
-            if let vmin = obj["vmin"] as? Double { session.view.vmin = Float(vmin) }
-            if let vmax = obj["vmax"] as? Double { session.view.vmax = Float(vmax) }
-            if obj["zscale"] as? Bool == true { session.resetLevels() }
+            if let vmin = obj["vmin"] as? Double {
+                session.perform(.setLevels(min: Float(vmin), max: session.view.vmax), origin: .script)
+            }
+            if let vmax = obj["vmax"] as? Double {
+                session.perform(.setLevels(min: session.view.vmin, max: Float(vmax)), origin: .script)
+            }
+            if obj["zscale"] as? Bool == true {
+                session.perform(.applyScalePreset(.zscale), origin: .script)
+            }
         }
         let id = AppDelegate.shared?.scriptingID(of: controller) ?? -1
         return httpResponse(200, json: ["id": id])
@@ -304,8 +312,7 @@ final class ScriptingServer {
               let s = ImageStretch(rawValue: name) else {
             return httpResponse(400, json: ["error": "expected {name: <stretch>}"])
         }
-        controller.documentModel.session.view.stretch = s
-        return httpResponse(200, json: ["ok": true])
+        return commandResponse(controller.documentModel.session.perform(.setStretch(s), origin: .script))
     }
 
     private func setColormapResponse(controller: DocumentWindowController, body: Data) -> Data {
@@ -314,8 +321,7 @@ final class ScriptingServer {
               let cm = ColorMap(rawValue: name) else {
             return httpResponse(400, json: ["error": "expected {name: <colormap>}"])
         }
-        controller.documentModel.session.view.colorMap = cm
-        return httpResponse(200, json: ["ok": true])
+        return commandResponse(controller.documentModel.session.perform(.setColormap(cm), origin: .script))
     }
 
     private func setScaleResponse(controller: DocumentWindowController, body: Data) -> Data {
@@ -324,9 +330,9 @@ final class ScriptingServer {
               let vmax = obj["vmax"] as? Double else {
             return httpResponse(400, json: ["error": "expected {vmin, vmax}"])
         }
-        controller.documentModel.session.view.vmin = Float(vmin)
-        controller.documentModel.session.view.vmax = Float(vmax)
-        return httpResponse(200, json: ["ok": true])
+        return commandResponse(controller.documentModel.session.perform(
+            .setLevels(min: Float(vmin), max: Float(vmax)), origin: .script
+        ))
     }
 
     private func regionsGetResponse(controller: DocumentWindowController) -> Data {
@@ -344,6 +350,13 @@ final class ScriptingServer {
     }
 
     // MARK: - HTTP helpers
+
+    private func commandResponse(_ outcome: CommandOutcome) -> Data {
+        if let failure = outcome.failure {
+            return httpResponse(400, json: ["error": failure.message])
+        }
+        return httpResponse(200, json: ["ok": true])
+    }
 
     private func httpResponse(_ status: Int, json: [String: Any]) -> Data {
         let body = (try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])) ?? Data()

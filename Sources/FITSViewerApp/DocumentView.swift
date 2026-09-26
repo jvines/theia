@@ -16,11 +16,11 @@ struct DocumentView: View {
 
     private var stretch: ImageStretch {
         get { session.view.stretch }
-        nonmutating set { session.view.stretch = newValue }
+        nonmutating set { session.perform(.setStretch(newValue), origin: .user) }
     }
     private var colorMap: ColorMap {
         get { session.view.colorMap }
-        nonmutating set { session.view.colorMap = newValue }
+        nonmutating set { session.perform(.setColormap(newValue), origin: .user) }
     }
     private var regions: [Region] {
         get { session.regions }
@@ -36,24 +36,24 @@ struct DocumentView: View {
     }
     private var showWCSGrid: Bool {
         get { session.showGrid }
-        nonmutating set { session.showGrid = newValue }
+        nonmutating set { session.perform(.setGridVisible(newValue), origin: .user) }
     }
     private var showCompass: Bool {
         get { session.showCompass }
-        nonmutating set { session.showCompass = newValue }
+        nonmutating set { session.perform(.setCompassVisible(newValue), origin: .user) }
     }
     private var showColorBar: Bool {
         get { session.showColorBar }
-        nonmutating set { session.showColorBar = newValue }
+        nonmutating set { session.perform(.setColorBarVisible(newValue), origin: .user) }
     }
     private var contourSpec: ContourSpec {
         get { session.contourSpec }
-        nonmutating set { session.setContourSpec(newValue) }
+        nonmutating set { session.perform(.setContourSpec(newValue), origin: .user) }
     }
     private var contourSegments: [Contours.LeveledSegments] { session.contourSegments }
     private var drawMode: DrawMode {
         get { session.mode }
-        nonmutating set { session.mode = newValue }
+        nonmutating set { session.perform(.setDrawMode(newValue), origin: .user) }
     }
     private var profileGeometry: ProfileGeometry? {
         get { session.profileMarker }
@@ -73,14 +73,14 @@ struct DocumentView: View {
     }
     private var planePlaying: Bool {
         get { session.playing }
-        nonmutating set { session.setPlaying(newValue) }
+        nonmutating set { session.perform(.setPlaying(newValue), origin: .user) }
     }
     private var blinkState: BlinkState? { session.blink }
     private var playingBinding: Binding<Bool> {
-        Binding(get: { session.playing }, set: { session.setPlaying($0) })
+        Binding(get: { session.playing }, set: { session.perform(.setPlaying($0), origin: .user) })
     }
     private var fpsBinding: Binding<Double> {
-        Binding(get: { session.fps }, set: { session.setFPS($0) })
+        Binding(get: { session.fps }, set: { session.perform(.setFPS($0), origin: .user) })
     }
     private var inspectorTabBinding: Binding<InspectorTab> {
         Binding(get: { session.inspectorTab }, set: { session.inspectorTab = $0 })
@@ -91,15 +91,15 @@ struct DocumentView: View {
 
     private var selectedHDU: Int {
         get { session.hdu }
-        nonmutating set { session.selectHDU(newValue) }
+        nonmutating set { session.perform(.selectHDU(newValue), origin: .user) }
     }
     private var selectedPlane: Int {
         get { session.plane }
-        nonmutating set { session.selectPlane(newValue) }
+        nonmutating set { session.perform(.selectPlane(newValue), origin: .user) }
     }
     private var activeWCSVariant: String {
         get { session.wcsVariant }
-        nonmutating set { session.selectWCSVariant(newValue) }
+        nonmutating set { session.perform(.selectWCSVariant(newValue), origin: .user) }
     }
     private var displayOverride: DerivedImage? {
         get { session.derived }
@@ -893,15 +893,9 @@ extension DocumentView {
         toolbarState.onClearOverride    = { displayOverride = nil }
         toolbarState.onFetchCatalog     = { Task { await fetchCatalog() } }
         toolbarState.onToggleInspector  = { showInspector.toggle() }
-        toolbarState.onOpenScaleParameters = { openScaleParametersPanel() }
-        toolbarState.onOpenPixelTable = {
-            PixelTableWindowController.show(
-                provider: { currentImage() },
-                cursorPublisher: pixelTableBridge,
-                attachedTo: NSApp.keyWindow
-            )
-        }
-        toolbarState.onOpenContourLevels = { openContourLevelsPanel() }
+        toolbarState.onOpenScaleParameters = { performAndApply(.showPanel(.scaleParameters)) }
+        toolbarState.onOpenPixelTable = { performAndApply(.showPanel(.pixelTable)) }
+        toolbarState.onOpenContourLevels = { performAndApply(.showPanel(.contourLevels)) }
         toolbarState.onCollapseCube = { mode in collapseCube(mode) }
         toolbarState.onDetectSources = { detectSourcesAndAddRegions() }
         toolbarState.onCropToSelection = { cropToSelectedRegion() }
@@ -1210,7 +1204,7 @@ extension DocumentView {
     }
 
     private func resetLevels() {
-        session.resetLevels()
+        session.perform(.applyScalePreset(.zscale), origin: .user)
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1716,6 +1710,23 @@ extension DocumentView {
         )
     }
 
+    fileprivate func performAndApply(_ command: SessionCommand) {
+        let outcome = session.perform(command, origin: .user)
+        guard outcome.failure == nil else { return }
+        for effect in outcome.effects {
+            switch effect {
+            case .showPanel(.scaleParameters): openScaleParametersPanel()
+            case .showPanel(.pixelTable):
+                PixelTableWindowController.show(
+                    provider: { currentImage() },
+                    cursorPublisher: pixelTableBridge,
+                    attachedTo: NSApp.keyWindow
+                )
+            case .showPanel(.contourLevels): openContourLevelsPanel()
+            }
+        }
+    }
+
     fileprivate func openScaleParametersPanel() {
         let parent = NSApp.keyWindow
         ScaleParametersWindowController.show(
@@ -1727,14 +1738,7 @@ extension DocumentView {
     }
 
     fileprivate func applyScalePreset(_ preset: ScalePreset) {
-        switch preset {
-        case .zscale:
-            session.resetLevels()
-        case .minMax:
-            session.setMinMaxLevels()
-        case .percentile(let lo, let hi):
-            session.setPercentileLevels(lower: lo, upper: hi)
-        }
+        session.perform(.applyScalePreset(preset), origin: .user)
     }
 
     fileprivate func otherImageHDUIndices() -> [Int] {
@@ -1796,7 +1800,7 @@ extension DocumentView {
     }
 
     fileprivate func toggleBlink() {
-        session.toggleBlink()
+        session.perform(.toggleBlink, origin: .user)
     }
 
     fileprivate func fetchCatalog() async {

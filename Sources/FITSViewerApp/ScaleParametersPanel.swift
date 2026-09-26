@@ -71,11 +71,9 @@ struct ScaleParametersPanel: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    presetButton("ZScale", .zscale)
-                    presetButton("Min / Max", .minMax)
-                    presetButton("99 %",  .percentile(lower: 0.5, upper: 99.5))
-                    presetButton("99.5 %", .percentile(lower: 0.25, upper: 99.75))
-                    presetButton("99.9 %", .percentile(lower: 0.05, upper: 99.95))
+                    ForEach(ScalePreset.toolbarPresets, id: \.self) { preset in
+                        presetButton(preset)
+                    }
                 }
             }
 
@@ -110,8 +108,8 @@ struct ScaleParametersPanel: View {
         }
     }
 
-    private func presetButton(_ title: String, _ preset: ScalePreset) -> some View {
-        Button(title) { onApplyPreset(preset) }
+    private func presetButton(_ preset: ScalePreset) -> some View {
+        Button(preset.label) { onApplyPreset(preset) }
             .buttonStyle(.bordered)
     }
 

@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import FITSCore
 import XPABridge
+import TheiaKit
 
 /// Maps DS9-style XPA commands onto the app, reusing the same controller hooks
 /// as the HTTP scripting server. libxpa invokes these on the polling (main)
@@ -71,38 +72,44 @@ final class XPACommandBridge: XPAServerDelegate {
             switch toks.first {
             case "limits" where toks.count >= 3:
                 guard let lo = Double(toks[1]), let hi = Double(toks[2]) else { return false }
-                c.documentModel.session.view.vmin = Float(lo)
-                c.documentModel.session.view.vmax = Float(hi)
-                return true
+                return c.documentModel.session.perform(
+                    .setLevels(min: Float(lo), max: Float(hi)), origin: .script
+                ).failure == nil
             case "mode":
                 // DS9 "scale mode zscale|minmax|<percent>". Map to the real preset
                 // and reject unknown tokens instead of silently running zscale.
                 guard toks.count >= 2 else { return false }
                 switch toks[1].lowercased() {
-                case "zscale": c.documentModel.session.resetLevels()
-                case "minmax": c.documentModel.session.setMinMaxLevels()
+                case "zscale":
+                    return c.documentModel.session.perform(
+                        .applyScalePreset(.zscale), origin: .script
+                    ).failure == nil
+                case "minmax":
+                    return c.documentModel.session.perform(
+                        .applyScalePreset(.minMax), origin: .script
+                    ).failure == nil
                 default:
                     // Numeric percentile, e.g. `scale mode 99.5` → clip (100−p)/2 each end.
                     guard let pct = Double(toks[1]), pct > 0, pct <= 100 else { return false }
                     let tail = (100 - pct) / 2
-                    c.documentModel.session.setPercentileLevels(lower: tail, upper: 100 - tail)
+                    return c.documentModel.session.perform(
+                        .applyScalePreset(.percentile(lower: tail, upper: 100 - tail)), origin: .script
+                    ).failure == nil
                 }
-                return true
             default:
                 guard let s = appStretch(fromDS9: p) else { return false }
-                c.documentModel.session.view.stretch = s
-                return true
+                return c.documentModel.session.perform(.setStretch(s), origin: .script).failure == nil
             }
 
         case "cmap":
             guard let c = frontController(), let cm = appColorMap(fromDS9: p) else { return false }
-            c.documentModel.session.view.colorMap = cm
-            return true
+            return c.documentModel.session.perform(.setColormap(cm), origin: .script).failure == nil
 
         case "zscale":
             guard let c = frontController() else { return false }
-            c.documentModel.session.resetLevels()
-            return true
+            return c.documentModel.session.perform(
+                .applyScalePreset(.zscale), origin: .script
+            ).failure == nil
 
         case "regions":
             guard let c = frontController() else { return false }

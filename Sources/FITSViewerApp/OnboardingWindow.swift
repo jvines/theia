@@ -56,7 +56,7 @@ private struct OnboardingView: View {
         (
             icon: "slider.horizontal.3",
             title: "Stretches & colormaps",
-            detail: "Linear, log, asinh, square-root and more stretches; full DS9-compatible colormap library."
+            detail: "Linear, log, asinh, square-root and more stretches; five built-in colour maps."
         ),
         (
             icon: "circle.dashed",

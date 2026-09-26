@@ -39,6 +39,108 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testDisplayCommandsApplySynchronouslyWithScriptOrigin() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var events: [SessionEvent] = []
+            session.addEventObserver { events.append($0) }
+            let stretch = session.perform(.setStretch(.log), origin: .script)
+            XCTAssertNil(stretch.failure)
+            XCTAssertTrue(stretch.effects.isEmpty)
+            XCTAssertEqual(session.view.stretch, .log)
+            XCTAssertTrue(events.allSatisfy { $0.origin == .script })
+
+            let plane = session.perform(.selectPlane(1), origin: .script)
+            XCTAssertNil(plane.failure)
+            XCTAssertEqual(session.plane, 1)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 4)
+            XCTAssertTrue(events.contains { $0.kind == .selectionChanged && $0.origin == .script })
+        }
+    }
+
+    func testInvalidSelectionCommandReturnsTypedFailureWithoutMutation() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let initialRevision = session.imageRevision
+            let invalid = session.perform(.selectHDU(999), origin: .script)
+            XCTAssertEqual(invalid.failure, .invalidHDU(999))
+            XCTAssertEqual(session.hdu, 1)
+            XCTAssertEqual(session.imageRevision, initialRevision)
+        }
+    }
+
+    func testPlaybackCommandRejectsAnHDUWithoutMultiplePlanes() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.selectHDU(2) // a 2D image
+            let outcome = session.perform(.setPlaying(true), origin: .script)
+            XCTAssertEqual(outcome.failure, .unavailablePlayback)
+            XCTAssertFalse(session.playing)
+        }
+    }
+
+    func testScalePresetIsSharedWithToolbarAndCommandDispatch() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(ScalePreset.toolbarPresets.count, 5)
+            XCTAssertEqual(ScalePreset.percentile(lower: 0.25, upper: 99.75).label, "99.5 %")
+            let outcome = session.perform(.applyScalePreset(.minMax), origin: .user)
+            XCTAssertNil(outcome.failure)
+            XCTAssertEqual(session.view.vmin, 0)
+            XCTAssertEqual(session.view.vmax, 3)
+        }
+    }
+
+    func testInvalidScriptPercentileReturnsFailureWithoutChangingLevels() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let before = (session.view.vmin, session.view.vmax)
+            let outcome = session.perform(
+                .applyScalePreset(.percentile(lower: .nan, upper: 99)), origin: .script
+            )
+            XCTAssertEqual(outcome.failure, .invalidPercentileBounds)
+            XCTAssertEqual(session.view.vmin, before.0)
+            XCTAssertEqual(session.view.vmax, before.1)
+        }
+    }
+
+    func testPanelCommandReturnsEffectWithoutOpeningUIInSharedLayer() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let outcome = session.perform(.showPanel(.scaleParameters), origin: .user)
+            XCTAssertNil(outcome.failure)
+            XCTAssertEqual(outcome.effects, [.showPanel(.scaleParameters)])
+            let scripted = session.perform(.showPanel(.scaleParameters), origin: .script)
+            XCTAssertTrue(scripted.effects.isEmpty)
+            XCTAssertEqual(scripted.failure, .requiresUserInterface)
+        }
+    }
+
+    func testToolbarCatalogueDisablesImageActionsOnTablesAndAllowsSingleImageTools() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.selectHDU(4) // table
+            XCTAssertFalse(CommandCatalog.toolbarItem("export", for: session)?.enabled ?? true)
+            XCTAssertFalse(CommandCatalog.toolbarItem("tools", for: session)?.enabled ?? true)
+            XCTAssertFalse(CommandCatalog.toolbarItem("blink", for: session)?.enabled ?? true)
+            XCTAssertTrue(CommandCatalog.toolbarItem(
+                "tools", for: session, workspaceImageCount: 2
+            )?.enabled ?? false)
+
+            var data = Data()
+            appendHDU(&data, cards: [
+                "SIMPLE  =                    T", "BITPIX  =                    8",
+                "NAXIS   =                    2", "NAXIS1  =                    2", "NAXIS2  =                    2"
+            ], pixels: [1, 2, 3, 4])
+            let single = DocumentSession(
+                url: URL(fileURLWithPath: "/tmp/single.fits"), file: try FITSFile(data: data)
+            )
+            XCTAssertTrue(CommandCatalog.toolbarItem("tools", for: single)?.enabled ?? false)
+            XCTAssertFalse(CommandCatalog.toolbarItem("blink", for: single)?.enabled ?? true)
+            XCTAssertEqual(CommandCatalog.toolbarItem("export", for: single)?.title, "Export…")
+        }
+    }
+
     func testNestedEventContextInheritsEchoTagAndRestoresOuterContext() async throws {
         try await MainActor.run {
             let session = try makeSession()
