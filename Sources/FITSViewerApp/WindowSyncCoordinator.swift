@@ -135,7 +135,7 @@ final class WindowSyncCoordinator: ObservableObject {
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
             c.toolbarState.colorMap = cm
-            c.toolbarState.onSelectMap(cm)
+            c.documentModel.session.view.colorMap = cm
         }
     }
 

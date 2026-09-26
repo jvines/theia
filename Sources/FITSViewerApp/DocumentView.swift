@@ -1746,7 +1746,6 @@ extension DocumentView {
         let parent = NSApp.keyWindow
         ScaleParametersWindowController.show(
             viewport: viewport,
-            toolbarState: toolbarState,
             physicalValuesProvider: { currentImage()?.physicalValues() ?? [] },
             onApplyPreset: { preset in applyScalePreset(preset) },
             attachedTo: parent

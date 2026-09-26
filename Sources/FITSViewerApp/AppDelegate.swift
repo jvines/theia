@@ -292,15 +292,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
         guard let controller else { NSSound.beep(); return }
         let model = controller.documentModel
-        let toolbar = controller.toolbarState
         let viewport = model.session.view
         guard let image = model.session.displayed else { NSSound.beep(); return }
         let bytes = ImageExport.render(
             image,
-            stretch: toolbar.stretch,
+            stretch: viewport.stretch,
             vmin: Double(viewport.vmin),
             vmax: Double(viewport.vmax),
-            colorMap: toolbar.colorMap,
+            colorMap: viewport.colorMap,
             parameter: viewport.stretchParameter
         )
         guard let rep = NSBitmapImageRep(

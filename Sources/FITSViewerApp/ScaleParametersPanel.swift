@@ -9,7 +9,6 @@ import TheiaKit
 /// Classic Scale Parameters dialog.
 struct ScaleParametersPanel: View {
     let viewport: ImageViewState
-    @ObservedObject var toolbarState: ToolbarState
     let physicalValuesProvider: () -> [Double]
     let onApplyPreset: (ScalePreset) -> Void
 
@@ -80,7 +79,7 @@ struct ScaleParametersPanel: View {
                 }
             }
 
-            if toolbarState.stretch.usesParameter {
+            if viewport.stretch.usesParameter {
                 section(title: "Power exponent") {
                     HStack(spacing: 8) {
                         Slider(value: powerExponentBinding, in: 0.1...8.0)
@@ -193,13 +192,11 @@ struct ScaleParametersPanel: View {
 @MainActor
 final class ScaleParametersWindowController: NSWindowController {
     static func show(viewport: ImageViewState,
-                     toolbarState: ToolbarState,
                      physicalValuesProvider: @escaping () -> [Double],
                      onApplyPreset: @escaping (ScalePreset) -> Void,
                      attachedTo parent: NSWindow?) {
         let view = ScaleParametersPanel(
             viewport: viewport,
-            toolbarState: toolbarState,
             physicalValuesProvider: physicalValuesProvider,
             onApplyPreset: onApplyPreset
         )
