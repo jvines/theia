@@ -1,0 +1,36 @@
+# Build the shared targets on the oldest supported Linux family. The official
+# Amazon Linux 2 Swift toolchain is copied into AlmaLinux 8, so compilation and
+# tests use the EL8 headers, libraries and glibc.
+FROM swift:6.3-amazonlinux2 AS swift-toolchain
+
+RUN swift --version | grep -q 'Swift version 6.3.3' \
+    && mkdir -p /opt/swift-toolchain/bin /opt/swift-toolchain/lib \
+    && for file in /usr/bin/*; do \
+         if ! rpm -qf "$file" >/dev/null 2>&1; then \
+           cp -a "$file" /opt/swift-toolchain/bin/; \
+         fi; \
+       done \
+    && for file in /usr/lib/*; do \
+         if { [ -f "$file" ] || [ -L "$file" ]; } \
+            && ! rpm -qf "$file" >/dev/null 2>&1; then \
+           cp -a "$file" /opt/swift-toolchain/lib/; \
+         fi; \
+       done
+
+FROM almalinux:8
+
+RUN dnf install -y \
+      binutils gcc gcc-c++ git gzip tar unzip \
+      zlib-devel libstdc++ libuuid libedit libicu libxml2 \
+      sqlite-libs libcurl-minimal ncurses-libs openssl-libs nss \
+      compat-openssl10 \
+    && dnf clean all
+
+COPY --from=swift-toolchain /opt/swift-toolchain/bin/ /usr/bin/
+COPY --from=swift-toolchain /opt/swift-toolchain/lib/ /usr/lib/
+COPY --from=swift-toolchain /usr/lib/swift/ /usr/lib/swift/
+COPY --from=swift-toolchain /usr/lib/clang/ /usr/lib/clang/
+COPY --from=swift-toolchain /usr/share/swift/ /usr/share/swift/
+
+RUN swift --version | grep -q 'Swift version 6.3.3'
+WORKDIR /src

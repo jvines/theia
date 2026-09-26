@@ -54,7 +54,7 @@ final class WindowSyncCoordinator: ObservableObject {
 
     // MARK: - Broadcasts
 
-    private func broadcastTransform(_ t: ViewportTransform, from origin: DocumentWindowController) {
+    private func broadcastTransform(_ t: ViewTransform, from origin: DocumentWindowController) {
         guard matchZoom, !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }

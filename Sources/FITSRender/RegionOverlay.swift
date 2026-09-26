@@ -1,5 +1,6 @@
 import SwiftUI
 import FITSCore
+import TheiaKit
 
 /// SwiftUI overlay that draws `Region` annotations on top of a `FITSMetalView`.
 /// Image-frame regions render directly; fk5/ICRS/J2000 regions resolve via the
@@ -19,9 +20,13 @@ public struct RegionOverlay: View {
 
     public var body: some View {
         Canvas { context, size in
-            let t = viewport.transform
+            let mapping = ViewMapping(
+                transform: viewport.transform,
+                viewSize: SIMD2(Double(size.width), Double(size.height)),
+                backingScale: 1
+            )
             for (idx, region) in regions.enumerated() {
-                guard let path = path(for: region, transform: t, canvasHeight: size.height) else { continue }
+                guard let path = path(for: region, mapping: mapping) else { continue }
                 let colour = Color(hex: region.attributes["color"]) ?? .green
                 let isSelected = (idx == selectedIndex)
                 let lineWidth: Double = isSelected ? 2.4 : 1.2
@@ -29,7 +34,7 @@ public struct RegionOverlay: View {
                 context.stroke(path, with: .color(strokeColour), lineWidth: lineWidth)
                 // Text label: draw above the region's centre, if set.
                 if let text = region.attributes["text"], !text.isEmpty,
-                   let centre = labelAnchor(for: region, transform: t, canvasHeight: size.height) {
+                   let centre = labelAnchor(for: region, mapping: mapping) {
                     let attr = AttributedString(text, attributes: AttributeContainer([
                         .foregroundColor: NSColor(cgColor: NSColor(strokeColour).cgColor) ?? .green,
                         .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
@@ -41,7 +46,7 @@ public struct RegionOverlay: View {
         .allowsHitTesting(false)
     }
 
-    private func labelAnchor(for region: Region, transform t: ViewportTransform, canvasHeight h: Double) -> CGPoint? {
+    private func labelAnchor(for region: Region, mapping: ViewMapping) -> CGPoint? {
         let p: Region.Point
         switch region.shape {
         case .circle(let c, _): p = c
@@ -52,24 +57,22 @@ public struct RegionOverlay: View {
         case .polygon(let pts): guard let first = pts.first else { return nil }; p = first
         }
         guard let img = imagePixel(from: p, frame: region.frame) else { return nil }
-        return canvasPoint(img, t, h)
+        return canvasPoint(img, mapping)
     }
 
     /// Converts an image-space (y-up) point to canvas space (y-down).
-    private func canvasPoint(_ image: (Double, Double), _ t: ViewportTransform, _ h: Double) -> CGPoint {
-        CGPoint(
-            x: t.scale * image.0 + t.translation.x,
-            y: h - (t.scale * image.1 + t.translation.y)
-        )
+    private func canvasPoint(_ image: (Double, Double), _ mapping: ViewMapping) -> CGPoint {
+        let point = mapping.imageToView(SIMD2(image.0, image.1))
+        return CGPoint(x: point.x, y: point.y)
     }
 
-    private func path(for region: Region, transform t: ViewportTransform, canvasHeight h: Double) -> Path? {
+    private func path(for region: Region, mapping: ViewMapping) -> Path? {
         switch region.shape {
         case .circle(let center, let radius):
             guard let imageCentre = imagePixel(from: center, frame: region.frame),
                   let radiusPixels = pixelRadius(radius) else { return nil }
-            let viewCentre = canvasPoint(imageCentre, t, h)
-            let viewRadius = t.scale * radiusPixels
+            let viewCentre = canvasPoint(imageCentre, mapping)
+            let viewRadius = mapping.transform.scale * radiusPixels
             var path = Path()
             path.addEllipse(in: CGRect(
                 x: viewCentre.x - viewRadius, y: viewCentre.y - viewRadius,
@@ -81,9 +84,9 @@ public struct RegionOverlay: View {
             guard let imageCentre = imagePixel(from: center, frame: region.frame),
                   let wPix = pixelRadius(w),
                   let hPix = pixelRadius(h2) else { return nil }
-            let viewCentre = canvasPoint(imageCentre, t, h)
-            let halfW = t.scale * wPix / 2
-            let halfH = t.scale * hPix / 2
+            let viewCentre = canvasPoint(imageCentre, mapping)
+            let halfW = mapping.transform.scale * wPix / 2
+            let halfH = mapping.transform.scale * hPix / 2
             let corners = [
                 CGPoint(x: -halfW, y: -halfH),
                 CGPoint(x:  halfW, y: -halfH),
@@ -109,9 +112,9 @@ public struct RegionOverlay: View {
             guard let imageCentre = imagePixel(from: center, frame: region.frame),
                   let rxPix = pixelRadius(rx),
                   let ryPix = pixelRadius(ry) else { return nil }
-            let viewCentre = canvasPoint(imageCentre, t, h)
-            let halfW = t.scale * rxPix
-            let halfH = t.scale * ryPix
+            let viewCentre = canvasPoint(imageCentre, mapping)
+            let halfW = mapping.transform.scale * rxPix
+            let halfH = mapping.transform.scale * ryPix
             let theta = -angle * .pi / 180
             var path = Path()
             // Approximate as 64-segment polygon, rotated.
@@ -132,9 +135,9 @@ public struct RegionOverlay: View {
             guard let imageCentre = imagePixel(from: center, frame: region.frame),
                   let innerPix = pixelRadius(rIn),
                   let outerPix = pixelRadius(rOut) else { return nil }
-            let viewCentre = canvasPoint(imageCentre, t, h)
-            let inner = t.scale * innerPix
-            let outer = t.scale * outerPix
+            let viewCentre = canvasPoint(imageCentre, mapping)
+            let inner = mapping.transform.scale * innerPix
+            let outer = mapping.transform.scale * outerPix
             var path = Path()
             path.addEllipse(in: CGRect(
                 x: viewCentre.x - outer, y: viewCentre.y - outer,
@@ -150,7 +153,7 @@ public struct RegionOverlay: View {
             var path = Path()
             for (i, dsPoint) in pts.enumerated() {
                 guard let img = imagePixel(from: dsPoint, frame: region.frame) else { return nil }
-                let p = canvasPoint(img, t, h)
+                let p = canvasPoint(img, mapping)
                 if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
             }
             path.closeSubpath()
@@ -158,7 +161,7 @@ public struct RegionOverlay: View {
 
         case .point(let p):
             guard let imageCentre = imagePixel(from: p, frame: region.frame) else { return nil }
-            let viewCentre = canvasPoint(imageCentre, t, h)
+            let viewCentre = canvasPoint(imageCentre, mapping)
             let r: Double = 3
             var path = Path()
             path.addEllipse(in: CGRect(

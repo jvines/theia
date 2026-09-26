@@ -59,7 +59,7 @@ struct PixelTablePanel: View {
     private var footer: some View {
         if let c = cursor {
             HStack(spacing: 12) {
-                Text("(x, y) = (\(c.imageX), \(c.imageY))")
+                Text("(x, y) = (\(c.fitsX), \(c.fitsY))")
                 Text("value = \(c.value.isNaN ? "NaN" : String(format: "%.6g", c.value))")
             }
             .font(.system(.caption, design: .monospaced))

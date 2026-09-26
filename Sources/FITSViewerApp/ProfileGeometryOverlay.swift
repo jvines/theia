@@ -2,6 +2,7 @@ import SwiftUI
 import simd
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Shows the geometry (line, circle, etc) of the most-recent profile request so
 /// the user can see what was sampled. Updated by DocumentView whenever a profile
@@ -21,9 +22,14 @@ struct ProfileGeometryOverlay: View {
         Canvas { ctx, size in
             guard let g = geometry else { return }
             let t = viewport.transform
+            let mapping = ViewMapping(
+                transform: t,
+                viewSize: SIMD2(Double(size.width), Double(size.height)),
+                backingScale: 1
+            )
             func toCanvas(_ p: SIMD2<Double>) -> CGPoint {
-                CGPoint(x: t.scale * p.x + t.translation.x,
-                        y: size.height - (t.scale * p.y + t.translation.y))
+                let mapped = mapping.imageToView(p)
+                return CGPoint(x: mapped.x, y: mapped.y)
             }
             let stroke = Color(red: 1.0, green: 0.85, blue: 0.30)   // gold — distinct from regions
             switch g {

@@ -1,5 +1,7 @@
 import XCTest
+#if canImport(simd)
 import simd
+#endif
 @testable import FITSCore
 
 final class RegionEditTests: XCTestCase {

@@ -2,9 +2,10 @@ import SwiftUI
 import MetalKit
 import simd
 import FITSCore
+import TheiaKit
 
 /// SwiftUI wrapper around an `MTKView` driven by `FITSRenderer`, with mouse drag pan,
-/// pinch zoom, and scroll-wheel zoom hooked into the renderer's `ViewportTransform`.
+/// pinch zoom, and scroll-wheel zoom hooked into the renderer's `ViewTransform`.
 public struct FITSMetalView: NSViewRepresentable {
     public let image: FITSImage
     public let stretch: ImageStretch
@@ -142,7 +143,7 @@ public struct FITSMetalView: NSViewRepresentable {
     }
 }
 
-/// MTKView subclass that translates mouse / trackpad events into `ViewportTransform` updates
+/// MTKView subclass that translates mouse / trackpad events into `ViewTransform` updates
 /// and publishes cursor pixel coordinates + values via `onCursorChange`.
 public final class InteractiveMTKView: MTKView {
     public weak var fitsRenderer: FITSRenderer?
@@ -245,11 +246,11 @@ public final class InteractiveMTKView: MTKView {
     private func publishCursor(at windowLocation: NSPoint) {
         guard let r = fitsRenderer, let image = r.image else { return }
         let p = convert(windowLocation, from: nil)
-        // NSView default is isFlipped=false (y-up from bottom), matching our y-up image convention.
-        let viewPoint = SIMD2(Double(p.x), Double(p.y))
-        let img = r.transform.inverse(viewPoint)
-        let ix = Int(img.x.rounded(.down))
-        let iy = Int(img.y.rounded(.down))
+        let mapping = viewMapping(for: r)
+        let viewPoint = SIMD2(Double(p.x), Double(bounds.height - p.y))
+        let pixel = mapping.nearestImagePixel(toView: viewPoint)
+        let ix = pixel.x
+        let iy = pixel.y
         if ix < 0 || ix >= image.width || iy < 0 || iy >= image.height {
             onCursorChange?(nil)
             return
@@ -437,7 +438,7 @@ public final class InteractiveMTKView: MTKView {
         }
         switch drawMode {
         case .pan, .drawPolygon:
-            r.transform.pan(by: SIMD2(Double(event.deltaX), Double(event.deltaY)))
+            r.transform.pan(by: SIMD2(Double(event.deltaX), -Double(event.deltaY)))
             setNeedsDisplay(bounds)
         case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
             guard let start = dragStartImage,
@@ -467,9 +468,15 @@ public final class InteractiveMTKView: MTKView {
 
     private func imagePoint(at windowLocation: NSPoint, renderer: FITSRenderer) -> SIMD2<Double>? {
         let p = convert(windowLocation, from: nil)
-        let viewPoint = SIMD2(Double(p.x), Double(p.y))
-        let img = renderer.transform.inverse(viewPoint)
-        return img
+        return viewMapping(for: renderer).viewYUpToImage(SIMD2(Double(p.x), Double(p.y)))
+    }
+
+    private func viewMapping(for renderer: FITSRenderer) -> ViewMapping {
+        ViewMapping(
+            transform: renderer.transform,
+            viewSize: SIMD2(Double(bounds.width), Double(bounds.height)),
+            backingScale: Double(window?.backingScaleFactor ?? 1)
+        )
     }
 
     public override func magnify(with event: NSEvent) {
@@ -485,8 +492,8 @@ public final class InteractiveMTKView: MTKView {
     private func zoom(by factor: Double, at windowLocation: NSPoint) {
         guard let r = fitsRenderer else { return }
         let p = convert(windowLocation, from: nil)
-        let anchor = SIMD2(Double(p.x), Double(p.y))
-        r.transform.zoom(by: factor, around: anchor)
+        let anchor = viewMapping(for: r).viewYUpToImage(SIMD2(Double(p.x), Double(p.y)))
+        r.transform.zoom(by: factor, aroundImagePoint: anchor)
         setNeedsDisplay(bounds)
     }
 }

@@ -14,11 +14,28 @@ public enum CatalogError: Error, LocalizedError {
     }
 }
 
+public struct CatalogHTTPResponse: Sendable {
+    public let data: Data
+    public let statusCode: Int?
+
+    public init(data: Data, statusCode: Int?) {
+        self.data = data
+        self.statusCode = statusCode
+    }
+}
+
+/// The platform shell supplies HTTP so FITSCore never links platform networking.
+public protocol CatalogTransport: Sendable {
+    func get(_ url: URL, timeout: TimeInterval) async throws -> CatalogHTTPResponse
+}
+
 /// Thin async wrapper around the ESA Gaia archive TAP `/sync` endpoint.
 public actor CatalogClient {
-    public static let shared = CatalogClient()
+    private let transport: any CatalogTransport
 
-    public init() {}
+    public init(transport: any CatalogTransport) {
+        self.transport = transport
+    }
 
     public func fetchGaia(
         centerRA: Double,
@@ -39,16 +56,14 @@ public actor CatalogClient {
             URLQueryItem(name: "FORMAT", value: "csv"),
             URLQueryItem(name: "QUERY", value: adql),
         ]
-        var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
+        let response = try await transport.get(components.url!, timeout: 30)
+        guard let statusCode = response.statusCode else {
             throw CatalogError.invalidResponse
         }
-        guard 200..<300 ~= http.statusCode else {
-            throw CatalogError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        guard 200..<300 ~= statusCode else {
+            throw CatalogError.http(statusCode, String(data: response.data, encoding: .utf8) ?? "")
         }
-        guard let csv = String(data: data, encoding: .utf8) else {
+        guard let csv = String(data: response.data, encoding: .utf8) else {
             throw CatalogError.decoding("response is not UTF-8")
         }
         return CatalogResult.parseGaiaCSV(csv)

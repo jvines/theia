@@ -3,6 +3,7 @@ import Metal
 import MetalKit
 import simd
 import FITSCore
+import TheiaKit
 
 private struct Vertex {
     var position: SIMD2<Float>
@@ -46,10 +47,11 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     public var texture: MTLTexture?
     public private(set) var image: FITSImage?
     public let viewport: ViewportObservable
-    public var transform: ViewportTransform {
+    public var transform: ViewTransform {
         get { viewport.transform }
         set { viewport.transform = newValue }
     }
+    private var hasFittedImage = false
     public var vmin: Float {
         get { viewport.vmin }
         set { viewport.vmin = newValue }
@@ -176,6 +178,15 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     public func setImage(_ image: FITSImage) throws {
         self.image = image
         self.texture = try MetalTextureFactory.makeTexture(from: image, device: device)
+        hasFittedImage = false
+        let size = viewport.viewSizePoints
+        if size.width > 0, size.height > 0 {
+            transform = ViewTransform.fit(
+                imageSize: SIMD2(Double(image.width), Double(image.height)),
+                viewSize: SIMD2(Double(size.width), Double(size.height))
+            )
+            hasFittedImage = true
+        }
         let values = image.physicalValues()
         if let r = image.defaultRange() {
             self.vmin = Float(r.z1)
@@ -202,11 +213,12 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         let pointSize = view.bounds.size
         guard pointSize.width > 0, pointSize.height > 0 else { return }
         viewport.viewSizePoints = pointSize
-        if let tex = texture {
-            transform = ViewportTransform.fit(
+        if let tex = texture, !hasFittedImage {
+            transform = ViewTransform.fit(
                 imageSize: SIMD2(Double(tex.width), Double(tex.height)),
                 viewSize: SIMD2(Double(pointSize.width), Double(pointSize.height))
             )
+            hasFittedImage = true
         }
     }
 
@@ -224,28 +236,11 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         // the system stretches the drawable to the bounds automatically.
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let imgW = Float(texture.width)
-        let imgH = Float(texture.height)
-        let s = Float(transform.scale)
-        let tx = Float(transform.translation.x)
-        let ty = Float(transform.translation.y)
-        let w = Float(bounds.width)
-        let h = Float(bounds.height)
-
-        // image_view = s * (unit * imgDims) + t
-        // ndc = image_view * (2/drawable) - 1, with Y flipped
-        // y-up image convention: image_y=0 (FITS row 1, astronomical bottom) renders at
-        // screen bottom (NDC y = −1). Positive b, cy = 2*ty/h − 1.
-        let a = 2 * s * imgW / w
-        let b = 2 * s * imgH / h
-        let cx = 2 * tx / w - 1
-        let cy = 2 * ty / h - 1
-        let mvp = simd_float4x4(rows: [
-            SIMD4(a, 0, 0, cx),
-            SIMD4(0, b, 0, cy),
-            SIMD4(0, 0, 1, 0),
-            SIMD4(0, 0, 0, 1),
-        ])
+        let mvp = Self.modelViewProjection(
+            imageSize: SIMD2(Double(texture.width), Double(texture.height)),
+            viewSize: SIMD2(Double(bounds.width), Double(bounds.height)),
+            transform: transform
+        )
 
         var uniforms = Uniforms(
             mvp: mvp,
@@ -273,5 +268,27 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         encoder.endEncoding()
         command.present(drawable)
         command.commit()
+    }
+
+    /// Projects unit quad vertices through image edges into Metal's Y-up NDC.
+    /// The centre of texel j lies at image coordinate j, half a pixel from each edge.
+    static func modelViewProjection(
+        imageSize: SIMD2<Double>,
+        viewSize: SIMD2<Double>,
+        transform: ViewTransform
+    ) -> simd_float4x4 {
+        let mapping = ViewMapping(transform: transform, viewSize: viewSize, backingScale: 1)
+        let lowerLeft = mapping.imageToViewYUp(SIMD2(-0.5, -0.5))
+        let upperRight = mapping.imageToViewYUp(imageSize - SIMD2(repeating: 0.5))
+        let a = 2 * Float(upperRight.x - lowerLeft.x) / Float(viewSize.x)
+        let b = 2 * Float(upperRight.y - lowerLeft.y) / Float(viewSize.y)
+        let cx = 2 * Float(lowerLeft.x) / Float(viewSize.x) - 1
+        let cy = 2 * Float(lowerLeft.y) / Float(viewSize.y) - 1
+        return simd_float4x4(rows: [
+            SIMD4(a, 0, 0, cx),
+            SIMD4(0, b, 0, cy),
+            SIMD4(0, 0, 1, 0),
+            SIMD4(0, 0, 0, 1),
+        ])
     }
 }

@@ -1,5 +1,7 @@
 import XCTest
+#if canImport(simd)
 import simd
+#endif
 @testable import FITSCore
 
 final class CompassAndScaleBarTests: XCTestCase {
@@ -40,9 +42,11 @@ final class CompassAndScaleBarTests: XCTestCase {
         let wcs = try XCTUnwrap(WCS(header: header))
         let compass = wcs.compass
         // East and North should still be perpendicular unit vectors.
-        XCTAssertEqual(simd_length(compass.eastDirectionImage), 1, accuracy: 1e-9)
-        XCTAssertEqual(simd_length(compass.northDirectionImage), 1, accuracy: 1e-9)
-        XCTAssertEqual(simd_dot(compass.eastDirectionImage, compass.northDirectionImage), 0, accuracy: 1e-9)
+        let east = compass.eastDirectionImage
+        let north = compass.northDirectionImage
+        XCTAssertEqual((east.x * east.x + east.y * east.y).squareRoot(), 1, accuracy: 1e-9)
+        XCTAssertEqual((north.x * north.x + north.y * north.y).squareRoot(), 1, accuracy: 1e-9)
+        XCTAssertEqual(east.x * north.x + east.y * north.y, 0, accuracy: 1e-9)
     }
 
     func testPixelScaleArcsecPerPixel() throws {

@@ -1,6 +1,7 @@
 import SwiftUI
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Draws a small targeting crosshair at the given image-pixel coordinate. Used by
 /// the cross-window crosshair sync feature so hovering window A drops a marker at
@@ -12,9 +13,14 @@ struct CrosshairOverlay: View {
     var body: some View {
         Canvas { ctx, size in
             guard let p = imagePoint else { return }
-            let t = viewport.transform
-            let cx = t.scale * p.x + t.translation.x
-            let cy = size.height - (t.scale * p.y + t.translation.y)
+            let mapping = ViewMapping(
+                transform: viewport.transform,
+                viewSize: SIMD2(Double(size.width), Double(size.height)),
+                backingScale: 1
+            )
+            let point = mapping.imageToView(p)
+            let cx = point.x
+            let cy = point.y
             let r: Double = 14
             var path = Path()
             path.move(to: CGPoint(x: cx - r, y: cy))

@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// Aperture photometry on a `FITSImage` constrained to a `Region`.
 /// Works for circle / box / ellipse / annulus / polygon in image frame; WCS-frame

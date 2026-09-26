@@ -308,7 +308,7 @@ struct StatusBar: View {
         HStack(spacing: 4) {
             if showLabel { Text("Pixel").foregroundStyle(.tertiary) }
             if let c = cursor {
-                Text("(\(c.imageX), \(c.imageY))").font(.system(.body, design: .monospaced))
+                Text("(\(c.fitsX), \(c.fitsY))").font(.system(.body, design: .monospaced))
                 Text("=").foregroundStyle(.secondary)
                 Text(c.value.isNaN ? "NaN" : String(format: "%.4g", c.value))
                     .font(.system(.body, design: .monospaced))
@@ -1882,7 +1882,7 @@ extension DocumentView {
         await MainActor.run { isFetchingCatalog = true }
         defer { Task { @MainActor in isFetchingCatalog = false } }
         do {
-            let sources = try await CatalogClient.shared.fetchGaia(
+            let sources = try await AppCatalog.client.fetchGaia(
                 centerRA: cs.centerRA,
                 centerDec: cs.centerDec,
                 radiusDeg: cs.radiusDeg,

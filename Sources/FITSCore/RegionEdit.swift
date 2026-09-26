@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// Which handle on a region a hit-test landed on.
 public enum RegionEditHandle: Equatable, Sendable {

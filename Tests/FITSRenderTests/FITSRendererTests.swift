@@ -1,6 +1,9 @@
 import XCTest
 import Metal
+import MetalKit
+import simd
 import FITSCore
+import TheiaKit
 @testable import FITSRender
 
 final class FITSRendererTests: XCTestCase {
@@ -61,6 +64,41 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(renderer.texture?.width, 10)
         XCTAssertEqual(renderer.texture?.height, 10)
         XCTAssertGreaterThan(renderer.vmax, renderer.vmin)
+    }
+
+    func testResizePreservesUserZoom() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let data = MakeFITS.uint8Image(naxis1: 10, naxis2: 10, pixels: [UInt8](repeating: 1, count: 100))
+        let file = try FITSFile(data: data)
+        let image = try FITSImage(hdu: file.hdus[0])
+        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        try renderer.setImage(image)
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 200, height: 150), device: device)
+        renderer.mtkView(view, drawableSizeWillChange: view.drawableSize)
+        let fittedScale = renderer.transform.scale
+        renderer.transform.scale = fittedScale * 2
+        renderer.transform.centre += SIMD2(3, -4)
+        let pannedCentre = renderer.transform.centre
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 150)
+        renderer.mtkView(view, drawableSizeWillChange: view.drawableSize)
+        XCTAssertEqual(renderer.transform.scale, fittedScale * 2, accuracy: 1e-12)
+        XCTAssertEqual(renderer.transform.centre, pannedCentre)
+    }
+
+    func testMetalProjectionPlacesTexelCentreOnMappedImagePoint() {
+        let transform = ViewTransform(scale: 6, centre: SIMD2(0.75, 0.25))
+        let viewSize = SIMD2(20.0, 20.0)
+        let mapping = ViewMapping(transform: transform, viewSize: viewSize, backingScale: 1)
+        let matrix = FITSRenderer.modelViewProjection(
+            imageSize: SIMD2(2.0, 2.0), viewSize: viewSize, transform: transform
+        )
+        let clip = matrix * SIMD4<Float>(0.25, 0.25, 0, 1)
+        let metalViewYUp = SIMD2(Double((clip.x + 1) * 10), Double((clip.y + 1) * 10))
+        let mapped = mapping.imageToViewYUp(SIMD2(0.0, 0.0))
+        XCTAssertEqual(metalViewYUp.x, mapped.x, accuracy: 1e-6)
+        XCTAssertEqual(metalViewYUp.y, mapped.y, accuracy: 1e-6)
     }
 }
 

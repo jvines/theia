@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 public struct CompassDirections: Sendable, Equatable {
     /// Unit vector in image-pixel space that points along celestial east.
@@ -20,8 +22,8 @@ public extension WCS {
         let east = SIMD2(cd22, -cd21) / det
         // Direction in image for +1° Dec (i.e. celestial north).
         let north = SIMD2(-cd12, cd11) / det
-        let eastUnit = east / max(simd_length(east), 1e-30)
-        let northUnit = north / max(simd_length(north), 1e-30)
+        let eastUnit = east / max((east.x * east.x + east.y * east.y).squareRoot(), 1e-30)
+        let northUnit = north / max((north.x * north.x + north.y * north.y).squareRoot(), 1e-30)
         return CompassDirections(eastDirectionImage: eastUnit, northDirectionImage: northUnit)
     }
 
