@@ -39,6 +39,26 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testNestedEventContextInheritsEchoTagAndRestoresOuterContext() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var events: [SessionEvent] = []
+            session.addEventObserver { events.append($0) }
+            let tag = UUID()
+            session.withEventContext(origin: .user, echoTag: tag) {
+                session.withEventContext(origin: .script) {
+                    session.view.transform = ViewTransform(scale: 2)
+                }
+                session.view.stretch = .log
+            }
+            session.view.colorMap = .plasma
+            XCTAssertEqual(events.first { $0.kind == .transformChanged }?.origin, .script)
+            XCTAssertEqual(events.first { $0.kind == .transformChanged }?.echoTag, tag)
+            XCTAssertEqual(events.first { $0.kind == .displayParametersChanged }?.echoTag, tag)
+            XCTAssertNil(events.last { $0.kind == .displayParametersChanged }?.echoTag)
+        }
+    }
+
     func testPlaybackTicksDoNotEmitPersistenceEvents() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -50,6 +70,21 @@ final class DocumentSessionTests: XCTestCase {
             session.tick(now: start.addingTimeInterval(0.04))
             XCTAssertTrue(kinds.contains(.selectionChanged))
             XCTAssertTrue(kinds.contains(.imageRevisionChanged))
+            XCTAssertFalse(kinds.contains(.persistedFieldChanged))
+        }
+    }
+
+    func testStoppingBlinkDoesNotRequestAutosaveOfTransientPartner() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            var kinds: [SessionEvent.Kind] = []
+            session.addEventObserver { kinds.append($0.kind) }
+            let start = Date(timeIntervalSince1970: 0)
+            session.toggleBlink(now: start)
+            session.tick(now: start.addingTimeInterval(0.6))
+            XCTAssertEqual(session.hdu, 2)
+            session.toggleBlink(now: start.addingTimeInterval(0.7))
+            XCTAssertEqual(session.hdu, 1)
             XCTAssertFalse(kinds.contains(.persistedFieldChanged))
         }
     }

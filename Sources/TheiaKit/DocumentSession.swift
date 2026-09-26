@@ -180,7 +180,7 @@ public struct HDUFacts {
         let previousOrigin = eventOrigin
         let previousTag = eventEchoTag
         eventOrigin = origin
-        eventEchoTag = echoTag
+        eventEchoTag = echoTag ?? previousTag
         defer {
             eventOrigin = previousOrigin
             eventEchoTag = previousTag
@@ -339,8 +339,11 @@ public struct HDUFacts {
 
     public func toggleBlink(now: Date = .now) {
         if let blink {
-            selectHDU(blink.primary)
             self.blink = nil
+            let previousPersistence = persistSelection
+            persistSelection = false
+            defer { persistSelection = previousPersistence }
+            selectHDU(blink.primary)
             emit(.playbackChanged)
         } else if let partner = blinkPartner {
             blink = BlinkState(primary: hdu, partner: partner,

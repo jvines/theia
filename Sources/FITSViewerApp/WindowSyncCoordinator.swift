@@ -107,11 +107,15 @@ final class WindowSyncCoordinator: ObservableObject {
         guard matchZoom, !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
+        let echoTag = UUID()
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
             guard c.documentModel.session.view.transform != t else { continue }
             entry.canvasObserver?.acceptSyncedTransform(t)
-            c.documentModel.session.view.transform = t
+            let session = c.documentModel.session
+            session.withEventContext(origin: .user, echoTag: echoTag) {
+                session.view.transform = t
+            }
             c.window?.contentView?.needsDisplay = true
         }
     }
@@ -120,11 +124,15 @@ final class WindowSyncCoordinator: ObservableObject {
         guard matchScale, !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
+        let echoTag = UUID()
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
             entry.canvasObserver?.acceptSyncedScale(vmin: vmin, vmax: vmax)
-            if c.documentModel.session.view.vmin != vmin { c.documentModel.session.view.vmin = vmin }
-            if c.documentModel.session.view.vmax != vmax { c.documentModel.session.view.vmax = vmax }
+            let session = c.documentModel.session
+            session.withEventContext(origin: .user, echoTag: echoTag) {
+                if session.view.vmin != vmin { session.view.vmin = vmin }
+                if session.view.vmax != vmax { session.view.vmax = vmax }
+            }
         }
     }
 
@@ -132,10 +140,14 @@ final class WindowSyncCoordinator: ObservableObject {
         guard matchColormap, !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
+        let echoTag = UUID()
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
-            c.toolbarState.colorMap = cm
-            c.documentModel.session.view.colorMap = cm
+            let session = c.documentModel.session
+            session.withEventContext(origin: .user, echoTag: echoTag) {
+                c.toolbarState.colorMap = cm
+                session.view.colorMap = cm
+            }
         }
     }
 
@@ -145,6 +157,7 @@ final class WindowSyncCoordinator: ObservableObject {
         guard matchCrosshair, !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
+        let echoTag = UUID()
         let sky: (ra: Double, dec: Double)? = sourceWCS?.pixelToSky(
             imageX: Int(imagePoint.x.rounded()), imageY: Int(imagePoint.y.rounded()))
         for entry in entries {
@@ -156,14 +169,21 @@ final class WindowSyncCoordinator: ObservableObject {
                let p = targetWCS.skyToPixel(ra: sky.ra, dec: sky.dec) {
                 localPoint = SIMD2(p.x, p.y)
             }
-            c.documentModel.session.remoteCrosshair = localPoint
+            let session = c.documentModel.session
+            session.withEventContext(origin: .user, echoTag: echoTag) {
+                session.remoteCrosshair = localPoint
+            }
         }
     }
 
     func clearCrosshairs(except origin: DocumentWindowController? = nil) {
+        let echoTag = UUID()
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
-            c.documentModel.session.remoteCrosshair = nil
+            let session = c.documentModel.session
+            session.withEventContext(origin: .user, echoTag: echoTag) {
+                session.remoteCrosshair = nil
+            }
         }
     }
 
