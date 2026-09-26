@@ -1,6 +1,7 @@
 import SwiftUI
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Invisible helper view that owns all the `.onChange` watchers used by `DocumentView`
 /// to trigger a session autosave. Kept separate so DocumentView's body stays under

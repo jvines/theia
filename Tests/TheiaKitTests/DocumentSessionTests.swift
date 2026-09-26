@@ -97,14 +97,14 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertNil(session.selectedRegionIndex)
             session.selectedRegionIndex = 0
 
-            var regionChangeObserved = false
+            let regionsChanged = expectation(description: "region change invalidates observers")
             withObservationTracking {
                 _ = session.regions
             } onChange: {
-                regionChangeObserved = true
+                regionsChanged.fulfill()
             }
             session.regions = []
-            XCTAssertTrue(regionChangeObserved)
+            wait(for: [regionsChanged], timeout: 1)
             XCTAssertNil(session.selectedRegionIndex)
             XCTAssertNil(session.previewRegion)
         }
@@ -135,7 +135,8 @@ final class DocumentSessionTests: XCTestCase {
                 selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
                 drawMode: "pan", vmin: 12, vmax: 45, stretchParameter: 3,
                 showWCSGrid: true, showCompass: false, showColorBar: false,
-                regions: [region]
+                regions: [region],
+                contour: .init(enabled: true, count: 1, minValue: 12, maxValue: 16, spacing: "linear")
             )
             session.restoreInitialState(saved)
             XCTAssertEqual(session.hdu, 2)
@@ -146,6 +147,8 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.view.colorMap, .plasma)
             XCTAssertEqual(session.view.stretchParameter, 3)
             XCTAssertEqual(session.regions, [region])
+            XCTAssertTrue(session.showGrid)
+            XCTAssertEqual(session.contourSegments.count, 1)
 
             session.regions = [] // an immediate script edit wins over the saved value
             XCTAssertTrue(session.regions.isEmpty)
@@ -178,6 +181,72 @@ final class DocumentSessionTests: XCTestCase {
             session.setPercentileLevels(lower: 0, upper: 100)
             XCTAssertEqual(session.view.vmin, 10)
             XCTAssertEqual(session.view.vmax, 40)
+        }
+    }
+
+    func testOverlayStateAndContoursFollowTheDisplayedPlane() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.showGrid = true
+            session.showCompass = true
+            session.showColorBar = true
+            let contoursChanged = expectation(description: "contour change invalidates observers")
+            withObservationTracking {
+                _ = session.contourSegments
+            } onChange: {
+                contoursChanged.fulfill()
+            }
+            session.setContourSpec(ContourSpec(
+                enabled: true, count: 1, minValue: 1, maxValue: 2, spacing: .linear
+            ))
+            wait(for: [contoursChanged], timeout: 1)
+            XCTAssertTrue(session.showGrid)
+            XCTAssertTrue(session.showCompass)
+            XCTAssertTrue(session.showColorBar)
+            XCTAssertEqual(session.contourSegments.count, 1)
+            XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
+
+            session.selectPlane(1)
+            XCTAssertTrue(session.contourSegments[0].segments.isEmpty)
+            session.selectPlane(0)
+            XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
+        }
+    }
+
+    func testToolStateIsObservableAndRestoresBeforeViewAppears() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.mode, .pan)
+            XCTAssertNil(session.profileMarker)
+            XCTAssertNil(session.cursor)
+
+            let modeChanged = expectation(description: "draw mode change invalidates observers")
+            withObservationTracking {
+                _ = session.mode
+            } onChange: {
+                modeChanged.fulfill()
+            }
+            session.mode = .radialProfile
+            wait(for: [modeChanged], timeout: 1)
+
+            let marker = ProfileGeometry.radial(center: SIMD2(2, 3), maxRadius: 4)
+            let cursor = CursorInfo(imageX: 1, imageY: 0, value: 12)
+            session.profileMarker = marker
+            session.cursor = cursor
+            XCTAssertEqual(session.profileMarker, marker)
+            XCTAssertEqual(session.cursor, cursor)
+
+            let saved = SessionState(
+                selectedHDU: session.hdu, selectedPlane: session.plane,
+                stretch: .linear, colorMap: .gray, drawMode: "lineProfile",
+                vmin: 0, vmax: 1, stretchParameter: 1,
+                showWCSGrid: false, showCompass: false, showColorBar: false,
+                regions: []
+            )
+            session.restoreInitialState(saved)
+            XCTAssertEqual(session.mode, .lineProfile)
+            XCTAssertEqual(session.profileMarker, marker)
+            XCTAssertEqual(session.cursor, cursor)
         }
     }
 

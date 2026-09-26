@@ -7,13 +7,6 @@ import TheiaKit
 /// Shows the geometry (line, circle, etc) of the most-recent profile request so
 /// the user can see what was sampled. Updated by DocumentView whenever a profile
 /// is generated; cleared when the matching window closes.
-enum ProfileGeometry: Equatable {
-    case line(from: SIMD2<Double>, to: SIMD2<Double>)
-    case radial(center: SIMD2<Double>, maxRadius: Double)
-    case growth(center: SIMD2<Double>, maxRadius: Double)
-    case point(SIMD2<Double>)   // cube spectrum at pixel
-}
-
 struct ProfileGeometryOverlay: View {
     let geometry: ProfileGeometry?
     let viewport: ImageViewState

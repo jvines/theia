@@ -79,6 +79,14 @@ public struct HDUFacts {
     }
     public var previewRegion: Region?
     public var remoteCrosshair: SIMD2<Double>?
+    public var mode: DrawMode = .pan
+    public var profileMarker: ProfileGeometry?
+    public var cursor: CursorInfo?
+    public var showGrid = false
+    public var showCompass = false
+    public var showColorBar = false
+    public private(set) var contourSpec = ContourSpec()
+    public private(set) var contourSegments: [Contours.LeveledSegments] = []
     public var imageRevision: Int { view.imageRevision }
 
     private struct ImageKey: Hashable {
@@ -166,6 +174,23 @@ public struct HDUFacts {
         view.vmax = Float(range.vmax)
     }
 
+    public func setContourSpec(_ spec: ContourSpec) {
+        guard spec != contourSpec else { return }
+        contourSpec = spec
+        recomputeContours()
+    }
+
+    private func recomputeContours() {
+        guard contourSpec.enabled, let image = displayed else {
+            contourSegments = []
+            return
+        }
+        contourSegments = Contours.segments(
+            values: image.physicalValues(), width: image.width,
+            height: image.height, levels: contourSpec.levels()
+        )
+    }
+
     /// The next image HDU of the same width and height, wrapping at the end.
     public var blinkPartner: Int? {
         guard facts.indices.contains(hdu), let shape = facts[hdu].shape, facts.count > 1 else { return nil }
@@ -183,6 +208,7 @@ public struct HDUFacts {
         derived = nil
         sourceWCSVariant = facts[index].wcsVariants.first ?? ""
         view.display(sourceImage(), revision: imageRevision &+ 1)
+        recomputeContours()
     }
 
     public func selectPlane(_ index: Int) {
@@ -192,6 +218,7 @@ public struct HDUFacts {
         plane = index
         derived = nil
         view.display(sourceImage(), revision: imageRevision &+ 1)
+        recomputeContours()
     }
 
     public func selectWCSVariant(_ variant: String) {
@@ -204,6 +231,7 @@ public struct HDUFacts {
         guard derived != image else { return }
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
+        recomputeContours()
     }
 
     /// Apply persisted canvas and region state before the document is made
@@ -217,5 +245,16 @@ public struct HDUFacts {
         view.vmax = Float(saved.vmax)
         view.stretchParameter = Float(saved.stretchParameter)
         regions = saved.regions
+        if let savedMode = DrawMode(rawValue: saved.drawMode) { mode = savedMode }
+        showGrid = saved.showWCSGrid
+        showCompass = saved.showCompass
+        showColorBar = saved.showColorBar
+        if let contour = saved.contour {
+            setContourSpec(ContourSpec(
+                enabled: contour.enabled, count: contour.count,
+                minValue: contour.minValue, maxValue: contour.maxValue,
+                spacing: ContourSpec.Spacing(rawValue: contour.spacing) ?? .linear
+            ))
+        }
     }
 }

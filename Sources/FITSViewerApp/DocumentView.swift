@@ -15,14 +15,6 @@ struct DocumentView: View {
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
     @State private var showInspector: Bool = true
-    @State private var showWCSGrid: Bool = false
-    @State private var showCompass: Bool = false
-    @State private var showColorBar: Bool = false
-    @State private var contourSpec: ContourSpec = ContourSpec()
-    @State private var contourSegments: [Contours.LeveledSegments] = []
-    @State private var profileGeometry: ProfileGeometry? = nil
-    @State private var drawMode: DrawMode = .pan
-    @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
     private let viewport: ImageViewState
@@ -47,6 +39,35 @@ struct DocumentView: View {
     private var previewRegion: Region? {
         get { session.previewRegion }
         nonmutating set { session.previewRegion = newValue }
+    }
+    private var showWCSGrid: Bool {
+        get { session.showGrid }
+        nonmutating set { session.showGrid = newValue }
+    }
+    private var showCompass: Bool {
+        get { session.showCompass }
+        nonmutating set { session.showCompass = newValue }
+    }
+    private var showColorBar: Bool {
+        get { session.showColorBar }
+        nonmutating set { session.showColorBar = newValue }
+    }
+    private var contourSpec: ContourSpec {
+        get { session.contourSpec }
+        nonmutating set { session.setContourSpec(newValue) }
+    }
+    private var contourSegments: [Contours.LeveledSegments] { session.contourSegments }
+    private var drawMode: DrawMode {
+        get { session.mode }
+        nonmutating set { session.mode = newValue }
+    }
+    private var profileGeometry: ProfileGeometry? {
+        get { session.profileMarker }
+        nonmutating set { session.profileMarker = newValue }
+    }
+    private var cursor: CursorInfo? {
+        get { session.cursor }
+        nonmutating set { session.cursor = newValue }
     }
     private var regionsBinding: Binding<[Region]> {
         Binding(get: { session.regions }, set: { session.regions = $0 })
@@ -187,7 +208,6 @@ struct DocumentView: View {
                 }
             )
             .onAppear {
-                applyRestoredShellState()
                 syncToolbarState()
             }
             .background(
@@ -203,7 +223,6 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
-            .onChange(of: imageRevision) { _, _ in recomputeContours() }
     }
 
     /// Aggregate of every value that should trigger a toolbar refresh. Hashable
@@ -1241,24 +1260,6 @@ extension DocumentView {
         }
     }
 
-    fileprivate func applyRestoredShellState() {
-        guard let saved = document.restoredState else { return }
-        if let mode = DrawMode(rawValue: saved.drawMode) { drawMode = mode }
-        showWCSGrid = saved.showWCSGrid
-        showCompass = saved.showCompass
-        showColorBar = saved.showColorBar
-        if let c = saved.contour {
-            contourSpec = ContourSpec(
-                enabled: c.enabled,
-                count: c.count,
-                minValue: c.minValue,
-                maxValue: c.maxValue,
-                spacing: ContourSpec.Spacing(rawValue: c.spacing) ?? .linear
-            )
-            recomputeContours()
-        }
-    }
-
     fileprivate func applyFilter(_ spec: FilterSpec) {
         guard let image = currentImage() else { return }
         let filtered: FITSImage
@@ -1714,31 +1715,16 @@ extension DocumentView {
     fileprivate func openContourLevelsPanel() {
         let values = currentImage()?.physicalValues() ?? []
         let r = PixelStatistics.minMax(values)
-        if !contourSpec.minValue.isFinite, let r { contourSpec.minValue = r.min }
-        if !contourSpec.maxValue.isFinite, let r { contourSpec.maxValue = r.max }
+        var initial = contourSpec
+        if !initial.minValue.isFinite, let r { initial.minValue = r.min }
+        if !initial.maxValue.isFinite, let r { initial.maxValue = r.max }
+        contourSpec = initial
         ContourLevelsWindowController.show(
-            initial: contourSpec,
+            initial: initial,
             dataMin: r?.min ?? .nan,
             dataMax: r?.max ?? .nan,
-            onChange: { newSpec in
-                contourSpec = newSpec
-                recomputeContours()
-            },
+            onChange: { newSpec in contourSpec = newSpec },
             attachedTo: NSApp.keyWindow
-        )
-    }
-
-    private func recomputeContours() {
-        guard contourSpec.enabled, let image = currentImage() else {
-            contourSegments = []
-            return
-        }
-        let levels = contourSpec.levels()
-        contourSegments = Contours.segments(
-            values: image.physicalValues(),
-            width: image.width,
-            height: image.height,
-            levels: levels
         )
     }
 

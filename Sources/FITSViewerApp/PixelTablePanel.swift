@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Floating panel showing a (size × size) grid of pixel values centered on the cursor,
 /// with the active pixel highlighted. Updates live as the cursor moves over the image.

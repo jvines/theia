@@ -21,7 +21,7 @@ public struct SessionState: Codable, Equatable {
     public var selectedPlane: Int
     public var stretch: ImageStretch
     public var colorMap: ColorMap
-    public var drawMode: String     // DrawMode.rawValue, stringly-typed to keep FITSCore free of FITSRender
+    public var drawMode: String     // DrawMode.rawValue, stringly typed to keep FITSCore independent of TheiaKit
     public var vmin: Double
     public var vmax: Double
     public var stretchParameter: Double

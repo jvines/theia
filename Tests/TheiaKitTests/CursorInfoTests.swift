@@ -1,5 +1,5 @@
 import XCTest
-@testable import FITSRender
+import TheiaKit
 
 final class CursorInfoTests: XCTestCase {
     func testFITSReadoutIsOneBasedWhileImageIndicesStayZeroBased() {

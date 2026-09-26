@@ -1,6 +1,6 @@
 import Foundation
 
-/// The image pixel currently under the cursor in a `FITSMetalView`.
+/// The image pixel currently under the cursor.
 public struct CursorInfo: Sendable, Equatable {
     public let imageX: Int
     public let imageY: Int
