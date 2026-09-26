@@ -135,7 +135,8 @@ final class DocumentSessionTests: XCTestCase {
                 selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
                 drawMode: "pan", vmin: 12, vmax: 45, stretchParameter: 3,
                 showWCSGrid: true, showCompass: false, showColorBar: false,
-                regions: [region]
+                regions: [region],
+                contour: .init(enabled: true, count: 1, minValue: 12, maxValue: 16, spacing: "linear")
             )
             session.restoreInitialState(saved)
             XCTAssertEqual(session.hdu, 2)
@@ -146,6 +147,8 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.view.colorMap, .plasma)
             XCTAssertEqual(session.view.stretchParameter, 3)
             XCTAssertEqual(session.regions, [region])
+            XCTAssertTrue(session.showGrid)
+            XCTAssertEqual(session.contourSegments.count, 1)
 
             session.regions = [] // an immediate script edit wins over the saved value
             XCTAssertTrue(session.regions.isEmpty)
@@ -178,6 +181,35 @@ final class DocumentSessionTests: XCTestCase {
             session.setPercentileLevels(lower: 0, upper: 100)
             XCTAssertEqual(session.view.vmin, 10)
             XCTAssertEqual(session.view.vmax, 40)
+        }
+    }
+
+    func testOverlayStateAndContoursFollowTheDisplayedPlane() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.showGrid = true
+            session.showCompass = true
+            session.showColorBar = true
+            var contourChangeObserved = false
+            withObservationTracking {
+                _ = session.contourSegments
+            } onChange: {
+                contourChangeObserved = true
+            }
+            session.setContourSpec(ContourSpec(
+                enabled: true, count: 1, minValue: 1, maxValue: 2, spacing: .linear
+            ))
+            XCTAssertTrue(contourChangeObserved)
+            XCTAssertTrue(session.showGrid)
+            XCTAssertTrue(session.showCompass)
+            XCTAssertTrue(session.showColorBar)
+            XCTAssertEqual(session.contourSegments.count, 1)
+            XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
+
+            session.selectPlane(1)
+            XCTAssertTrue(session.contourSegments[0].segments.isEmpty)
+            session.selectPlane(0)
+            XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
         }
     }
 

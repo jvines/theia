@@ -43,49 +43,6 @@ struct ContourOverlay: View {
     }
 }
 
-/// User-controlled contour level configuration.
-struct ContourSpec: Equatable {
-    enum Spacing: String, CaseIterable, Identifiable, Equatable {
-        case linear, log
-        var id: String { rawValue }
-        var label: String { rawValue.capitalized }
-    }
-    var enabled: Bool = false
-    var count: Int = 5
-    var minValue: Double = .nan
-    var maxValue: Double = .nan
-    var spacing: Spacing = .linear
-
-    static func == (lhs: ContourSpec, rhs: ContourSpec) -> Bool {
-        lhs.enabled == rhs.enabled &&
-        lhs.count == rhs.count &&
-        lhs.spacing == rhs.spacing &&
-        (lhs.minValue == rhs.minValue || (lhs.minValue.isNaN && rhs.minValue.isNaN)) &&
-        (lhs.maxValue == rhs.maxValue || (lhs.maxValue.isNaN && rhs.maxValue.isNaN))
-    }
-
-    func levels() -> [Double] {
-        guard enabled, count >= 1, minValue.isFinite, maxValue.isFinite, maxValue > minValue else {
-            return []
-        }
-        if count == 1 { return [(minValue + maxValue) / 2] }
-        switch spacing {
-        case .linear:
-            let step = (maxValue - minValue) / Double(count - 1)
-            return (0..<count).map { minValue + Double($0) * step }
-        case .log:
-            // Log spacing only meaningful for strictly-positive ranges.
-            guard minValue > 0 else {
-                let step = (maxValue - minValue) / Double(count - 1)
-                return (0..<count).map { minValue + Double($0) * step }
-            }
-            let lo = log(minValue), hi = log(maxValue)
-            let step = (hi - lo) / Double(count - 1)
-            return (0..<count).map { exp(lo + Double($0) * step) }
-        }
-    }
-}
-
 struct ContourLevelsPanel: View {
     @State private var spec: ContourSpec
     @State private var minText: String
