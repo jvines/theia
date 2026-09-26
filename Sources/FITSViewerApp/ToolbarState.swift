@@ -3,6 +3,7 @@ import AppKit
 import Combine
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Bridge object between the SwiftUI `DocumentView` and the AppKit `NSToolbar`
 /// installed on the document's window. SwiftUI publishes state into it; the

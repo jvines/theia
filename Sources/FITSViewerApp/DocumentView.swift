@@ -15,9 +15,6 @@ struct DocumentView: View {
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
     @State private var showInspector: Bool = true
-    @State private var profileGeometry: ProfileGeometry? = nil
-    @State private var drawMode: DrawMode = .pan
-    @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
     private let viewport: ImageViewState
@@ -60,6 +57,18 @@ struct DocumentView: View {
         nonmutating set { session.setContourSpec(newValue) }
     }
     private var contourSegments: [Contours.LeveledSegments] { session.contourSegments }
+    private var drawMode: DrawMode {
+        get { session.mode }
+        nonmutating set { session.mode = newValue }
+    }
+    private var profileGeometry: ProfileGeometry? {
+        get { session.profileMarker }
+        nonmutating set { session.profileMarker = newValue }
+    }
+    private var cursor: CursorInfo? {
+        get { session.cursor }
+        nonmutating set { session.cursor = newValue }
+    }
     private var regionsBinding: Binding<[Region]> {
         Binding(get: { session.regions }, set: { session.regions = $0 })
     }
@@ -199,7 +208,6 @@ struct DocumentView: View {
                 }
             )
             .onAppear {
-                applyRestoredShellState()
                 syncToolbarState()
             }
             .background(
@@ -1250,11 +1258,6 @@ extension DocumentView {
         DispatchQueue.global(qos: .utility).async {
             try? data.write(to: url, options: .atomic)
         }
-    }
-
-    fileprivate func applyRestoredShellState() {
-        guard let saved = document.restoredState else { return }
-        if let mode = DrawMode(rawValue: saved.drawMode) { drawMode = mode }
     }
 
     fileprivate func applyFilter(_ spec: FilterSpec) {

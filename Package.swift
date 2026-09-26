@@ -24,7 +24,7 @@ let macOSTargets: [Target] = [
     ),
     .testTarget(
         name: "FITSRenderTests",
-        dependencies: ["FITSRender"],
+        dependencies: ["FITSRender", "TheiaKit"],
         path: "Tests/FITSRenderTests"
     ),
 ]

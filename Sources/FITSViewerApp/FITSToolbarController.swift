@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Owns the document window's `NSToolbar`. Real `NSToolbarItem`s give native Cocoa
 /// styling (matching Mail/Finder) and consistent behaviour across the Customize

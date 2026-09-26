@@ -213,6 +213,43 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testToolStateIsObservableAndRestoresBeforeViewAppears() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.mode, .pan)
+            XCTAssertNil(session.profileMarker)
+            XCTAssertNil(session.cursor)
+
+            let modeChanged = expectation(description: "draw mode change invalidates observers")
+            withObservationTracking {
+                _ = session.mode
+            } onChange: {
+                modeChanged.fulfill()
+            }
+            session.mode = .radialProfile
+            wait(for: [modeChanged], timeout: 1)
+
+            let marker = ProfileGeometry.radial(center: SIMD2(2, 3), maxRadius: 4)
+            let cursor = CursorInfo(imageX: 1, imageY: 0, value: 12)
+            session.profileMarker = marker
+            session.cursor = cursor
+            XCTAssertEqual(session.profileMarker, marker)
+            XCTAssertEqual(session.cursor, cursor)
+
+            let saved = SessionState(
+                selectedHDU: session.hdu, selectedPlane: session.plane,
+                stretch: .linear, colorMap: .gray, drawMode: "lineProfile",
+                vmin: 0, vmax: 1, stretchParameter: 1,
+                showWCSGrid: false, showCompass: false, showColorBar: false,
+                regions: []
+            )
+            session.restoreInitialState(saved)
+            XCTAssertEqual(session.mode, .lineProfile)
+            XCTAssertEqual(session.profileMarker, marker)
+            XCTAssertEqual(session.cursor, cursor)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()

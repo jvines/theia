@@ -79,6 +79,9 @@ public struct HDUFacts {
     }
     public var previewRegion: Region?
     public var remoteCrosshair: SIMD2<Double>?
+    public var mode: DrawMode = .pan
+    public var profileMarker: ProfileGeometry?
+    public var cursor: CursorInfo?
     public var showGrid = false
     public var showCompass = false
     public var showColorBar = false
@@ -242,6 +245,7 @@ public struct HDUFacts {
         view.vmax = Float(saved.vmax)
         view.stretchParameter = Float(saved.stretchParameter)
         regions = saved.regions
+        if let savedMode = DrawMode(rawValue: saved.drawMode) { mode = savedMode }
         showGrid = saved.showWCSGrid
         showCompass = saved.showCompass
         showColorBar = saved.showColorBar
