@@ -152,6 +152,35 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testZScaleResetsDisplayedLevelsWithoutToolbarCallbacks() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let image = try XCTUnwrap(session.displayed)
+            let expected = DocumentSession.recommendedLevels(for: image)
+            session.view.vmin = -100
+            session.view.vmax = 100
+            session.resetLevels()
+            XCTAssertEqual(session.view.vmin, expected.vmin)
+            XCTAssertEqual(session.view.vmax, expected.vmax)
+        }
+    }
+
+    func testScalePresetsReadTheDisplayedImage() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let derived = FITSImage.fromFloat32(pixels: [10, 20, 30, 40], width: 2, height: 2)
+            session.setDerived(DerivedImage(image: derived, wcs: nil, label: "scaled"))
+            session.setMinMaxLevels()
+            XCTAssertEqual(session.view.vmin, 10)
+            XCTAssertEqual(session.view.vmax, 40)
+            session.view.vmin = -1
+            session.view.vmax = -1
+            session.setPercentileLevels(lower: 0, upper: 100)
+            XCTAssertEqual(session.view.vmin, 10)
+            XCTAssertEqual(session.view.vmax, 40)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()

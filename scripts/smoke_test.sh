@@ -98,7 +98,7 @@ assert_status 401 "$NOAUTH" "GET /status without token"
 echo "smoke: auth enforced (401 without token)"
 
 # 2) POST /open the fixture
-OUT="$(req POST /open "{\"path\":\"$FIXTURE\"}")"; CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
+OUT="$(req POST /open "{\"path\":\"$FIXTURE\",\"stretch\":\"log\",\"colormap\":\"plasma\",\"vmin\":11,\"vmax\":77}")"; CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
 assert_status 200 "$CODE" "POST /open"
 [[ "$BODY" == *'"id"'* ]] || fail "POST /open body missing \"id\": $BODY"
 echo "smoke: /open ok ($BODY)"
@@ -108,6 +108,19 @@ OUT="$(req GET /document/0/info)"; CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
 assert_status 200 "$CODE" "GET /document/0/info"
 [[ "$BODY" == *'"stretch"'* && "$BODY" == *'"colormap"'* ]] \
     || fail "GET info body missing expected keys: $BODY"
+[[ "$BODY" == *'"stretch":"log"'* && "$BODY" == *'"colormap":"plasma"'* ]] \
+    || fail "open-time visual settings were not applied: $BODY"
+OUT="$(req POST /document/0/stretch '{"name":"sqrt"}')"; CODE="${OUT##*$'\n'}"
+assert_status 200 "$CODE" "POST /document/0/stretch"
+OUT="$(req POST /document/0/colormap '{"name":"viridis"}')"; CODE="${OUT##*$'\n'}"
+assert_status 200 "$CODE" "POST /document/0/colormap"
+OUT="$(req GET /document/0/info)"; BODY="${OUT%$'\n'*}"
+[[ "$BODY" == *'"stretch":"sqrt"'* && "$BODY" == *'"colormap":"viridis"'* ]] \
+    || fail "immediate visual settings were not applied: $BODY"
+OUT="$(req POST /document/0/zscale)"; CODE="${OUT##*$'\n'}"
+assert_status 200 "$CODE" "POST /document/0/zscale"
+OUT="$(req GET /document/0/info)"; BODY="${OUT%$'\n'*}"
+[[ "$BODY" != *'"vmax":77'* ]] || fail "zscale did not reset levels: $BODY"
 echo "smoke: /document/0/info ok"
 
 # 4) GET /status should now list the opened file

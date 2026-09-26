@@ -144,6 +144,28 @@ public struct HDUFacts {
         return RasterLevels(vmin: lo, vmax: hi)
     }
 
+    public func resetLevels() {
+        guard let displayed else { return }
+        let levels = Self.recommendedLevels(for: displayed)
+        view.vmin = levels.vmin
+        view.vmax = levels.vmax
+    }
+
+    public func setMinMaxLevels() {
+        guard let range = displayed?.physicalMinMax() else { return }
+        view.vmin = Float(range.min)
+        view.vmax = Float(range.max)
+    }
+
+    public func setPercentileLevels(lower: Double, upper: Double) {
+        guard let displayed,
+              let range = PixelStatistics.percentiles(
+                displayed.physicalValues(), lower: lower, upper: upper
+              ) else { return }
+        view.vmin = Float(range.vmin)
+        view.vmax = Float(range.vmax)
+    }
+
     /// The next image HDU of the same width and height, wrapping at the end.
     public var blinkPartner: Int? {
         guard facts.indices.contains(hdu), let shape = facts[hdu].shape, facts.count > 1 else { return nil }

@@ -1203,10 +1203,7 @@ extension DocumentView {
     }
 
     private func resetLevels() {
-        guard let image = session.displayed else { return }
-        let levels = DocumentSession.recommendedLevels(for: image)
-        viewport.vmin = levels.vmin
-        viewport.vmax = levels.vmax
+        session.resetLevels()
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1757,20 +1754,13 @@ extension DocumentView {
     }
 
     fileprivate func applyScalePreset(_ preset: ScalePreset) {
-        guard let image = currentImage() else { return }
         switch preset {
         case .zscale:
-            resetLevels()
+            session.resetLevels()
         case .minMax:
-            if let r = image.physicalMinMax() {
-                viewport.vmin = Float(r.min)
-                viewport.vmax = Float(r.max)
-            }
+            session.setMinMaxLevels()
         case .percentile(let lo, let hi):
-            if let r = PixelStatistics.percentiles(image.physicalValues(), lower: lo, upper: hi) {
-                viewport.vmin = Float(r.vmin)
-                viewport.vmax = Float(r.vmax)
-            }
+            session.setPercentileLevels(lower: lo, upper: hi)
         }
     }
 
