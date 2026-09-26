@@ -65,7 +65,8 @@ public enum RasterCDF {
             if bin == binCount - 1 {
                 endIndex = end
             } else {
-                let edge = levels.vmin + (levels.vmax - levels.vmin) * Float(bin + 1) / Float(binCount)
+                let fraction = Float(bin + 1) / Float(binCount)
+                let edge = levels.vmin + (levels.vmax - levels.vmin) * fraction
                 endIndex = lowerBound(sample, edge)
             }
             cdf[bin] = Float(endIndex - first) / Float(total)

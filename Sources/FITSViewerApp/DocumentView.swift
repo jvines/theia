@@ -1551,6 +1551,11 @@ extension DocumentView {
 
     fileprivate func exportCubeAsMP4() {
         guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { NSSound.beep(); return }
+        let exportStretch = stretch
+        let exportVmin = Double(viewport.vmin)
+        let exportVmax = Double(viewport.vmax)
+        let exportMap = colorMap
+        let exportParameter = viewport.stretchParameter
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = document.url.deletingPathExtension().lastPathComponent + ".mp4"
@@ -1562,11 +1567,11 @@ extension DocumentView {
                     try MPEGExport.writeCube(
                         hdu: hdu,
                         to: url,
-                        stretch: stretch,
-                        vmin: Double(viewport.vmin),
-                        vmax: Double(viewport.vmax),
-                        colorMap: colorMap,
-                        parameter: viewport.stretchParameter,
+                        stretch: exportStretch,
+                        vmin: exportVmin,
+                        vmax: exportVmax,
+                        colorMap: exportMap,
+                        parameter: exportParameter,
                         fps: 8
                     )
                     DispatchQueue.main.async {

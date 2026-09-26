@@ -83,4 +83,14 @@ final class RasterStretchTests: XCTestCase {
             XCTAssertEqual(Double(sampled[i]), full[i], accuracy: 1.0 / 255.0)
         }
     }
+
+    func testCDFEdgesStayFiniteForLargeValidFloatLevels() {
+        let levels = RasterLevels(vmin: 0, vmax: 1e37)
+        let cdf = RasterCDF.make(
+            sortedFiniteSample: [0, 2.5e36, 5e36, 7.5e36, 1e37], levels: levels
+        )
+        XCTAssertEqual(cdf[34], 0.2)
+        XCTAssertEqual(cdf[128], 0.6)
+        XCTAssertEqual(cdf[255], 1)
+    }
 }
