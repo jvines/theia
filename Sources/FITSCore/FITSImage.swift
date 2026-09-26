@@ -158,23 +158,33 @@ public struct FITSImage: Sendable {
     /// 4k×4k float32 images this is the dominant cost of the photometry /
     /// stats panel; collapsing the dispatch makes it noticeably tighter.
     public func physicalValues() -> [Double] {
+        try! physicalValuesCheckingCancellation(checkCancellation: {})
+    }
+
+    /// Decode off the main actor, checking for cancellation every 8,192 pixels.
+    public func physicalValuesCheckingCancellation(
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [Double] {
+        try checkCancellation()
         let count = width * height
         var out = [Double](repeating: 0, count: count)
         guard count > 0 else { return out }
         let scale = bscale
         let zero = bzero
         let blankInt = blank
-        pixels.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        try pixels.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
             switch pixelType {
             case .uint8:
                 let p = base.assumingMemoryBound(to: UInt8.self)
                 for i in 0..<count {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let v = Double(p[i])
                     out[i] = applyScaling(v, scale: scale, zero: zero, blank: blankInt)
                 }
             case .int16:
                 for i in 0..<count {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let off = i * 2
                     let hi = UInt16(base.load(fromByteOffset: off,     as: UInt8.self))
                     let lo = UInt16(base.load(fromByteOffset: off + 1, as: UInt8.self))
@@ -183,6 +193,7 @@ public struct FITSImage: Sendable {
                 }
             case .int32:
                 for i in 0..<count {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let off = i * 4
                     let b0 = UInt32(base.load(fromByteOffset: off,     as: UInt8.self))
                     let b1 = UInt32(base.load(fromByteOffset: off + 1, as: UInt8.self))
@@ -193,6 +204,7 @@ public struct FITSImage: Sendable {
                 }
             case .float32:
                 for i in 0..<count {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let off = i * 4
                     let b0 = UInt32(base.load(fromByteOffset: off,     as: UInt8.self))
                     let b1 = UInt32(base.load(fromByteOffset: off + 1, as: UInt8.self))
@@ -204,6 +216,7 @@ public struct FITSImage: Sendable {
                 }
             case .float64:
                 for i in 0..<count {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let off = i * 8
                     var bits: UInt64 = 0
                     for j in 0..<8 {

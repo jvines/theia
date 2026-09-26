@@ -21,11 +21,23 @@ public enum Contours {
 
     /// Single-level contour extraction. NaN cells are skipped silently.
     public static func segments(values: [Double], width: Int, height: Int, level: Double) -> [Segment] {
+        try! segmentsCheckingCancellation(
+            values: values, width: width, height: height, level: level,
+            checkCancellation: {}
+        )
+    }
+
+    /// Checks cancellation once per image row while extracting a single level.
+    public static func segmentsCheckingCancellation(
+        values: [Double], width: Int, height: Int, level: Double,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [Segment] {
         precondition(values.count == width * height, "values count must equal width * height")
         guard width >= 2, height >= 2 else { return [] }
         var out: [Segment] = []
         out.reserveCapacity(width * height / 8)
         for j in 0..<(height - 1) {
+            try checkCancellation()
             for i in 0..<(width - 1) {
                 // Corners — bl, br, tr, tl (counter-clockwise from bottom-left).
                 let v00 = values[ j      * width +  i     ]   // bl
@@ -96,9 +108,24 @@ public enum Contours {
 
     /// Multi-level extraction.
     public static func segments(values: [Double], width: Int, height: Int, levels: [Double]) -> [LeveledSegments] {
-        levels.map { level in
-            LeveledSegments(level: level,
-                            segments: segments(values: values, width: width, height: height, level: level))
+        try! segmentsCheckingCancellation(
+            values: values, width: width, height: height, levels: levels,
+            checkCancellation: {}
+        )
+    }
+
+    /// Checks cancellation between levels and between rows of each level.
+    public static func segmentsCheckingCancellation(
+        values: [Double], width: Int, height: Int, levels: [Double],
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [LeveledSegments] {
+        try levels.map { level in
+            try checkCancellation()
+            return LeveledSegments(level: level,
+                            segments: try segmentsCheckingCancellation(
+                                values: values, width: width, height: height,
+                                level: level, checkCancellation: checkCancellation
+                            ))
         }
     }
 

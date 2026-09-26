@@ -128,8 +128,8 @@ final class DocumentSessionTests: XCTestCase {
     }
 
     func testRestoredDisplayAndRegionsAreReadyBeforeViewAppears() async throws {
-        try await MainActor.run {
-            let session = try makeSession()
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
             let region = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
             let saved = SessionState(
                 selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
@@ -148,11 +148,13 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.view.stretchParameter, 3)
             XCTAssertEqual(session.regions, [region])
             XCTAssertTrue(session.showGrid)
-            XCTAssertEqual(session.contourSegments.count, 1)
+            XCTAssertTrue(session.contourSegments.isEmpty)
 
             session.regions = [] // an immediate script edit wins over the saved value
             XCTAssertTrue(session.regions.isEmpty)
         }
+        await session.idle()
+        await MainActor.run { XCTAssertEqual(session.contourSegments.count, 1) }
     }
 
     func testZScaleResetsDisplayedLevelsWithoutToolbarCallbacks() async throws {
@@ -185,12 +187,12 @@ final class DocumentSessionTests: XCTestCase {
     }
 
     func testOverlayStateAndContoursFollowTheDisplayedPlane() async throws {
-        try await MainActor.run {
-            let session = try makeSession()
+        let session = try await MainActor.run { try makeSession() }
+        let contoursChanged = expectation(description: "contour change invalidates observers")
+        await MainActor.run {
             session.showGrid = true
             session.showCompass = true
             session.showColorBar = true
-            let contoursChanged = expectation(description: "contour change invalidates observers")
             withObservationTracking {
                 _ = session.contourSegments
             } onChange: {
@@ -199,18 +201,52 @@ final class DocumentSessionTests: XCTestCase {
             session.setContourSpec(ContourSpec(
                 enabled: true, count: 1, minValue: 1, maxValue: 2, spacing: .linear
             ))
-            wait(for: [contoursChanged], timeout: 1)
+        }
+        await session.idle()
+        await fulfillment(of: [contoursChanged], timeout: 1)
+        await MainActor.run {
             XCTAssertTrue(session.showGrid)
             XCTAssertTrue(session.showCompass)
             XCTAssertTrue(session.showColorBar)
             XCTAssertEqual(session.contourSegments.count, 1)
             XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
-
             session.selectPlane(1)
+        }
+        await session.idle()
+        await MainActor.run {
             XCTAssertTrue(session.contourSegments[0].segments.isEmpty)
             session.selectPlane(0)
+        }
+        await session.idle()
+        await MainActor.run {
             XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
         }
+    }
+
+    func testContourJobsKeepOnlyTheLatestDisplayedImage() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            session.setContourSpec(ContourSpec(
+                enabled: true, count: 1, minValue: 1, maxValue: 2
+            ))
+            XCTAssertTrue(session.contourSegments.isEmpty)
+            session.selectPlane(1)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.contourSegments.count, 1)
+            XCTAssertTrue(session.contourSegments[0].segments.isEmpty)
+            session.selectPlane(0)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertFalse(session.contourSegments[0].segments.isEmpty)
+            session.selectPlane(1)
+            session.setContourSpec(ContourSpec())
+            XCTAssertTrue(session.contourSegments.isEmpty)
+        }
+        await session.idle()
+        await MainActor.run { XCTAssertTrue(session.contourSegments.isEmpty) }
     }
 
     func testToolStateIsObservableAndRestoresBeforeViewAppears() async throws {

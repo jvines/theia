@@ -102,6 +102,7 @@ public struct HDUFacts {
     @ObservationIgnored private var imageCache: [ImageKey: FITSImage] = [:]
     @ObservationIgnored internal private(set) var decodedImageCount = 0
     @ObservationIgnored private var lastPlaneAdvance: Date = .now
+    @ObservationIgnored private let jobs = SessionJobQueue()
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
         let fileFacts = file.hdus.map(HDUFacts.init)
@@ -188,15 +189,30 @@ public struct HDUFacts {
     }
 
     private func recomputeContours() {
-        guard contourSpec.enabled, let image = displayed else {
+        let levels = contourSpec.levels()
+        guard contourSpec.enabled, let image = displayed,
+              !levels.isEmpty else {
+            jobs.cancel(kind: .contours)
             contourSegments = []
             return
         }
-        contourSegments = Contours.segments(
-            values: image.physicalValues(), width: image.width,
-            height: image.height, levels: contourSpec.levels()
+        let revision = imageRevision
+        contourSegments = []
+        jobs.enqueue(
+            kind: .contours, imageRevision: revision,
+            currentRevision: { [weak self] in self?.imageRevision ?? -1 },
+            work: {
+                guard let values = try? image.physicalValuesCheckingCancellation() else { return nil }
+                return try? Contours.segmentsCheckingCancellation(
+                    values: values, width: image.width,
+                    height: image.height, levels: levels
+                )
+            },
+            apply: { [weak self] segments in self?.contourSegments = segments }
         )
     }
+
+    public func idle() async { await jobs.idle() }
 
     /// The next image HDU of the same width and height, wrapping at the end.
     public var blinkPartner: Int? {

@@ -2,6 +2,20 @@ import XCTest
 @testable import FITSCore
 
 final class ContourTests: XCTestCase {
+    func testCancellationIsCheckedBetweenContourRows() {
+        enum Abort: Error { case cancelled }
+        let values = [Double](repeating: 0, count: 9)
+        var checks = 0
+        XCTAssertThrowsError(try Contours.segmentsCheckingCancellation(
+            values: values, width: 3, height: 3, levels: [1],
+            checkCancellation: {
+                checks += 1
+                if checks == 3 { throw Abort.cancelled }
+            }
+        ))
+        XCTAssertEqual(checks, 3)
+    }
+
     /// Trivial 2×2 patch with one corner above the level → produces a single short segment.
     func testSinglePixelTriangleProducesOneSegment() {
         // 2×2 grid: bottom-left=2, others=0 (row-major, j=0 is bottom row).

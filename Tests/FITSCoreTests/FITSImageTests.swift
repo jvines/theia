@@ -2,6 +2,21 @@ import XCTest
 @testable import FITSCore
 
 final class FITSImageTests: XCTestCase {
+    func testPhysicalValuesChecksCancellationDuringDecode() {
+        enum Abort: Error { case cancelled }
+        let image = FITSImage.fromFloat32(
+            pixels: [Float](repeating: 1, count: 16_385), width: 16_385, height: 1
+        )
+        var checks = 0
+        XCTAssertThrowsError(try image.physicalValuesCheckingCancellation(
+            checkCancellation: {
+                checks += 1
+                if checks == 3 { throw Abort.cancelled }
+            }
+        ))
+        XCTAssertEqual(checks, 3)
+    }
+
     func testPhysicalMinMaxSkipsUndefinedAndNonFinitePixels() {
         let image = FITSImage.fromFloat32(
             pixels: [.nan, 7, -.infinity, -3, .infinity, 2], width: 3, height: 2
