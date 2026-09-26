@@ -11,12 +11,6 @@ struct DocumentView: View {
     let toolbarController: FITSToolbarController
 
     @State private var session: DocumentSession
-    @State private var planePlaying: Bool = false
-    @State private var planeFPS: Double = 5
-    @State private var lastPlaneAdvance: Date = .now
-    @State private var showInspector: Bool = true
-    @State private var isFetchingCatalog: Bool = false
-    @State private var blinkState: BlinkState? = nil
     private let viewport: ImageViewState
     private let pixelTableBridge = PixelTableCursorBridge()
 
@@ -69,6 +63,28 @@ struct DocumentView: View {
         get { session.cursor }
         nonmutating set { session.cursor = newValue }
     }
+    private var showInspector: Bool {
+        get { session.inspectorVisible }
+        nonmutating set { session.inspectorVisible = newValue }
+    }
+    private var isFetchingCatalog: Bool {
+        get { session.catalogFetchInProgress }
+        nonmutating set { session.catalogFetchInProgress = newValue }
+    }
+    private var planePlaying: Bool {
+        get { session.playing }
+        nonmutating set { session.setPlaying(newValue) }
+    }
+    private var blinkState: BlinkState? { session.blink }
+    private var playingBinding: Binding<Bool> {
+        Binding(get: { session.playing }, set: { session.setPlaying($0) })
+    }
+    private var fpsBinding: Binding<Double> {
+        Binding(get: { session.fps }, set: { session.setFPS($0) })
+    }
+    private var inspectorTabBinding: Binding<InspectorTab> {
+        Binding(get: { session.inspectorTab }, set: { session.inspectorTab = $0 })
+    }
     private var regionsBinding: Binding<[Region]> {
         Binding(get: { session.regions }, set: { session.regions = $0 })
     }
@@ -98,7 +114,6 @@ struct DocumentView: View {
     }
 
     private static let blinkTickRate: TimeInterval = 0.05
-    private static let blinkIntervalDefault: TimeInterval = 1.0
 
     init(document: DocumentModel,
          toolbarState: ToolbarState,
@@ -124,8 +139,8 @@ struct DocumentView: View {
                         hdu: hdu,
                         planeCount: session.facts[selectedHDU].planeCount,
                         plane: planeBinding,
-                        planePlaying: $planePlaying,
-                        planeFPS: $planeFPS,
+                        planePlaying: playingBinding,
+                        planeFPS: fpsBinding,
                         cursor: cursor,
                         wcs: session.displayedWCS,
                         viewport: viewport
@@ -143,6 +158,7 @@ struct DocumentView: View {
                 Divider()
                 InspectorPanel(
                     header: hdu.header,
+                    tab: inspectorTabBinding,
                     regions: regionsBinding,
                     imageProvider: { currentImage() },
                     wcsProvider: { session.displayedWCS }
@@ -153,9 +169,8 @@ struct DocumentView: View {
         }
             .onReceive(
                 Timer.publish(every: Self.blinkTickRate, on: .main, in: .common).autoconnect(),
-                perform: tick(_:)
+                perform: { session.tick(now: $0) }
             )
-            .onChange(of: selectedHDU) { _, _ in planePlaying = false }
             .focusable()
             .focusEffectDisabled()
             .onKeyPress(.leftArrow, phases: .down) { press in
@@ -549,23 +564,15 @@ struct BetaWatermarkOverlay: View {
 
 struct InspectorPanel: View {
     let header: FITSHeader
+    @Binding var tab: InspectorTab
     @Binding var regions: [Region]
     let imageProvider: () -> FITSImage?
     let wcsProvider: () -> WCS?
-    @State private var tab: Tab = .header
-
-    enum Tab: String, CaseIterable, Identifiable {
-        case header = "Header"
-        case regions = "Regions"
-        case photometry = "Photometry"
-        case stats = "Stats"
-        var id: String { rawValue }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(8)
@@ -1101,19 +1108,6 @@ extension DocumentView {
     private func updateRegion(idx: Int, region: Region) {
         guard regions.indices.contains(idx) else { return }
         regions[idx] = region
-    }
-
-    fileprivate func tick(_ now: Date) {
-        if let bs = blinkState {
-            let target = bs.currentHDU(at: now)
-            if selectedHDU != target { selectedHDU = target }
-        }
-        let planeCount = session.facts[selectedHDU].planeCount
-        guard planePlaying,
-              planeCount > 1,
-              now.timeIntervalSince(lastPlaneAdvance) >= 1.0 / planeFPS else { return }
-        selectedPlane = (selectedPlane + 1) % planeCount
-        lastPlaneAdvance = now
     }
 
     fileprivate func showRegionContextMenu(index: Int, event: NSEvent) {
@@ -1808,18 +1802,7 @@ extension DocumentView {
     }
 
     fileprivate func toggleBlink() {
-        if let bs = blinkState {
-            selectedHDU = bs.primary
-            blinkState = nil
-        } else {
-            guard let partner = session.blinkPartner else { return }
-            blinkState = BlinkState(
-                primary: selectedHDU,
-                partner: partner,
-                intervalSeconds: Self.blinkIntervalDefault,
-                startedAt: Date()
-            )
-        }
+        session.toggleBlink()
     }
 
     fileprivate func fetchCatalog() async {
