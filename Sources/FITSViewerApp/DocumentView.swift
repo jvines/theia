@@ -187,7 +187,7 @@ struct DocumentView: View {
                 }
             )
             .onAppear {
-                loadSessionIfPresent()
+                applyRestoredShellState()
                 syncToolbarState()
             }
             .background(
@@ -1244,28 +1244,13 @@ extension DocumentView {
         }
     }
 
-    fileprivate func loadSessionIfPresent() {
-        let url = SessionState.sidecarURL(for: document.url)
-        guard let data = try? Data(contentsOf: url),
-              let session = try? SessionState.fromJSON(data) else {
-            // DocumentModel already set levels before the first renderer upload.
-            return
-        }
-        if document.file.hdus.indices.contains(session.selectedHDU) {
-            selectedHDU = session.selectedHDU
-        }
-        selectedPlane = session.selectedPlane
-        stretch = session.stretch
-        colorMap = session.colorMap
-        if let mode = DrawMode(rawValue: session.drawMode) { drawMode = mode }
-        viewport.vmin = Float(session.vmin)
-        viewport.vmax = Float(session.vmax)
-        viewport.stretchParameter = Float(session.stretchParameter)
-        showWCSGrid = session.showWCSGrid
-        showCompass = session.showCompass
-        showColorBar = session.showColorBar
-        regions = session.regions
-        if let c = session.contour {
+    fileprivate func applyRestoredShellState() {
+        guard let saved = document.restoredState else { return }
+        if let mode = DrawMode(rawValue: saved.drawMode) { drawMode = mode }
+        showWCSGrid = saved.showWCSGrid
+        showCompass = saved.showCompass
+        showColorBar = saved.showColorBar
+        if let c = saved.contour {
             contourSpec = ContourSpec(
                 enabled: c.enabled,
                 count: c.count,

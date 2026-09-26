@@ -9,6 +9,7 @@ import TheiaKit
     let url: URL
     let file: FITSFile
     let session: DocumentSession
+    let restoredState: SessionState?
 
     init(url: URL) throws {
         self.url = url
@@ -30,5 +31,8 @@ import TheiaKit
             stretch: UserPreferences.shared.defaultStretch,
             colorMap: UserPreferences.shared.defaultColorMap
         )
+        let savedData = try? Data(contentsOf: SessionState.sidecarURL(for: url))
+        self.restoredState = savedData.flatMap { try? SessionState.fromJSON($0) }
+        if let restoredState { session.restoreInitialState(restoredState) }
     }
 }

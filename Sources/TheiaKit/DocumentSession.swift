@@ -183,4 +183,17 @@ public struct HDUFacts {
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
     }
+
+    /// Apply persisted canvas and region state before the document is made
+    /// available to scripting or its first renderer is created.
+    public func restoreInitialState(_ saved: SessionState) {
+        if facts.indices.contains(saved.selectedHDU) { selectHDU(saved.selectedHDU) }
+        selectPlane(saved.selectedPlane)
+        view.stretch = saved.stretch
+        view.colorMap = saved.colorMap
+        view.vmin = Float(saved.vmin)
+        view.vmax = Float(saved.vmax)
+        view.stretchParameter = Float(saved.stretchParameter)
+        regions = saved.regions
+    }
 }

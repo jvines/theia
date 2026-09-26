@@ -127,6 +127,31 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testRestoredDisplayAndRegionsAreReadyBeforeViewAppears() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            let saved = SessionState(
+                selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
+                drawMode: "pan", vmin: 12, vmax: 45, stretchParameter: 3,
+                showWCSGrid: true, showCompass: false, showColorBar: false,
+                regions: [region]
+            )
+            session.restoreInitialState(saved)
+            XCTAssertEqual(session.hdu, 2)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 11)
+            XCTAssertEqual(session.view.vmin, 12)
+            XCTAssertEqual(session.view.vmax, 45)
+            XCTAssertEqual(session.view.stretch, .log)
+            XCTAssertEqual(session.view.colorMap, .plasma)
+            XCTAssertEqual(session.view.stretchParameter, 3)
+            XCTAssertEqual(session.regions, [region])
+
+            session.regions = [] // an immediate script edit wins over the saved value
+            XCTAssertTrue(session.regions.isEmpty)
+        }
+    }
+
     @MainActor
     private func makeSession() throws -> DocumentSession {
         var data = Data()

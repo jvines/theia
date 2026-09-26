@@ -133,9 +133,17 @@ fi
 #   regions/clear must be a real route.
 OUT="$(req GET /document/0/info/junk)"; CODE="${OUT##*$'\n'}"
 assert_status 404 "$CODE" "GET /document/0/info/junk must 404, not match /info"
+OUT="$(req POST /document/0/regions $'image\npoint(1,1)')"; CODE="${OUT##*$'\n'}"
+assert_status 200 "$CODE" "POST /document/0/regions"
+OUT="$(req GET /document/0/regions)"; CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
+assert_status 200 "$CODE" "GET /document/0/regions"
+[[ "$BODY" == *'point(1, 1)'* ]] || fail "region POST did not persist in the session: $BODY"
 OUT="$(req POST /document/0/regions/clear)"; CODE="${OUT##*$'\n'}"
 assert_status 200 "$CODE" "POST /document/0/regions/clear"
-echo "smoke: router rejects junk 3rd segment; regions/clear works"
+OUT="$(req GET /document/0/regions)"; CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
+assert_status 200 "$CODE" "GET /document/0/regions after clear"
+[[ -z "$BODY" ]] || fail "region clear did not empty the session: $BODY"
+echo "smoke: router rejects junk 3rd segment; regions round-trip and clear work"
 #   BUG-16: an oversized header arriving complete in one burst must 431 even with a
 #   valid token (before the fix the cap was only enforced on incomplete reads).
 PAD="$(head -c 20000 /dev/zero | tr '\0' 'A')"
