@@ -47,8 +47,12 @@ jobs:
     name: shared Swift (AlmaLinux 8, x86_64)
     runs-on: checo
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout with host Git
+        run: |
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth 1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
 
       - name: Build Swift 6.3.3 AlmaLinux 8 image
         run: docker build --label cl.jvines.owner=theia-ci --iidfile ci-image-id -f ci/Dockerfile.almalinux8-swift63 ci
