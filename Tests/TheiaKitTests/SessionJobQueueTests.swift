@@ -6,11 +6,11 @@ final class SessionJobQueueTests: XCTestCase {
         let (jobs, probe) = await MainActor.run { (SessionJobQueue(), JobProbe()) }
         let gate = JobGate()
         await MainActor.run {
-            jobs.enqueue(kind: .imageOperation, imageRevision: 0,
+            jobs.enqueue(kind: .export, imageRevision: 0,
                          currentRevision: { probe.revision },
                          work: { await gate.wait(); return 1 },
                          apply: { probe.applied.append($0) })
-            jobs.enqueue(kind: .imageOperation, imageRevision: 0,
+            jobs.enqueue(kind: .export, imageRevision: 0,
                          currentRevision: { probe.revision },
                          work: { 2 },
                          apply: { probe.applied.append($0) })

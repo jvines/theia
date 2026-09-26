@@ -6,7 +6,6 @@ public enum SessionJobKind: Hashable, Sendable {
     case contours
     case photometry
     case statistics
-    case imageOperation
     case sourceDetection
     case catalog
     case export
@@ -14,7 +13,7 @@ public enum SessionJobKind: Hashable, Sendable {
     var latestWins: Bool {
         switch self {
         case .displayImage, .contours, .photometry, .statistics: true
-        case .imageOperation, .sourceDetection, .catalog, .export: false
+        case .sourceDetection, .catalog, .export: false
         }
     }
 }
