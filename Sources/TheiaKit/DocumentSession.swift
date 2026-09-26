@@ -62,6 +62,23 @@ public struct HDUFacts {
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""
     public private(set) var derived: DerivedImage?
+    public var regions: [Region] = [] {
+        didSet {
+            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
+                self.selectedRegionIndex = nil
+            }
+            if regions.isEmpty { previewRegion = nil }
+        }
+    }
+    public var selectedRegionIndex: Int? {
+        didSet {
+            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
+                self.selectedRegionIndex = nil
+            }
+        }
+    }
+    public var previewRegion: Region?
+    public var remoteCrosshair: SIMD2<Double>?
     public var imageRevision: Int { view.imageRevision }
 
     private struct ImageKey: Hashable {
@@ -127,6 +144,28 @@ public struct HDUFacts {
         return RasterLevels(vmin: lo, vmax: hi)
     }
 
+    public func resetLevels() {
+        guard let displayed else { return }
+        let levels = Self.recommendedLevels(for: displayed)
+        view.vmin = levels.vmin
+        view.vmax = levels.vmax
+    }
+
+    public func setMinMaxLevels() {
+        guard let range = displayed?.physicalMinMax() else { return }
+        view.vmin = Float(range.min)
+        view.vmax = Float(range.max)
+    }
+
+    public func setPercentileLevels(lower: Double, upper: Double) {
+        guard let displayed,
+              let range = PixelStatistics.percentiles(
+                displayed.physicalValues(), lower: lower, upper: upper
+              ) else { return }
+        view.vmin = Float(range.vmin)
+        view.vmax = Float(range.vmax)
+    }
+
     /// The next image HDU of the same width and height, wrapping at the end.
     public var blinkPartner: Int? {
         guard facts.indices.contains(hdu), let shape = facts[hdu].shape, facts.count > 1 else { return nil }
@@ -165,5 +204,18 @@ public struct HDUFacts {
         guard derived != image else { return }
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
+    }
+
+    /// Apply persisted canvas and region state before the document is made
+    /// available to scripting or its first renderer is created.
+    public func restoreInitialState(_ saved: SessionState) {
+        if facts.indices.contains(saved.selectedHDU) { selectHDU(saved.selectedHDU) }
+        selectPlane(saved.selectedPlane)
+        view.stretch = saved.stretch
+        view.colorMap = saved.colorMap
+        view.vmin = Float(saved.vmin)
+        view.vmax = Float(saved.vmax)
+        view.stretchParameter = Float(saved.stretchParameter)
+        regions = saved.regions
     }
 }

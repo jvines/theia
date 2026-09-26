@@ -32,9 +32,9 @@ final class XPACommandBridge: XPAServerDelegate {
             guard let front = frontController() else { return "0" }
             return String((AppDelegate.shared?.scriptingID(of: front) ?? -1) + 1)
         case "scale":
-            return frontController().map { ds9Scale(from: $0.toolbarState.stretch) }
+            return frontController().map { ds9Scale(from: $0.documentModel.session.view.stretch) }
         case "cmap":
-            return frontController()?.toolbarState.colorMap.rawValue.lowercased()
+            return frontController()?.documentModel.session.view.colorMap.rawValue.lowercased()
         case "regions":
             return frontController().map { RegionFile.format($0.regionsForScripting()) }
         default:
@@ -72,29 +72,29 @@ final class XPACommandBridge: XPAServerDelegate {
                 // and reject unknown tokens instead of silently running zscale.
                 guard toks.count >= 2 else { return false }
                 switch toks[1].lowercased() {
-                case "zscale": c.toolbarState.onApplyScalePreset(.zscale)
-                case "minmax": c.toolbarState.onApplyScalePreset(.minMax)
+                case "zscale": c.documentModel.session.resetLevels()
+                case "minmax": c.documentModel.session.setMinMaxLevels()
                 default:
                     // Numeric percentile, e.g. `scale mode 99.5` → clip (100−p)/2 each end.
                     guard let pct = Double(toks[1]), pct > 0, pct <= 100 else { return false }
                     let tail = (100 - pct) / 2
-                    c.toolbarState.onApplyScalePreset(.percentile(lower: tail, upper: 100 - tail))
+                    c.documentModel.session.setPercentileLevels(lower: tail, upper: 100 - tail)
                 }
                 return true
             default:
                 guard let s = appStretch(fromDS9: p) else { return false }
-                c.toolbarState.onSelectStretch(s)
+                c.documentModel.session.view.stretch = s
                 return true
             }
 
         case "cmap":
             guard let c = frontController(), let cm = appColorMap(fromDS9: p) else { return false }
-            c.toolbarState.onSelectMap(cm)
+            c.documentModel.session.view.colorMap = cm
             return true
 
         case "zscale":
             guard let c = frontController() else { return false }
-            c.toolbarState.onZScale()
+            c.documentModel.session.resetLevels()
             return true
 
         case "regions":

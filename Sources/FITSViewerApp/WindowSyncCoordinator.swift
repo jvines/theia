@@ -135,7 +135,7 @@ final class WindowSyncCoordinator: ObservableObject {
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
             c.toolbarState.colorMap = cm
-            c.toolbarState.onSelectMap(cm)
+            c.documentModel.session.view.colorMap = cm
         }
     }
 
@@ -156,14 +156,14 @@ final class WindowSyncCoordinator: ObservableObject {
                let p = targetWCS.skyToPixel(ra: sky.ra, dec: sky.dec) {
                 localPoint = SIMD2(p.x, p.y)
             }
-            c.documentModel.remoteCrosshair = localPoint
+            c.documentModel.session.remoteCrosshair = localPoint
         }
     }
 
     func clearCrosshairs(except origin: DocumentWindowController? = nil) {
         for entry in entries {
             guard let c = entry.controller, c !== origin else { continue }
-            c.documentModel.remoteCrosshair = nil
+            c.documentModel.session.remoteCrosshair = nil
         }
     }
 

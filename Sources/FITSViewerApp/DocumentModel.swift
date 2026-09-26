@@ -5,20 +5,11 @@ import TheiaKit
 
 /// Replaces `FITSDocument` (the SwiftUI `FileDocument`) for the AppKit-owned
 /// window path. The shared session owns the canvas state used by the window.
-@MainActor final class DocumentModel: ObservableObject {
+@MainActor final class DocumentModel {
     let url: URL
     let file: FITSFile
     let session: DocumentSession
-    /// Bridge for cross-process scripting: latest known regions list. DocumentView
-    /// writes this from its @State on change.
-    @Published var regionsBridge: [Region] = []
-    /// Callback DocumentView sets so scripting can mutate regions through it.
-    var setRegions: ([Region]) -> Void = { _ in }
-    /// Cursor location forwarded from another window via crosshair sync — drawn as a
-    /// reference crosshair. nil = no crosshair to draw.
-    @Published var remoteCrosshair: SIMD2<Double>? = nil
-    /// Bridge for scripting / Save As: the latest displayed image (override or raw).
-    var currentImageProvider: () -> FITSImage? = { nil }
+    let restoredState: SessionState?
 
     init(url: URL) throws {
         self.url = url
@@ -40,6 +31,8 @@ import TheiaKit
             stretch: UserPreferences.shared.defaultStretch,
             colorMap: UserPreferences.shared.defaultColorMap
         )
-        self.currentImageProvider = { [session] in session.displayed }
+        let savedData = try? Data(contentsOf: SessionState.sidecarURL(for: url))
+        self.restoredState = savedData.flatMap { try? SessionState.fromJSON($0) }
+        if let restoredState { session.restoreInitialState(restoredState) }
     }
 }

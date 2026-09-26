@@ -221,7 +221,7 @@ final class ScriptingServer {
             case ("POST", "scale"):
                 return setScaleResponse(controller: controller, body: body)
             case ("POST", "zscale"):
-                controller.toolbarState.onZScale()
+                controller.documentModel.session.resetLevels()
                 return httpResponse(200, json: ["ok": true])
             case ("GET", "regions"):
                 return regionsGetResponse(controller: controller)
@@ -266,26 +266,26 @@ final class ScriptingServer {
             return httpResponse(500, json: ["error": "failed to open: \(error.localizedDescription)"])
         }
         // Optional params
+        let session = controller.documentModel.session
         if let s = obj["stretch"] as? String, let stretch = ImageStretch(rawValue: s) {
-            controller.toolbarState.onSelectStretch(stretch)
+            session.view.stretch = stretch
         }
         if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
-            controller.toolbarState.onSelectMap(cm)
+            session.view.colorMap = cm
         }
-        if let vmin = obj["vmin"] as? Double { controller.documentModel.session.view.vmin = Float(vmin) }
-        if let vmax = obj["vmax"] as? Double { controller.documentModel.session.view.vmax = Float(vmax) }
-        if obj["zscale"] as? Bool == true { controller.toolbarState.onZScale() }
+        if let vmin = obj["vmin"] as? Double { session.view.vmin = Float(vmin) }
+        if let vmax = obj["vmax"] as? Double { session.view.vmax = Float(vmax) }
+        if obj["zscale"] as? Bool == true { session.resetLevels() }
         let id = AppDelegate.shared?.scriptingID(of: controller) ?? -1
         return httpResponse(200, json: ["id": id])
     }
 
     private func infoResponse(controller: DocumentWindowController) -> Data {
-        let toolbar = controller.toolbarState
         let viewport = controller.documentModel.session.view
         let json: [String: Any] = [
             "path": controller.documentModel.url.path,
-            "stretch": toolbar.stretch.rawValue,
-            "colormap": toolbar.colorMap.rawValue,
+            "stretch": viewport.stretch.rawValue,
+            "colormap": viewport.colorMap.rawValue,
             "vmin": Double(viewport.vmin),
             "vmax": Double(viewport.vmax),
             "stretchParameter": Double(viewport.stretchParameter)
@@ -299,7 +299,7 @@ final class ScriptingServer {
               let s = ImageStretch(rawValue: name) else {
             return httpResponse(400, json: ["error": "expected {name: <stretch>}"])
         }
-        controller.toolbarState.onSelectStretch(s)
+        controller.documentModel.session.view.stretch = s
         return httpResponse(200, json: ["ok": true])
     }
 
@@ -309,7 +309,7 @@ final class ScriptingServer {
               let cm = ColorMap(rawValue: name) else {
             return httpResponse(400, json: ["error": "expected {name: <colormap>}"])
         }
-        controller.toolbarState.onSelectMap(cm)
+        controller.documentModel.session.view.colorMap = cm
         return httpResponse(200, json: ["ok": true])
     }
 

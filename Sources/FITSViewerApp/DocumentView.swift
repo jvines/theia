@@ -6,7 +6,7 @@ import FITSRender
 import TheiaKit
 
 struct DocumentView: View {
-    @ObservedObject var document: DocumentModel
+    let document: DocumentModel
     @ObservedObject var toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
 
@@ -22,9 +22,6 @@ struct DocumentView: View {
     @State private var contourSegments: [Contours.LeveledSegments] = []
     @State private var profileGeometry: ProfileGeometry? = nil
     @State private var drawMode: DrawMode = .pan
-    @State private var regions: [Region] = []
-    @State private var selectedRegionIndex: Int? = nil
-    @State private var previewRegion: Region? = nil
     @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
@@ -38,6 +35,21 @@ struct DocumentView: View {
     private var colorMap: ColorMap {
         get { session.view.colorMap }
         nonmutating set { session.view.colorMap = newValue }
+    }
+    private var regions: [Region] {
+        get { session.regions }
+        nonmutating set { session.regions = newValue }
+    }
+    private var selectedRegionIndex: Int? {
+        get { session.selectedRegionIndex }
+        nonmutating set { session.selectedRegionIndex = newValue }
+    }
+    private var previewRegion: Region? {
+        get { session.previewRegion }
+        nonmutating set { session.previewRegion = newValue }
+    }
+    private var regionsBinding: Binding<[Region]> {
+        Binding(get: { session.regions }, set: { session.regions = $0 })
     }
 
     private var selectedHDU: Int {
@@ -110,7 +122,7 @@ struct DocumentView: View {
                 Divider()
                 InspectorPanel(
                     header: hdu.header,
-                    regions: $regions,
+                    regions: regionsBinding,
                     imageProvider: { currentImage() },
                     wcsProvider: { session.displayedWCS }
                 )
@@ -175,13 +187,9 @@ struct DocumentView: View {
                 }
             )
             .onAppear {
-                loadSessionIfPresent()
+                applyRestoredShellState()
                 syncToolbarState()
-                document.regionsBridge = regions
-                document.setRegions = { regs in regions = regs }
-                refreshCurrentImageProvider()
             }
-            .onChange(of: regions) { _, new in document.regionsBridge = new }
             .background(
                 SessionAutosaveWatcher(
                     regions: regions, stretch: stretch, colorMap: colorMap, drawMode: drawMode,
@@ -249,7 +257,7 @@ struct HDUSidebar: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text("\(hdu.kindLabel) · \(hdu.shapeDescription) · \(hdu.bitpixLabel)")
+                    Text(DocumentText.sidebarDetails(for: hdu))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -311,7 +319,7 @@ struct StatusBar: View {
             skyBlock
             Spacer(minLength: 12)
             scaleBlock(showLabel: true)
-            Text("\(hdu.shapeDescription) · \(hdu.bitpixLabel)")
+            Text(DocumentText.statusDetails(for: hdu))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -331,9 +339,10 @@ struct StatusBar: View {
         HStack(spacing: 4) {
             if showLabel { Text("Pixel").foregroundStyle(.tertiary) }
             if let c = cursor {
-                Text("(\(c.fitsX), \(c.fitsY))").font(.system(.body, design: .monospaced))
+                Text(DocumentText.pixelCoordinates(imageX: c.imageX, imageY: c.imageY))
+                    .font(.system(.body, design: .monospaced))
                 Text("=").foregroundStyle(.secondary)
-                Text(c.value.isNaN ? "NaN" : String(format: "%.4g", c.value))
+                Text(DocumentText.pixelValue(c.value))
                     .font(.system(.body, design: .monospaced))
             } else {
                 Text("(—, —) = —")
@@ -384,10 +393,10 @@ struct StatusBar: View {
         HStack(spacing: 4) {
             if showLabel { Text("Scale").foregroundStyle(.secondary) }
             Text("min").foregroundStyle(.tertiary)
-            Text(formatLevel(viewport.vmin))
+            Text(DocumentText.level(viewport.vmin))
                 .font(.system(.body, design: .monospaced))
             Text("max").foregroundStyle(.tertiary)
-            Text(formatLevel(viewport.vmax))
+            Text(DocumentText.level(viewport.vmax))
                 .font(.system(.body, design: .monospaced))
             Image(systemName: "questionmark.circle")
                 .foregroundStyle(.tertiary)
@@ -399,9 +408,6 @@ struct StatusBar: View {
         .hoverTooltip("Right-click + drag on the image to adjust scale. Horizontal = contrast, vertical = bias. ZScale toolbar button resets.")
     }
 
-    private func formatLevel(_ v: Float) -> String {
-        String(format: abs(v) < 1000 && abs(v) >= 0.01 ? "%.3g" : "%.2e", v)
-    }
 }
 
 struct FITSImageView: View {
@@ -922,7 +928,7 @@ extension DocumentView {
             onCubeSpectrumAt: { p in handleCubeSpectrum(at: p) },
             onRegionContextMenu: { idx, event in showRegionContextMenu(index: idx, event: event) },
             onProfileDragPreview: { preview in handleProfileDragPreview(preview) },
-            remoteCrosshair: document.remoteCrosshair,
+            remoteCrosshair: session.remoteCrosshair,
             profileGeometry: profileGeometry
         )
     }
@@ -1197,14 +1203,7 @@ extension DocumentView {
     }
 
     private func resetLevels() {
-        guard let image = session.displayed else { return }
-        let levels = DocumentSession.recommendedLevels(for: image)
-        viewport.vmin = levels.vmin
-        viewport.vmax = levels.vmax
-    }
-
-    fileprivate func refreshCurrentImageProvider() {
-        document.currentImageProvider = { [session] in session.displayed }
+        session.resetLevels()
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1242,28 +1241,13 @@ extension DocumentView {
         }
     }
 
-    fileprivate func loadSessionIfPresent() {
-        let url = SessionState.sidecarURL(for: document.url)
-        guard let data = try? Data(contentsOf: url),
-              let session = try? SessionState.fromJSON(data) else {
-            // DocumentModel already set levels before the first renderer upload.
-            return
-        }
-        if document.file.hdus.indices.contains(session.selectedHDU) {
-            selectedHDU = session.selectedHDU
-        }
-        selectedPlane = session.selectedPlane
-        stretch = session.stretch
-        colorMap = session.colorMap
-        if let mode = DrawMode(rawValue: session.drawMode) { drawMode = mode }
-        viewport.vmin = Float(session.vmin)
-        viewport.vmax = Float(session.vmax)
-        viewport.stretchParameter = Float(session.stretchParameter)
-        showWCSGrid = session.showWCSGrid
-        showCompass = session.showCompass
-        showColorBar = session.showColorBar
-        regions = session.regions
-        if let c = session.contour {
+    fileprivate func applyRestoredShellState() {
+        guard let saved = document.restoredState else { return }
+        if let mode = DrawMode(rawValue: saved.drawMode) { drawMode = mode }
+        showWCSGrid = saved.showWCSGrid
+        showCompass = saved.showCompass
+        showColorBar = saved.showColorBar
+        if let c = saved.contour {
             contourSpec = ContourSpec(
                 enabled: c.enabled,
                 count: c.count,
@@ -1762,7 +1746,6 @@ extension DocumentView {
         let parent = NSApp.keyWindow
         ScaleParametersWindowController.show(
             viewport: viewport,
-            toolbarState: toolbarState,
             physicalValuesProvider: { currentImage()?.physicalValues() ?? [] },
             onApplyPreset: { preset in applyScalePreset(preset) },
             attachedTo: parent
@@ -1770,20 +1753,13 @@ extension DocumentView {
     }
 
     fileprivate func applyScalePreset(_ preset: ScalePreset) {
-        guard let image = currentImage() else { return }
         switch preset {
         case .zscale:
-            resetLevels()
+            session.resetLevels()
         case .minMax:
-            if let r = image.physicalMinMax() {
-                viewport.vmin = Float(r.min)
-                viewport.vmax = Float(r.max)
-            }
+            session.setMinMaxLevels()
         case .percentile(let lo, let hi):
-            if let r = PixelStatistics.percentiles(image.physicalValues(), lower: lo, upper: hi) {
-                viewport.vmin = Float(r.vmin)
-                viewport.vmax = Float(r.vmax)
-            }
+            session.setPercentileLevels(lower: lo, upper: hi)
         }
     }
 
@@ -1794,9 +1770,7 @@ extension DocumentView {
     }
 
     fileprivate func hduLabel(_ idx: Int) -> String {
-        guard let hdu = document.file.hdus[safe: idx] else { return "HDU \(idx)" }
-        if let name = hdu.name { return "HDU \(idx) — \(name)" }
-        return "HDU \(idx)"
+        DocumentText.hduLabel(index: idx, name: document.file.hdus[safe: idx]?.name)
     }
 
     fileprivate func canReproject(onto referenceIdx: Int) -> Bool {

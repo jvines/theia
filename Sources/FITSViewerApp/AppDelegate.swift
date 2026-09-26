@@ -125,18 +125,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log("fitsviewer URL open failed: \(error)")
             return
         }
-        // Apply query params to the controller's published toolbar / viewport state.
-        let toolbar = controller.toolbarState
-        let viewport = controller.documentModel.session.view
+        // Apply query params to the document state before any view appears.
+        let session = controller.documentModel.session
+        let viewport = session.view
         if let raw = items.first(where: { $0.name == "stretch" })?.value,
            let s = ImageStretch(rawValue: raw) {
-            toolbar.stretch = s
-            toolbar.onSelectStretch(s)
+            viewport.stretch = s
         }
         if let raw = items.first(where: { $0.name == "colormap" })?.value,
            let cm = ColorMap(rawValue: raw) {
-            toolbar.colorMap = cm
-            toolbar.onSelectMap(cm)
+            viewport.colorMap = cm
         }
         if let raw = items.first(where: { $0.name == "vmin" })?.value, let v = Float(raw) {
             viewport.vmin = v
@@ -145,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewport.vmax = v
         }
         if items.first(where: { $0.name == "zscale" })?.value == "1" {
-            toolbar.onZScale()
+            session.resetLevels()
         }
     }
 
@@ -294,15 +292,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
         guard let controller else { NSSound.beep(); return }
         let model = controller.documentModel
-        let toolbar = controller.toolbarState
         let viewport = model.session.view
-        guard let image = model.currentImageProvider() else { NSSound.beep(); return }
+        guard let image = model.session.displayed else { NSSound.beep(); return }
         let bytes = ImageExport.render(
             image,
-            stretch: toolbar.stretch,
+            stretch: viewport.stretch,
             vmin: Double(viewport.vmin),
             vmax: Double(viewport.vmax),
-            colorMap: toolbar.colorMap,
+            colorMap: viewport.colorMap,
             parameter: viewport.stretchParameter
         )
         guard let rep = NSBitmapImageRep(

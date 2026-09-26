@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import Observation
 import FITSCore
 @testable import TheiaKit
 
@@ -75,6 +76,108 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.facts[5].planeCount, 4)
             session.selectPlane(3)
             XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 12)
+        }
+    }
+
+    func testRegionsSelectionPreviewAndRemoteCrosshairBelongToSession() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 1, y: 2)), frame: .image)
+            session.regions = [region]
+            session.selectedRegionIndex = 0
+            session.previewRegion = region
+            session.remoteCrosshair = SIMD2(3, 4)
+
+            XCTAssertEqual(session.regions, [region])
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertEqual(session.previewRegion, region)
+            XCTAssertEqual(session.remoteCrosshair, SIMD2(3, 4))
+
+            session.selectedRegionIndex = 99
+            XCTAssertNil(session.selectedRegionIndex)
+            session.selectedRegionIndex = 0
+
+            var regionChangeObserved = false
+            withObservationTracking {
+                _ = session.regions
+            } onChange: {
+                regionChangeObserved = true
+            }
+            session.regions = []
+            XCTAssertTrue(regionChangeObserved)
+            XCTAssertNil(session.selectedRegionIndex)
+            XCTAssertNil(session.previewRegion)
+        }
+    }
+
+    func testDocumentTextPreservesHDUAndStatusReadouts() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let cube = session.file.hdus[1]
+            XCTAssertEqual(DocumentText.windowSubtitle(for: session.file), "6 HDUs · 2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.hduLabel(index: 1, name: nil), "HDU 1")
+            XCTAssertEqual(DocumentText.hduLabel(index: 2, name: "SCI"), "HDU 2 — SCI")
+            XCTAssertEqual(DocumentText.sidebarDetails(for: cube), "3D cube · 2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.statusDetails(for: cube), "2 × 2 × 2 · uint8")
+            XCTAssertEqual(DocumentText.pixelCoordinates(imageX: 0, imageY: 4), "(1, 5)")
+            XCTAssertEqual(DocumentText.pixelValue(.nan), "NaN")
+            XCTAssertEqual(DocumentText.pixelValue(1.23456), "1.235")
+            XCTAssertEqual(DocumentText.level(0), "0.00e+00")
+            XCTAssertEqual(DocumentText.level(1000), "1.00e+03")
+        }
+    }
+
+    func testRestoredDisplayAndRegionsAreReadyBeforeViewAppears() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            let saved = SessionState(
+                selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
+                drawMode: "pan", vmin: 12, vmax: 45, stretchParameter: 3,
+                showWCSGrid: true, showCompass: false, showColorBar: false,
+                regions: [region]
+            )
+            session.restoreInitialState(saved)
+            XCTAssertEqual(session.hdu, 2)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 11)
+            XCTAssertEqual(session.view.vmin, 12)
+            XCTAssertEqual(session.view.vmax, 45)
+            XCTAssertEqual(session.view.stretch, .log)
+            XCTAssertEqual(session.view.colorMap, .plasma)
+            XCTAssertEqual(session.view.stretchParameter, 3)
+            XCTAssertEqual(session.regions, [region])
+
+            session.regions = [] // an immediate script edit wins over the saved value
+            XCTAssertTrue(session.regions.isEmpty)
+        }
+    }
+
+    func testZScaleResetsDisplayedLevelsWithoutToolbarCallbacks() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let image = try XCTUnwrap(session.displayed)
+            let expected = DocumentSession.recommendedLevels(for: image)
+            session.view.vmin = -100
+            session.view.vmax = 100
+            session.resetLevels()
+            XCTAssertEqual(session.view.vmin, expected.vmin)
+            XCTAssertEqual(session.view.vmax, expected.vmax)
+        }
+    }
+
+    func testScalePresetsReadTheDisplayedImage() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let derived = FITSImage.fromFloat32(pixels: [10, 20, 30, 40], width: 2, height: 2)
+            session.setDerived(DerivedImage(image: derived, wcs: nil, label: "scaled"))
+            session.setMinMaxLevels()
+            XCTAssertEqual(session.view.vmin, 10)
+            XCTAssertEqual(session.view.vmax, 40)
+            session.view.vmin = -1
+            session.view.vmax = -1
+            session.setPercentileLevels(lower: 0, upper: 100)
+            XCTAssertEqual(session.view.vmin, 10)
+            XCTAssertEqual(session.view.vmax, 40)
         }
     }
 
