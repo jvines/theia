@@ -272,8 +272,8 @@ final class ScriptingServer {
         if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
             controller.toolbarState.onSelectMap(cm)
         }
-        if let vmin = obj["vmin"] as? Double { controller.documentModel.viewport.vmin = Float(vmin) }
-        if let vmax = obj["vmax"] as? Double { controller.documentModel.viewport.vmax = Float(vmax) }
+        if let vmin = obj["vmin"] as? Double { controller.documentModel.session.view.vmin = Float(vmin) }
+        if let vmax = obj["vmax"] as? Double { controller.documentModel.session.view.vmax = Float(vmax) }
         if obj["zscale"] as? Bool == true { controller.toolbarState.onZScale() }
         let id = AppDelegate.shared?.scriptingID(of: controller) ?? -1
         return httpResponse(200, json: ["id": id])
@@ -281,7 +281,7 @@ final class ScriptingServer {
 
     private func infoResponse(controller: DocumentWindowController) -> Data {
         let toolbar = controller.toolbarState
-        let viewport = controller.documentModel.viewport
+        let viewport = controller.documentModel.session.view
         let json: [String: Any] = [
             "path": controller.documentModel.url.path,
             "stretch": toolbar.stretch.rawValue,
@@ -319,8 +319,8 @@ final class ScriptingServer {
               let vmax = obj["vmax"] as? Double else {
             return httpResponse(400, json: ["error": "expected {vmin, vmax}"])
         }
-        controller.documentModel.viewport.vmin = Float(vmin)
-        controller.documentModel.viewport.vmax = Float(vmax)
+        controller.documentModel.session.view.vmin = Float(vmin)
+        controller.documentModel.session.view.vmax = Float(vmax)
         return httpResponse(200, json: ["ok": true])
     }
 

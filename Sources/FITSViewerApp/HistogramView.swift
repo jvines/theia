@@ -1,12 +1,13 @@
 import SwiftUI
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Histogram of physical pixel values with two draggable vertical handles wired to
 /// `viewport.vmin` and `viewport.vmax`. Computed lazily from the supplied values.
 struct HistogramView: View {
     let physicalValues: [Double]
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     private static let bins = 256
     private static let handleWidth: CGFloat = 8

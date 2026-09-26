@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Apply query params to the controller's published toolbar / viewport state.
         let toolbar = controller.toolbarState
-        let viewport = controller.documentModel.viewport
+        let viewport = controller.documentModel.session.view
         if let raw = items.first(where: { $0.name == "stretch" })?.value,
            let s = ImageStretch(rawValue: raw) {
             toolbar.stretch = s
@@ -295,7 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let controller else { NSSound.beep(); return }
         let model = controller.documentModel
         let toolbar = controller.toolbarState
-        let viewport = model.viewport
+        let viewport = model.session.view
         guard let image = model.currentImageProvider() else { NSSound.beep(); return }
         let bytes = ImageExport.render(
             image,

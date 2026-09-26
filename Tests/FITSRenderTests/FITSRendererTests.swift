@@ -7,13 +7,78 @@ import FITSRaster
 import TheiaKit
 @testable import FITSRender
 
-final class FITSRendererTests: XCTestCase {
+@MainActor final class FITSRendererTests: XCTestCase {
     func testInitCompilesShadersAndCreatesPipeline() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("No Metal device available on this machine")
         }
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         XCTAssertNil(renderer.texture)
+    }
+
+    func testDrawableResizeUpdatesCanvasSizeAndBackingScale() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let canvas = ImageViewState()
+        let renderer = try FITSRenderer(device: device, viewport: canvas)
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 200, height: 150), device: device)
+        renderer.mtkView(view, drawableSizeWillChange: CGSize(width: 400, height: 300))
+        XCTAssertEqual(canvas.viewSizePoints.width, 200)
+        XCTAssertEqual(canvas.viewSizePoints.height, 150)
+        XCTAssertEqual(canvas.backingScale, 2)
+    }
+
+    func testCanvasVisualChangesReachRendererAndRequestRedraw() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let canvas = ImageViewState()
+        let renderer = try FITSRenderer(device: device, viewport: canvas)
+        let view = InteractiveMTKView(frame: CGRect(x: 0, y: 0, width: 20, height: 20), device: device)
+        view.fitsRenderer = renderer
+        view.needsDisplay = false
+        let coordinator = FITSMetalView.Coordinator()
+        coordinator.renderer = renderer
+        coordinator.observeCanvas(canvas, view: view)
+
+        canvas.stretch = .power
+        canvas.stretchParameter = 0.4
+        canvas.colorMap = .plasma
+        canvas.vmin = 2
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(renderer.stretch, .power)
+        XCTAssertEqual(renderer.stretchParameter, 0.4)
+        XCTAssertEqual(renderer.colorMap, .plasma)
+        XCTAssertGreaterThan(coordinator.redrawRequestCount, 0)
+    }
+
+    func testDirectCanvasStretchAndColorMapChangesAffectPixels() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let canvas = ImageViewState(vmin: 0, vmax: 1, stretch: .power, stretchParameter: 2)
+        let renderer = try FITSRenderer(device: device, viewport: canvas)
+        let image = FITSImage.fromFloat32(pixels: [0.5], width: 1, height: 1)
+        try renderer.setImage(image, revision: 1)
+        let size = CGSize(width: 1, height: 1)
+        let first = try renderer.renderOffscreen(viewSize: size, backingScale: 1)
+
+        canvas.stretchParameter = 0.5
+        canvas.colorMap = .plasma
+        let second = try renderer.renderOffscreen(viewSize: size, backingScale: 1)
+        let expected = ViewportRasterizer.renderViewport(
+            try XCTUnwrap(renderer.displayImage),
+            mapping: ViewMapping(transform: canvas.transform, viewSize: SIMD2(1, 1), backingScale: 1),
+            width: 1, height: 1, stretch: .power,
+            levels: RasterLevels(vmin: 0, vmax: 1), colorMap: .plasma, parameter: 0.5
+        )
+        XCTAssertNotEqual(first.bytes, second.bytes)
+        for index in second.bytes.indices {
+            XCTAssertLessThanOrEqual(abs(Int(second.bytes[index]) - Int(expected.bytes[index])), 1)
+        }
     }
 
     func testRendererAcceptsSyntheticGaussianFITSFromDisk() throws {
@@ -31,7 +96,7 @@ final class FITSRendererTests: XCTestCase {
         XCTAssertEqual(image.width, 200)
         XCTAssertEqual(image.height, 200)
 
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 0)
         XCTAssertEqual(renderer.texture?.width, 200)
         XCTAssertGreaterThan(renderer.vmax, renderer.vmin)
@@ -44,7 +109,7 @@ final class FITSRendererTests: XCTestCase {
         let data = MakeFITS.uint8Image(naxis1: 2, naxis2: 2, pixels: [1, 2, 3, 4])
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 0)
         XCTAssertNotNil(renderer.image)
         XCTAssertEqual(renderer.image?.physicalValue(x: 1, y: 1), 4)
@@ -55,7 +120,7 @@ final class FITSRendererTests: XCTestCase {
             throw XCTSkip("No Metal device")
         }
         let image = FITSImage.fromFloat32(pixels: [7], width: 1, height: 1)
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 23)
         XCTAssertEqual(renderer.displayImage?.revision, 23)
         XCTAssertEqual(renderer.displayImage?.pixels, [7])
@@ -67,7 +132,7 @@ final class FITSRendererTests: XCTestCase {
         }
         let image = FITSImage.fromFloat32(pixels: [1, 2], width: 2, height: 1)
         let display = DisplayImage(image: image, revision: 17)
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setDisplayImage(display, sourceImage: image)
         XCTAssertEqual(renderer.displayImage?.revision, 17)
         XCTAssertEqual(renderer.texture?.width, 2)
@@ -77,7 +142,7 @@ final class FITSRendererTests: XCTestCase {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("No Metal device")
         }
-        let viewport = ViewportObservable(vmin: 42, vmax: 99)
+        let viewport = ImageViewState(vmin: 42, vmax: 99)
         let renderer = try FITSRenderer(device: device, viewport: viewport)
         let image = FITSImage.fromFloat32(pixels: [1, 2], width: 2, height: 1)
         try renderer.setDisplayImage(DisplayImage(image: image, revision: 1), sourceImage: image)
@@ -90,7 +155,7 @@ final class FITSRendererTests: XCTestCase {
             throw XCTSkip("No Metal device")
         }
         let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3, 100], width: 5, height: 1)
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 1)
         renderer.vmin = 0
         renderer.vmax = 3
@@ -114,7 +179,7 @@ final class FITSRendererTests: XCTestCase {
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
 
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 0)
 
         XCTAssertEqual(renderer.texture?.width, 10)
@@ -129,7 +194,7 @@ final class FITSRendererTests: XCTestCase {
         let image = FITSImage.fromFloat32(
             pixels: [Float](repeating: 1, count: 20_000 * 10), width: 20_000, height: 10
         )
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 9)
         XCTAssertNil(renderer.texture)
         XCTAssertEqual(renderer.displayImage?.revision, 9)
@@ -144,7 +209,7 @@ final class FITSRendererTests: XCTestCase {
             pixels: [0, 1, 2, 3, 4, 5, .nan, .infinity, -.infinity, 2, 1, 0],
             width: 4, height: 3
         )
-        let viewport = ViewportObservable()
+        let viewport = ImageViewState()
         let renderer = try FITSRenderer(device: device, viewport: viewport)
         try renderer.setImage(image, revision: 1)
         renderer.vmin = 0
@@ -190,7 +255,7 @@ final class FITSRendererTests: XCTestCase {
         let image = FITSImage.fromFloat32(
             pixels: [Float](repeating: 1, count: 20_000 * 10), width: 20_000, height: 10
         )
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 1)
         renderer.vmin = 0
         renderer.vmax = 1
@@ -204,7 +269,7 @@ final class FITSRendererTests: XCTestCase {
             throw XCTSkip("No Metal device")
         }
         let image = FITSImage.fromFloat32(pixels: [0, 1, 2, 3], width: 2, height: 2)
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 1)
         renderer.vmin = 0
         renderer.vmax = 3
@@ -228,7 +293,7 @@ final class FITSRendererTests: XCTestCase {
         let data = MakeFITS.uint8Image(naxis1: 10, naxis2: 10, pixels: [UInt8](repeating: 1, count: 100))
         let file = try FITSFile(data: data)
         let image = try FITSImage(hdu: file.hdus[0])
-        let renderer = try FITSRenderer(device: device, viewport: ViewportObservable())
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
         try renderer.setImage(image, revision: 0)
         let view = MTKView(frame: CGRect(x: 0, y: 0, width: 200, height: 150), device: device)
         renderer.mtkView(view, drawableSizeWillChange: view.drawableSize)

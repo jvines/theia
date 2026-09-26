@@ -1,13 +1,14 @@
 import SwiftUI
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// Vertical color bar drawn over the right edge of `FITSImageView`. Reflects the
 /// current colour map and ticks the active vmin/vmax/midpoint so the user can read
 /// physical values straight off the swatch.
 struct ColorBarOverlay: View {
     let colorMap: ColorMap
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     private static let barWidth: CGFloat = 14
     private static let labelGap: CGFloat = 6

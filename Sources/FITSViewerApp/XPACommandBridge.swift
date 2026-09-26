@@ -64,8 +64,8 @@ final class XPACommandBridge: XPAServerDelegate {
             switch toks.first {
             case "limits" where toks.count >= 3:
                 guard let lo = Double(toks[1]), let hi = Double(toks[2]) else { return false }
-                c.documentModel.viewport.vmin = Float(lo)
-                c.documentModel.viewport.vmax = Float(hi)
+                c.documentModel.session.view.vmin = Float(lo)
+                c.documentModel.session.view.vmax = Float(hi)
                 return true
             case "mode":
                 // DS9 "scale mode zscale|minmax|<percent>". Map to the real preset

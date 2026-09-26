@@ -9,6 +9,8 @@ final class DocumentSessionTests: XCTestCase {
         let session = try makeSession()
         XCTAssertEqual(session.hdu, 1)
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 0)
+        XCTAssertEqual(session.view.image?.physicalValue(x: 0, y: 0), 0)
+        XCTAssertEqual(session.view.imageRevision, session.imageRevision)
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 0)
         XCTAssertEqual(session.decodedImageCount, 1)
 
@@ -16,6 +18,8 @@ final class DocumentSessionTests: XCTestCase {
         session.selectPlane(1)
         XCTAssertEqual(session.imageRevision, firstRevision + 1)
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 4)
+        XCTAssertEqual(session.view.image?.physicalValue(x: 0, y: 0), 4)
+        XCTAssertEqual(session.view.imageRevision, session.imageRevision)
         session.selectPlane(0)
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 0)
         XCTAssertEqual(session.decodedImageCount, 2)

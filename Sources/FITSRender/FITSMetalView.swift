@@ -4,15 +4,14 @@ import simd
 import FITSCore
 import FITSRaster
 import TheiaKit
+import Observation
 
 /// SwiftUI wrapper around an `MTKView` driven by `FITSRenderer`, with mouse drag pan,
 /// pinch zoom, and scroll-wheel zoom hooked into the renderer's `ViewTransform`.
 public struct FITSMetalView: NSViewRepresentable {
     public let image: FITSImage
     public let imageRevision: Int
-    public let stretch: ImageStretch
-    public let colorMap: ColorMap
-    public let viewport: ViewportObservable
+    public let viewport: ImageViewState
     public let drawMode: DrawMode
     public let onCursorChange: ((CursorInfo?) -> Void)?
     public let onRegionCreated: ((Region) -> Void)?
@@ -32,9 +31,7 @@ public struct FITSMetalView: NSViewRepresentable {
     public init(
         image: FITSImage,
         imageRevision: Int,
-        stretch: ImageStretch = .linear,
-        colorMap: ColorMap = .gray,
-        viewport: ViewportObservable,
+        viewport: ImageViewState,
         drawMode: DrawMode = .pan,
         regions: [Region] = [],
         wcs: WCS? = nil,
@@ -53,8 +50,6 @@ public struct FITSMetalView: NSViewRepresentable {
     ) {
         self.image = image
         self.imageRevision = imageRevision
-        self.stretch = stretch
-        self.colorMap = colorMap
         self.viewport = viewport
         self.drawMode = drawMode
         self.regions = regions
@@ -80,13 +75,12 @@ public struct FITSMetalView: NSViewRepresentable {
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = true
+        view.isPaused = true
         view.enableSetNeedsDisplay = true
 
         if let device = view.device {
             do {
                 let renderer = try FITSRenderer(device: device, viewport: viewport)
-                renderer.stretch = stretch
-                renderer.colorMap = colorMap
                 view.delegate = renderer
                 view.fitsRenderer = renderer
                 view.onCursorChange = onCursorChange
@@ -108,6 +102,7 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.drawMode = drawMode
                 context.coordinator.renderer = renderer
                 context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
+                context.coordinator.observeCanvas(viewport, view: view)
             } catch {
                 print("FITSRenderer init failed: \(error)")
             }
@@ -117,9 +112,7 @@ public struct FITSMetalView: NSViewRepresentable {
 
     public func updateNSView(_ view: InteractiveMTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
-        renderer.stretch = stretch
-        renderer.colorMap = colorMap
-        renderer.stretchParameter = viewport.stretchParameter
+        context.coordinator.observeCanvas(viewport, view: view)
         context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
         view.onCursorChange = onCursorChange
         view.onRegionCreated = onRegionCreated
@@ -141,11 +134,43 @@ public struct FITSMetalView: NSViewRepresentable {
         view.setNeedsDisplay(view.bounds)
     }
 
-    public final class Coordinator {
+    @MainActor public final class Coordinator {
         var renderer: FITSRenderer?
+        private(set) var redrawRequestCount = 0
+        private weak var observedCanvas: ImageViewState?
         private var requestedRevision: Int?
         private var displayTask: Task<Void, Never>?
         private let displayBuilder = DisplayImageBuilder()
+
+        func observeCanvas(_ canvas: ImageViewState, view: InteractiveMTKView) {
+            guard observedCanvas !== canvas else { return }
+            observedCanvas = canvas
+            trackCanvas(canvas, view: view)
+        }
+
+        private func trackCanvas(_ canvas: ImageViewState, view: InteractiveMTKView) {
+            withObservationTracking {
+                _ = canvas.imageRevision
+                _ = canvas.transform
+                _ = canvas.vmin
+                _ = canvas.vmax
+                _ = canvas.stretch
+                _ = canvas.stretchParameter
+                _ = canvas.colorMap
+            } onChange: { [weak self, weak canvas, weak view] in
+                Task { @MainActor [weak self, weak canvas, weak view] in
+                    guard let self, let canvas, let view,
+                          self.observedCanvas === canvas,
+                          view.fitsRenderer === self.renderer else { return }
+                    if let image = canvas.image {
+                        self.requestDisplay(image, revision: canvas.imageRevision, view: view)
+                    }
+                    self.redrawRequestCount += 1
+                    view.setNeedsDisplay(view.bounds)
+                    self.trackCanvas(canvas, view: view)
+                }
+            }
+        }
 
         func requestDisplay(_ image: FITSImage, revision: Int, view: InteractiveMTKView) {
             guard requestedRevision != revision, let renderer else { return }

@@ -41,7 +41,7 @@ extension ImageStretch {
 
 /// Renders a `FITSImage` into an `MTKView` with linear stretch.
 /// Stretch functions other than linear arrive in FITS-10.
-public final class FITSRenderer: NSObject, MTKViewDelegate {
+@MainActor public final class FITSRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
 
     private let commandQueue: MTLCommandQueue
@@ -52,7 +52,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     public private(set) var image: FITSImage?
     public private(set) var displayImage: DisplayImage?
     public var usesViewportRaster: Bool { displayImage != nil && texture == nil }
-    public let viewport: ViewportObservable
+    public let viewport: ImageViewState
     public var transform: ViewTransform {
         get { viewport.transform }
         set { viewport.transform = newValue }
@@ -66,14 +66,21 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         get { viewport.vmax }
         set { viewport.vmax = newValue }
     }
-    public var stretch: ImageStretch = .linear
+    public var stretch: ImageStretch {
+        get { viewport.stretch }
+        set { viewport.stretch = newValue }
+    }
     /// Scalar parameter consumed by stretches that need it (currently `.power`'s exponent).
-    public var stretchParameter: Float = 2.0
-    public var colorMap: ColorMap = .gray {
-        didSet {
-            if oldValue != colorMap {
-                rebuildLUT()
-            }
+    public var stretchParameter: Float {
+        get { viewport.stretchParameter }
+        set { viewport.stretchParameter = newValue }
+    }
+    public var colorMap: ColorMap {
+        get { viewport.colorMap }
+        set {
+            guard viewport.colorMap != newValue else { return }
+            viewport.colorMap = newValue
+            rebuildLUT()
         }
     }
 
@@ -83,10 +90,11 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     private(set) var currentCDF: [Float] = []
     private var lutBuffer: MTLBuffer?
     private var lutLength: Int = 0
+    private var lutColorMap: ColorMap?
 
     public init(
         device: MTLDevice,
-        viewport: ViewportObservable,
+        viewport: ImageViewState,
         pixelFormat: MTLPixelFormat = .bgra8Unorm
     ) throws {
         self.device = device
@@ -136,7 +144,8 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
     }
 
     private func rebuildLUT() {
-        let entries = ColorTable.cached(colorMap).entries
+        let map = colorMap
+        let entries = ColorTable.cached(map).entries
         lutLength = entries.count
         lutBuffer = entries.withUnsafeBufferPointer { ptr in
             device.makeBuffer(
@@ -144,6 +153,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
                 options: .storageModeShared
             )
         }
+        lutColorMap = map
     }
 
     public func setImage(_ image: FITSImage, revision: Int) throws {
@@ -188,6 +198,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         let pointSize = view.bounds.size
         guard pointSize.width > 0, pointSize.height > 0 else { return }
         viewport.viewSizePoints = pointSize
+        viewport.backingScale = max(1, Double(size.width / pointSize.width))
         if let displayImage, !hasFittedImage {
             transform = ViewTransform.fit(
                 imageSize: SIMD2(Double(displayImage.width), Double(displayImage.height)),
@@ -220,6 +231,7 @@ public final class FITSRenderer: NSObject, MTKViewDelegate {
         target: MTLTexture,
         viewSize: CGSize
     ) -> Bool {
+        if lutColorMap != colorMap { rebuildLUT() }
         guard let displayImage, let lutBuffer,
               viewSize.width > 0, viewSize.height > 0 else { return false }
         updateCDFIfNeeded()

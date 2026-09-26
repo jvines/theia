@@ -14,8 +14,6 @@ struct DocumentView: View {
     @State private var planePlaying: Bool = false
     @State private var planeFPS: Double = 5
     @State private var lastPlaneAdvance: Date = .now
-    @State private var stretch: ImageStretch = UserPreferences.shared.defaultStretch
-    @State private var colorMap: ColorMap = UserPreferences.shared.defaultColorMap
     @State private var showInspector: Bool = true
     @State private var showWCSGrid: Bool = false
     @State private var showCompass: Bool = false
@@ -30,24 +28,25 @@ struct DocumentView: View {
     @State private var cursor: CursorInfo?
     @State private var isFetchingCatalog: Bool = false
     @State private var blinkState: BlinkState? = nil
-    @ObservedObject private var viewport: ViewportObservable
+    private let viewport: ImageViewState
     private let pixelTableBridge = PixelTableCursorBridge()
+
+    private var stretch: ImageStretch {
+        get { session.view.stretch }
+        nonmutating set { session.view.stretch = newValue }
+    }
+    private var colorMap: ColorMap {
+        get { session.view.colorMap }
+        nonmutating set { session.view.colorMap = newValue }
+    }
 
     private var selectedHDU: Int {
         get { session.hdu }
-        nonmutating set {
-            let oldRevision = session.imageRevision
-            session.selectHDU(newValue)
-            if session.imageRevision != oldRevision { resetLevels() }
-        }
+        nonmutating set { session.selectHDU(newValue) }
     }
     private var selectedPlane: Int {
         get { session.plane }
-        nonmutating set {
-            let oldRevision = session.imageRevision
-            session.selectPlane(newValue)
-            if session.imageRevision != oldRevision { resetLevels() }
-        }
+        nonmutating set { session.selectPlane(newValue) }
     }
     private var activeWCSVariant: String {
         get { session.wcsVariant }
@@ -55,11 +54,7 @@ struct DocumentView: View {
     }
     private var displayOverride: DerivedImage? {
         get { session.derived }
-        nonmutating set {
-            let oldRevision = session.imageRevision
-            session.setDerived(newValue)
-            if session.imageRevision != oldRevision { resetLevels() }
-        }
+        nonmutating set { session.setDerived(newValue) }
     }
     private var imageRevision: Int { session.imageRevision }
     private var hduBinding: Binding<Int> {
@@ -78,7 +73,7 @@ struct DocumentView: View {
         self.document = document
         self.toolbarState = toolbarState
         self.toolbarController = toolbarController
-        self.viewport = document.viewport
+        self.viewport = document.session.view
         self._session = State(initialValue: document.session)
     }
 
@@ -273,7 +268,7 @@ struct StatusBar: View {
     @Binding var planeFPS: Double
     let cursor: CursorInfo?
     let wcs: WCS?
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     /// Persisted readout frame (shared across windows/sessions).
     @AppStorage("readoutFrame") private var coordFrameRaw = CelestialFrame.icrs.rawValue
@@ -416,7 +411,7 @@ struct FITSImageView: View {
     let imageRevision: Int
     let stretch: ImageStretch
     let colorMap: ColorMap
-    let viewport: ViewportObservable
+    let viewport: ImageViewState
     let showWCSGrid: Bool
     let showCompass: Bool
     let showColorBar: Bool
@@ -449,8 +444,6 @@ struct FITSImageView: View {
                 FITSMetalView(
                     image: image,
                     imageRevision: imageRevision,
-                    stretch: stretch,
-                    colorMap: colorMap,
                     viewport: viewport,
                     drawMode: drawMode,
                     regions: regions,

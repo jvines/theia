@@ -4,14 +4,11 @@ import FITSRender
 import TheiaKit
 
 /// Replaces `FITSDocument` (the SwiftUI `FileDocument`) for the AppKit-owned
-/// window path. Owns the loaded `FITSFile`, the source URL, and the per-window
-/// `ViewportObservable` (lifted out of DocumentView so cross-window sync can
-/// observe + mutate it).
+/// window path. The shared session owns the canvas state used by the window.
 @MainActor final class DocumentModel: ObservableObject {
     let url: URL
     let file: FITSFile
     let session: DocumentSession
-    let viewport = ViewportObservable()
     /// Bridge for cross-process scripting: latest known regions list. DocumentView
     /// writes this from its @State on change.
     @Published var regionsBridge: [Region] = []
@@ -38,12 +35,11 @@ import TheiaKit
             data = try Data(contentsOf: url)
         }
         self.file = try FITSFile(data: data)
-        self.session = DocumentSession(url: url, file: file)
+        self.session = DocumentSession(
+            url: url, file: file,
+            stretch: UserPreferences.shared.defaultStretch,
+            colorMap: UserPreferences.shared.defaultColorMap
+        )
         self.currentImageProvider = { [session] in session.displayed }
-        if let image = session.displayed {
-            let levels = DocumentSession.recommendedLevels(for: image)
-            viewport.vmin = levels.vmin
-            viewport.vmax = levels.vmax
-        }
     }
 }

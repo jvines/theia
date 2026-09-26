@@ -1,26 +1,28 @@
 import SwiftUI
 import simd
 import FITSCore
+import TheiaKit
 
 /// Compass (N + E arrows) and angular scale bar, drawn at fixed positions in view
 /// space. The compass uses image-space sky directions directly (no Y-flip) so it
 /// stays consistent with the renderer's current image orientation.
 public struct CompassScaleBarOverlay: View {
     public let wcs: WCS
-    @ObservedObject public var viewport: ViewportObservable
+    public let viewport: ImageViewState
 
     private let arrowLength: Double = 30
     private let scaleBarTargetPoints: Double = 100
 
-    public init(wcs: WCS, viewport: ViewportObservable) {
+    public init(wcs: WCS, viewport: ImageViewState) {
         self.wcs = wcs
         self.viewport = viewport
     }
 
     public var body: some View {
+        let viewportScale = viewport.transform.scale
         Canvas { context, size in
             drawCompass(context: context)
-            drawScaleBar(context: context, size: size)
+            drawScaleBar(context: context, size: size, viewportScale: viewportScale)
         }
         .allowsHitTesting(false)
     }
@@ -65,12 +67,12 @@ public struct CompassScaleBarOverlay: View {
         )
     }
 
-    private func drawScaleBar(context: GraphicsContext, size: CGSize) {
+    private func drawScaleBar(context: GraphicsContext, size: CGSize, viewportScale: Double) {
         let pixelScale = wcs.pixelScaleArcsec
         guard let r = ScaleBar.niceAngularExtent(
             viewPointsTarget: scaleBarTargetPoints,
             pixelScaleArcsec: pixelScale,
-            viewportScale: viewport.transform.scale
+            viewportScale: viewportScale
         ), r.lengthPoints.isFinite, r.lengthPoints > 0 else { return }
 
         let barY = size.height - 30

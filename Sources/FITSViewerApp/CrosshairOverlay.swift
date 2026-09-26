@@ -8,13 +8,14 @@ import TheiaKit
 /// the matching sky position in window B.
 struct CrosshairOverlay: View {
     let imagePoint: SIMD2<Double>?
-    @ObservedObject var viewport: ViewportObservable
+    let viewport: ImageViewState
 
     var body: some View {
+        let transform = viewport.transform
         Canvas { ctx, size in
             guard let p = imagePoint else { return }
             let mapping = ViewMapping(
-                transform: viewport.transform,
+                transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )
