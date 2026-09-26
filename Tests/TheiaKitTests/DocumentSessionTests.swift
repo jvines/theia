@@ -97,14 +97,14 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertNil(session.selectedRegionIndex)
             session.selectedRegionIndex = 0
 
-            var regionChangeObserved = false
+            let regionsChanged = expectation(description: "region change invalidates observers")
             withObservationTracking {
                 _ = session.regions
             } onChange: {
-                regionChangeObserved = true
+                regionsChanged.fulfill()
             }
             session.regions = []
-            XCTAssertTrue(regionChangeObserved)
+            wait(for: [regionsChanged], timeout: 1)
             XCTAssertNil(session.selectedRegionIndex)
             XCTAssertNil(session.previewRegion)
         }
@@ -190,16 +190,16 @@ final class DocumentSessionTests: XCTestCase {
             session.showGrid = true
             session.showCompass = true
             session.showColorBar = true
-            var contourChangeObserved = false
+            let contoursChanged = expectation(description: "contour change invalidates observers")
             withObservationTracking {
                 _ = session.contourSegments
             } onChange: {
-                contourChangeObserved = true
+                contoursChanged.fulfill()
             }
             session.setContourSpec(ContourSpec(
                 enabled: true, count: 1, minValue: 1, maxValue: 2, spacing: .linear
             ))
-            XCTAssertTrue(contourChangeObserved)
+            wait(for: [contoursChanged], timeout: 1)
             XCTAssertTrue(session.showGrid)
             XCTAssertTrue(session.showCompass)
             XCTAssertTrue(session.showColorBar)
