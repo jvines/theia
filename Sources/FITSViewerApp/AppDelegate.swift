@@ -304,13 +304,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = controller.documentModel
         let toolbar = controller.toolbarState
         let viewport = model.viewport
-        guard let hdu = model.file.hdus[safe: 0],
-              let image = try? FITSImage(hdu: hdu) else { NSSound.beep(); return }
+        guard let image = model.currentImageProvider() else { NSSound.beep(); return }
         let bytes = ImageExport.render(
             image,
             stretch: toolbar.stretch,
             vmin: Double(viewport.vmin),
-            vmax: Double(viewport.vmax)
+            vmax: Double(viewport.vmax),
+            colorMap: toolbar.colorMap,
+            parameter: viewport.stretchParameter
         )
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,

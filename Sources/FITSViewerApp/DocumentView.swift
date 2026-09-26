@@ -157,7 +157,7 @@ struct DocumentView: View {
                 syncToolbarState()
                 document.regionsBridge = regions
                 document.setRegions = { regs in regions = regs }
-                document.currentImageProvider = { currentImage() }
+                document.currentImageProvider = { displayOverride?.image ?? currentImage() }
             }
             .onChange(of: regions) { _, new in document.regionsBridge = new }
             .background(
@@ -1557,6 +1557,7 @@ extension DocumentView {
                         vmin: Double(viewport.vmin),
                         vmax: Double(viewport.vmax),
                         colorMap: colorMap,
+                        parameter: viewport.stretchParameter,
                         fps: 8
                     )
                     DispatchQueue.main.async {
@@ -1911,8 +1912,12 @@ extension DocumentView {
     }
 
     fileprivate func exportImage() {
-        guard let hdu = document.file.hdus[safe: selectedHDU],
-              let image = try? FITSImage(hdu: hdu) else { return }
+        guard let image = displayOverride?.image ?? currentImage() else { return }
+        let exportStretch = stretch
+        let exportMap = colorMap
+        let exportVmin = Double(viewport.vmin)
+        let exportVmax = Double(viewport.vmax)
+        let exportParameter = viewport.stretchParameter
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png, .tiff]
         panel.nameFieldStringValue = "image.png"
@@ -1921,7 +1926,10 @@ extension DocumentView {
             guard response == .OK, let url = panel.url else { return }
             let format: ExportFormat = url.pathExtension.lowercased() == "tiff" ? .tiff : .png
             do {
-                try ImageExport.writeImage(image, stretch: stretch, format: format, to: url)
+                try ImageExport.writeImage(
+                    image, stretch: exportStretch, vmin: exportVmin, vmax: exportVmax,
+                    colorMap: exportMap, parameter: exportParameter, format: format, to: url
+                )
             } catch {
                 NSLog("export failed: \(error)")
             }
