@@ -294,6 +294,55 @@ final class InteractionControllerTests: XCTestCase {
         }
     }
 
+    func testHoverHintsAndSecondaryRegionMenuUseSharedHitTest() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 2, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            session.perform(.addRegion(Region(shape: .circle(center: .init(x: 1, y: 1),
+                                                              radius: .init(value: 10, unit: .pixel)),
+                                               frame: .image)), origin: .user)
+            session.selectedRegionIndex = nil
+            controller.pointer(.init(phase: .moved, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.cursorHint, .openHand)
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.cursorHint, .closedHand)
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.cursorHint, .openHand)
+            controller.pointer(.init(phase: .moved, button: .primary, location: SIMD2(70, 50)))
+            XCTAssertEqual(controller.cursorHint, .resizeHorizontal)
+            controller.pointer(.init(phase: .exited, button: .primary, location: SIMD2(70, 50)))
+            XCTAssertEqual(controller.cursorHint, .arrow)
+            let beforeLevels = (session.view.vmin, session.view.vmax)
+            controller.pointer(.init(phase: .down, button: .secondary, location: SIMD2(50, 50)))
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertEqual(controller.takeEffects(),
+                           [.showContextMenu(regionIndex: 0, at: SIMD2(50, 50))])
+            XCTAssertTrue(controller.takeEffects().isEmpty)
+            controller.pointer(.init(phase: .dragged, button: .secondary, location: SIMD2(75, 25)))
+            XCTAssertEqual(session.view.vmin, beforeLevels.0)
+            XCTAssertEqual(session.view.vmax, beforeLevels.1)
+            controller.pointer(.init(phase: .up, button: .secondary, location: SIMD2(75, 25)))
+        }
+    }
+
+    func testDrawModeAndViewOnlyHoverHints() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawBox
+            controller.pointer(.init(phase: .moved, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.cursorHint, .crosshair)
+            controller.mode = .viewOnly
+            controller.pointer(.init(phase: .moved, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.cursorHint, .arrow)
+            controller.pointer(.init(phase: .down, button: .secondary, location: SIMD2(50, 50)))
+            XCTAssertTrue(controller.takeEffects().isEmpty)
+        }
+    }
+
     @MainActor private func makeCubeSession() throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",

@@ -458,8 +458,6 @@ struct FITSImageView: View {
                     viewport: viewport,
                     drawMode: drawMode,
                     interactionController: interaction,
-                    regions: regions,
-                    wcs: wcs,
                     onCursorChange: onCursorChange,
                     onLineProfile: onLineProfile,
                     onRadialProfile: onRadialProfile,

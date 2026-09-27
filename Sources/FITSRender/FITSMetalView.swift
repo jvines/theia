@@ -16,8 +16,6 @@ public struct FITSMetalView: NSViewRepresentable {
     public let interactionMode: InteractionController.Mode
     public let interactionController: InteractionController?
     public let onCursorChange: ((CursorInfo?) -> Void)?
-    public let regions: [Region]
-    public let wcs: WCS?
     public let onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public let onRadialProfile: ((SIMD2<Double>, Double) -> Void)?
     public let onGrowthCurve: ((SIMD2<Double>, Double) -> Void)?
@@ -33,8 +31,6 @@ public struct FITSMetalView: NSViewRepresentable {
         drawMode: DrawMode = .pan,
         interactionMode: InteractionController.Mode = .full,
         interactionController: InteractionController? = nil,
-        regions: [Region] = [],
-        wcs: WCS? = nil,
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
         onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)? = nil,
         onRadialProfile: ((SIMD2<Double>, Double) -> Void)? = nil,
@@ -50,8 +46,6 @@ public struct FITSMetalView: NSViewRepresentable {
         self.drawMode = drawMode
         self.interactionMode = interactionMode
         self.interactionController = interactionController
-        self.regions = regions
-        self.wcs = wcs
         self.onLineProfile = onLineProfile
         self.onRadialProfile = onRadialProfile
         self.onGrowthCurve = onGrowthCurve
@@ -87,8 +81,6 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.onProfileDragPreview = { preview in
                     onProfileDragPreview?(preview)
                 }
-                view.regions = regions
-                view.wcs = wcs
                 view.drawMode = drawMode
                 view.interaction = interactionController ?? InteractionController(view: viewport, mode: interactionMode)
                 view.interaction?.drawMode = drawMode
@@ -116,8 +108,6 @@ public struct FITSMetalView: NSViewRepresentable {
         view.onProfileDragPreview = { preview in
             onProfileDragPreview?(preview)
         }
-        view.regions = regions
-        view.wcs = wcs
         view.drawMode = drawMode
         if let interactionController {
             view.interaction = interactionController
@@ -212,8 +202,6 @@ public final class InteractiveMTKView: MTKView {
     public var onProfileDragPreview: ((SIMD2<Double>, Double, DrawMode)?) -> Void = { _ in }
     public var onMeasure: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public var onCubeSpectrumAt: ((SIMD2<Double>) -> Void)?
-    public var regions: [Region] = []
-    public var wcs: WCS?
     public var drawMode: DrawMode = .pan {
         didSet { interaction?.drawMode = drawMode }
     }
@@ -251,38 +239,25 @@ public final class InteractiveMTKView: MTKView {
 
     public override func mouseMoved(with event: NSEvent) {
         publishCursor(at: event.locationInWindow)
-        updateHoverCursor(at: event.locationInWindow)
+        interaction?.pointer(pointerEvent(.moved, .primary, event))
+        updateHoverCursor()
     }
 
-    private func updateHoverCursor(at windowLocation: NSPoint) {
-        guard drawMode == .pan, let r = fitsRenderer, !regions.isEmpty,
-              let img = imagePoint(at: windowLocation, renderer: r) else {
-            NSCursor.arrow.set()
-            return
-        }
-        let tol = 4.0 / max(r.transform.scale, 1e-6)
-        if let hit = RegionHitTest.hit(in: regions, atImagePoint: img, toleranceImagePixels: tol, wcs: wcs) {
-            switch hit.handle {
-            case .move:
-                NSCursor.openHand.set()
-            case .annulusInner, .annulusOuter, .circleRadius:
-                NSCursor.resizeLeftRight.set()
-            case .ellipseRx:
-                NSCursor.resizeLeftRight.set()
-            case .ellipseRy:
-                NSCursor.resizeUpDown.set()
-            case .boxCorner:
-                NSCursor.crosshair.set()
-            case .polygonVertex:
-                NSCursor.crosshair.set()
-            }
-        } else {
-            NSCursor.arrow.set()
+    private func updateHoverCursor() {
+        switch interaction?.cursorHint ?? .arrow {
+        case .arrow: NSCursor.arrow.set()
+        case .openHand: NSCursor.openHand.set()
+        case .closedHand: NSCursor.closedHand.set()
+        case .resizeHorizontal: NSCursor.resizeLeftRight.set()
+        case .resizeVertical: NSCursor.resizeUpDown.set()
+        case .crosshair: NSCursor.crosshair.set()
         }
     }
 
     public override func mouseExited(with event: NSEvent) {
         onCursorChange?(nil)
+        interaction?.pointer(pointerEvent(.exited, .primary, event))
+        updateHoverCursor()
     }
 
     private func publishCursor(at windowLocation: NSPoint) {
@@ -312,6 +287,7 @@ public final class InteractiveMTKView: MTKView {
             return
         }
         interaction?.pointer(pointerEvent(.down, .primary, event))
+        updateHoverCursor()
     }
 
     public override func keyDown(with event: NSEvent) {
@@ -322,18 +298,12 @@ public final class InteractiveMTKView: MTKView {
     public var onRegionContextMenu: ((Int, NSEvent) -> Void)?
 
     public override func rightMouseDown(with event: NSEvent) {
-        guard let r = fitsRenderer else { return }
-        // If the click lands on a region, fire the context-menu callback and skip the
-        // brightness/contrast drag.
-        if let click = imagePoint(at: event.locationInWindow, renderer: r) {
-            let tol = 4.0 / max(r.transform.scale, 1e-6)
-            if let hit = RegionHitTest.hit(in: regions, atImagePoint: click,
-                                           toleranceImagePixels: tol, wcs: wcs) {
-                onRegionContextMenu?(hit.regionIndex, event)
-                return
+        interaction?.pointer(pointerEvent(.down, .secondary, event))
+        for effect in interaction?.takeEffects() ?? [] {
+            if case .showContextMenu(let index, _) = effect {
+                onRegionContextMenu?(index, event)
             }
         }
-        interaction?.pointer(pointerEvent(.down, .secondary, event))
     }
 
     public override func rightMouseDragged(with event: NSEvent) {
@@ -366,6 +336,7 @@ public final class InteractiveMTKView: MTKView {
     public override func mouseUp(with event: NSEvent) {
         defer {
             interaction?.pointer(pointerEvent(.up, .primary, event))
+            updateHoverCursor()
             dragStartImage = nil
             onProfileDragPreview(nil)
         }
@@ -402,6 +373,7 @@ public final class InteractiveMTKView: MTKView {
             if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {
                 setNeedsDisplay(bounds)
             }
+            updateHoverCursor()
         case .radialProfile, .growthCurve:
             guard let r = fitsRenderer else { return }
             guard let start = dragStartImage,

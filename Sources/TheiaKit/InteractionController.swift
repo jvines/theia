@@ -69,6 +69,14 @@ public struct KeyEvent: Sendable, Equatable {
     }
 }
 
+public enum CursorHint: Sendable, Equatable {
+    case arrow, openHand, closedHand, resizeHorizontal, resizeVertical, crosshair
+}
+
+public enum InteractionEffect: Sendable, Equatable {
+    case showContextMenu(regionIndex: Int, at: SIMD2<Double>)
+}
+
 /// Shared canvas interaction state. Native views only translate input coordinates.
 @MainActor public final class InteractionController {
     public enum Mode: Sendable {
@@ -124,11 +132,19 @@ public struct KeyEvent: Sendable, Equatable {
     private var drawStartImage: SIMD2<Double>?
     private var polygonVertices: [SIMD2<Double>] = []
     public var regionColorProvider: @MainActor () -> String = { RegionList.defaultColor }
+    public private(set) var cursorHint: CursorHint = .arrow
+    private var pendingEffects: [InteractionEffect] = []
 
     public init(view: ImageViewState, mode: Mode, session: DocumentSession? = nil) {
         self.view = view
         self.mode = mode
         self.session = session
+    }
+
+    public func takeEffects() -> [InteractionEffect] {
+        let effects = pendingEffects
+        pendingEffects.removeAll()
+        return effects
     }
 
     @discardableResult public func scroll(_ event: ScrollEvent) -> Bool {
@@ -233,15 +249,13 @@ public struct KeyEvent: Sendable, Equatable {
                 }
                 if mode == .full, drawMode == .pan, let session,
                    let image = imagePoint(at: event.location) {
-                    let tolerance = 4 / max(view.transform.scale, 1e-6)
-                    if let hit = RegionHitTest.hit(in: session.regions, atImagePoint: image,
-                                                   toleranceImagePixels: tolerance,
-                                                   wcs: session.displayedWCS) {
+                    if let hit = regionHit(at: event.location) {
                         if session.perform(.beginRegionEdit(hit.regionIndex), origin: .user).failure == nil,
                            let id = session.regionList.activeEditID {
                             regionDrag = RegionDrag(id: id, index: hit.regionIndex, handle: hit.handle,
                                                     baseRegion: session.regions[hit.regionIndex],
                                                     startImage: image)
+                            cursorHint = .closedHand
                         }
                         return false
                     }
@@ -249,6 +263,12 @@ public struct KeyEvent: Sendable, Equatable {
                 }
             }
             if event.button == .secondary {
+                if let session, let hit = regionHit(at: event.location) {
+                    session.selectedRegionIndex = hit.regionIndex
+                    pendingEffects.append(.showContextMenu(regionIndex: hit.regionIndex,
+                                                           at: event.location))
+                    return false
+                }
                 levelsDrag = LevelsDrag(start: event.location, vmin: view.vmin, vmax: view.vmax)
             } else if event.button == .middle ||
                         (event.button == .primary && (mode == .viewOnly || drawMode == .pan || drawMode == .drawPolygon)) {
@@ -302,11 +322,16 @@ public struct KeyEvent: Sendable, Equatable {
                     regionDrag = nil
                 }
                 ignorePrimaryUntilUp = false
+                cursorHint = hint(at: event.location)
             }
             if activePan?.button == event.button { activePan = nil }
             if event.button == .secondary { levelsDrag = nil }
             return false
-        case .moved, .exited:
+        case .moved:
+            cursorHint = hint(at: event.location)
+            return false
+        case .exited:
+            cursorHint = .arrow
             return false
         }
     }
@@ -366,6 +391,26 @@ public struct KeyEvent: Sendable, Equatable {
               view.transform.scale.isFinite, view.transform.scale > 0 else { return nil }
         return ViewMapping(transform: view.transform, viewSize: size,
                            backingScale: view.backingScale).viewToImage(location)
+    }
+
+    private func regionHit(at location: SIMD2<Double>) -> RegionHit? {
+        guard mode == .full, let session, let image = imagePoint(at: location),
+              view.transform.scale.isFinite, view.transform.scale > 0 else { return nil }
+        return RegionHitTest.hit(in: session.regions, atImagePoint: image,
+                                 toleranceImagePixels: 4 / view.transform.scale,
+                                 wcs: session.displayedWCS)
+    }
+
+    private func hint(at location: SIMD2<Double>) -> CursorHint {
+        guard mode == .full else { return .arrow }
+        guard drawMode == .pan else { return .crosshair }
+        guard let hit = regionHit(at: location) else { return .arrow }
+        switch hit.handle {
+        case .move: return .openHand
+        case .circleRadius, .annulusInner, .annulusOuter, .ellipseRx: return .resizeHorizontal
+        case .ellipseRy: return .resizeVertical
+        case .boxCorner, .polygonVertex: return .crosshair
+        }
     }
 
     private func adjustLevels(from drag: LevelsDrag, to location: SIMD2<Double>) -> Bool {
