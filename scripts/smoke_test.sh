@@ -15,6 +15,8 @@ BIN="${1:-$ROOT/.build/debug/Theia}"
 BINDIR="$(dirname "$BIN")"
 FIXTURE="$ROOT/Tests/FITSCoreTests/Fixtures/uint8_simple.fits"
 LOG="$(mktemp -t fitsviewer-smoke.XXXXXX.log)"
+CUBE_DIR="$(mktemp -d -t fitsviewer-cube.XXXXXX)"
+CUBE_FIXTURE="$CUBE_DIR/sample-cube.fits"
 APP_PID=""
 
 # Pin a fixed XPA name-server endpoint so the app and our xpaget/xpaset agree on
@@ -38,11 +40,14 @@ cleanup() {
         for _ in 1 2 3 4 5; do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.5; done
         kill -9 "$APP_PID" 2>/dev/null || true
     fi
+    if [[ -d "$CUBE_DIR" ]]; then rm -r "$CUBE_DIR"; fi
 }
 trap cleanup EXIT
 
 [[ -x "$BIN" ]] || fail "binary not found or not executable: $BIN (run 'swift build' first)"
 [[ -f "$FIXTURE" ]] || fail "fixture missing: $FIXTURE"
+swift "$ROOT/scripts/make_sample_cube.swift" > "$CUBE_FIXTURE" || fail "cube generation failed"
+[[ -s "$CUBE_FIXTURE" ]] || fail "cube generation produced no data"
 
 echo "smoke: launching $BIN"
 "$BIN" >"$LOG" 2>&1 &
@@ -145,6 +150,14 @@ else
     echo "smoke: WARNING .fz fixture missing, skipping compressed-open check"
 fi
 
+# 4a.1) Open a generated 3D cube through the real document path. The same
+# deterministic file is used for the Project 1 manual PV-window check.
+OUT="$(req POST /open "{\"path\":\"$CUBE_FIXTURE\"}")"; CODE="${OUT##*$'\n'}"
+assert_status 200 "$CODE" "POST /open (cube)"
+OUT="$(req GET /status)"; BODY="${OUT%$'\n'*}"
+[[ "$BODY" == *"sample-cube.fits"* ]] || fail "cube file not listed in /status: $BODY"
+echo "smoke: generated cube opened and listed"
+
 # 4d) HTTP router hygiene (BUG-15/16).
 #   BUG-15: an extra 3rd path segment must 404 (not silently match segment 2), and
 #   regions/clear must be a real route.
@@ -220,3 +233,4 @@ for _ in $(seq 1 20); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.5; don
 kill -0 "$APP_PID" 2>/dev/null && fail "app did not exit after /quit"
 APP_PID=""
 echo "smoke: PASS"
+rm -f "$LOG"
