@@ -647,7 +647,7 @@ struct RegionListPanel: View {
                             }
                             .buttonStyle(.borderless)
                             Image(systemName: icon(for: region))
-                            Text(describe(region))
+                            Text(RegionList.summary(for: region))
                                 .font(.system(.body, design: .monospaced))
                                 .lineLimit(1)
                             Spacer()
@@ -682,25 +682,6 @@ struct RegionListPanel: View {
         case .point: return "smallcircle.filled.circle"
         }
     }
-
-    private func describe(_ r: Region) -> String {
-        switch r.shape {
-        case .circle(let c, let radius):
-            return "circle (\(fmt(c.x)), \(fmt(c.y))) r=\(fmt(radius.value))"
-        case .box(let c, let w, let h, let a):
-            return "box (\(fmt(c.x)), \(fmt(c.y))) \(fmt(w.value))×\(fmt(h.value))∠\(fmt(a))"
-        case .ellipse(let c, let rx, let ry, let a):
-            return "ellipse (\(fmt(c.x)), \(fmt(c.y))) rx=\(fmt(rx.value)) ry=\(fmt(ry.value))∠\(fmt(a))"
-        case .annulus(let c, let rIn, let rOut):
-            return "annulus (\(fmt(c.x)), \(fmt(c.y))) \(fmt(rIn.value))…\(fmt(rOut.value))"
-        case .polygon(let pts):
-            return "polygon (\(pts.count) verts)"
-        case .point(let p):
-            return "point (\(fmt(p.x)), \(fmt(p.y)))"
-        }
-    }
-
-    private func fmt(_ d: Double) -> String { String(format: "%.1f", d) }
 
     private func performAndApply(_ command: SessionCommand) {
         let outcome = session.perform(command, origin: .user)
@@ -1101,14 +1082,10 @@ extension DocumentView {
         })
         // Submenu: color
         let colorMenu = NSMenu()
-        for c in ["green", "red", "yellow", "cyan", "magenta", "blue", "white"] {
+        for c in RegionList.colors {
             colorMenu.addItem(makeMenuItem(c.capitalized) {
                 guard regions.indices.contains(index) else { return }
-                var attrs = regions[index].attributes
-                attrs["color"] = c
-                updateRegion(idx: index, region: Region(
-                    shape: regions[index].shape, frame: regions[index].frame, attributes: attrs
-                ))
+                updateRegion(idx: index, region: RegionList.settingAttribute(.color, to: c, in: regions[index]))
             })
         }
         let colorItem = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")

@@ -1,5 +1,6 @@
 import Foundation
 import FITSCore
+import TheiaKit
 
 /// UserDefaults-backed app preferences applied to newly opened documents.
 /// Existing documents keep their current state; load a file to see the new defaults.
@@ -47,9 +48,9 @@ final class UserPreferences {
         set { UserDefaults.standard.set(newValue, forKey: Key.pixelTableSize) }
     }
 
-    /// Hex color string for newly drawn regions ("green" / "#00ff00" / etc.).
+    /// DS9 colour name for newly drawn regions.
     var regionColor: String {
-        get { UserDefaults.standard.string(forKey: Key.regionColor) ?? "violet" }
-        set { UserDefaults.standard.set(newValue, forKey: Key.regionColor) }
+        get { RegionList.color(UserDefaults.standard.string(forKey: Key.regionColor)) }
+        set { UserDefaults.standard.set(RegionList.color(newValue), forKey: Key.regionColor) }
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import FITSCore
+import TheiaKit
 
 struct SettingsView: View {
     var body: some View {
@@ -46,8 +47,12 @@ private struct DefaultsTab: View {
                     Text("11×11").tag(11)
                 }
                 .onChange(of: pixelTableSize) { _, new in UserPreferences.shared.pixelTableSize = new }
-                TextField("Region color", text: $regionColor)
-                    .onChange(of: regionColor) { _, new in UserPreferences.shared.regionColor = new }
+                Picker("Region color", selection: $regionColor) {
+                    ForEach(RegionList.colors, id: \.self) { color in
+                        Text(color.capitalized).tag(color)
+                    }
+                }
+                .onChange(of: regionColor) { _, new in UserPreferences.shared.regionColor = new }
             }
             Text("Defaults apply to documents opened after this change.")
                 .font(.caption)
