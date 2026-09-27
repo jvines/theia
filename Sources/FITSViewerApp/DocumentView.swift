@@ -468,9 +468,9 @@ struct FITSImageView: View {
                 if showWCSGrid, let wcs {
                     WCSGridOverlay(image: image, wcs: wcs, viewport: viewport)
                 }
-                let allRegions = regions + (previewRegion.map { [$0] } ?? [])
-                if !allRegions.isEmpty {
-                    RegionOverlay(regions: allRegions, selectedIndex: selectedRegionIndex, wcs: wcs, viewport: viewport)
+                if !regions.isEmpty || previewRegion != nil {
+                    RegionOverlay(regions: regions, selectedIndex: selectedRegionIndex,
+                                  previewRegion: previewRegion, wcs: wcs, viewport: viewport)
                 }
                 if showCompass, let wcs {
                     CompassScaleBarOverlay(wcs: wcs, viewport: viewport)

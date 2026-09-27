@@ -1,8 +1,7 @@
 import FITSCore
 
-/// Keeps WCS grid geometry in image pixels so view pan and zoom only remap points.
-@MainActor public final class WCSGridCache {
-    private struct Key: Equatable {
+/// The WCS fields that affect image-space overlay geometry.
+struct WCSGeometryKey: Equatable {
         let variant: String
         let nativeFrame: CelestialFrame
         let projectionType: String
@@ -36,16 +35,20 @@ import FITSCore
             sipForward = wcs.sipForward
             sipInverse = wcs.sipInverse
         }
-    }
 
-    private var cachedKey: Key?
+}
+
+/// Keeps WCS grid geometry in image pixels so view pan and zoom only remap points.
+@MainActor public final class WCSGridCache {
+
+    private var cachedKey: WCSGeometryKey?
     private var cachedLines: [WCSGridline] = []
     private(set) var generationCount = 0
 
     public init() {}
 
     public func gridlines(wcs: WCS, imageWidth: Int, imageHeight: Int) -> [WCSGridline] {
-        let key = Key(wcs: wcs, width: imageWidth, height: imageHeight)
+        let key = WCSGeometryKey(wcs: wcs, width: imageWidth, height: imageHeight)
         if key == cachedKey { return cachedLines }
         cachedLines = WCSGridGenerator.gridlines(wcs: wcs,
                                                  imageWidth: imageWidth,
