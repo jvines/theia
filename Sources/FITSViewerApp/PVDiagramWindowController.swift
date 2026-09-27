@@ -58,7 +58,8 @@ private struct PVDiagramView: View {
             FITSMetalView(
                 image: image,
                 imageRevision: 0,
-                viewport: viewport
+                viewport: viewport,
+                interactionMode: .viewOnly
             )
             HStack {
                 Text("position →").font(.caption).foregroundStyle(.secondary)

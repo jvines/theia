@@ -13,6 +13,7 @@ public struct FITSMetalView: NSViewRepresentable {
     public let imageRevision: Int
     public let viewport: ImageViewState
     public let drawMode: DrawMode
+    public let interactionMode: InteractionController.Mode
     public let onCursorChange: ((CursorInfo?) -> Void)?
     public let onRegionCreated: ((Region) -> Void)?
     public let onRegionPreview: ((Region?) -> Void)?
@@ -36,6 +37,7 @@ public struct FITSMetalView: NSViewRepresentable {
         imageRevision: Int,
         viewport: ImageViewState,
         drawMode: DrawMode = .pan,
+        interactionMode: InteractionController.Mode = .full,
         regions: [Region] = [],
         wcs: WCS? = nil,
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
@@ -58,6 +60,7 @@ public struct FITSMetalView: NSViewRepresentable {
         self.imageRevision = imageRevision
         self.viewport = viewport
         self.drawMode = drawMode
+        self.interactionMode = interactionMode
         self.regions = regions
         self.wcs = wcs
         self.onLineProfile = onLineProfile
@@ -112,6 +115,8 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.regions = regions
                 view.wcs = wcs
                 view.drawMode = drawMode
+                view.interaction = InteractionController(view: viewport, mode: interactionMode)
+                view.interaction?.drawMode = drawMode
                 context.coordinator.renderer = renderer
                 context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
                 context.coordinator.observeCanvas(viewport, view: view)
@@ -146,6 +151,12 @@ public struct FITSMetalView: NSViewRepresentable {
         view.regions = regions
         view.wcs = wcs
         view.drawMode = drawMode
+        if view.interaction?.view !== viewport {
+            view.interaction = InteractionController(view: viewport, mode: interactionMode)
+        } else {
+            view.interaction?.mode = interactionMode
+        }
+        view.interaction?.drawMode = drawMode
         view.setNeedsDisplay(view.bounds)
     }
 
@@ -221,6 +232,7 @@ public struct FITSMetalView: NSViewRepresentable {
 /// and publishes cursor pixel coordinates + values via `onCursorChange`.
 public final class InteractiveMTKView: MTKView {
     public weak var fitsRenderer: FITSRenderer?
+    public var interaction: InteractionController?
     public var onCursorChange: ((CursorInfo?) -> Void)?
     public var onRegionCreated: ((Region) -> Void)?
     public var onRegionPreview: ((Region?) -> Void)?
@@ -241,6 +253,7 @@ public final class InteractiveMTKView: MTKView {
     public var wcs: WCS?
     public var drawMode: DrawMode = .pan {
         didSet {
+            interaction?.drawMode = drawMode
             if drawMode != oldValue, let edit = activeEdit {
                 onRegionEditCancelled?(edit.id)
                 activeEdit = nil
@@ -279,11 +292,6 @@ public final class InteractiveMTKView: MTKView {
     private var trackingArea: NSTrackingArea?
     private var dragStartImage: SIMD2<Double>?
     private var polygonVertices: [SIMD2<Double>] = []
-
-    // Right-mouse drag for brightness/contrast (classic astronomy convention).
-    private var levelsDragStart: NSPoint?
-    private var levelsInitialVmin: Float = 0
-    private var levelsInitialVmax: Float = 1
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -358,6 +366,7 @@ public final class InteractiveMTKView: MTKView {
         }
         if drawMode == .drawPolygon {
             handlePolygonClick(event: event, renderer: r)
+            interaction?.pointer(pointerEvent(.down, .primary, event))
             return
         }
         if drawMode == .cubeSpectrum,
@@ -387,6 +396,7 @@ public final class InteractiveMTKView: MTKView {
                 onRegionSelected?(hit.regionIndex)
             } else {
                 onRegionSelected?(nil)
+                interaction?.pointer(pointerEvent(.down, .primary, event))
             }
         }
     }
@@ -453,44 +463,39 @@ public final class InteractiveMTKView: MTKView {
                 return
             }
         }
-        levelsDragStart = convert(event.locationInWindow, from: nil)
-        levelsInitialVmin = r.vmin
-        levelsInitialVmax = r.vmax
+        interaction?.pointer(pointerEvent(.down, .secondary, event))
     }
 
     public override func rightMouseDragged(with event: NSEvent) {
-        guard let r = fitsRenderer, let start = levelsDragStart else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        let dx = Double(p.x - start.x)
-        let dy = Double(p.y - start.y)
-        let w = max(Double(bounds.width), 1)
-        let h = max(Double(bounds.height), 1)
-        let width0 = Double(levelsInitialVmax - levelsInitialVmin)
-        let center0 = Double(levelsInitialVmax + levelsInitialVmin) / 2
-
-        // Horizontal: contrast. Drag right → tighter range (more contrast).
-        // pow(2, -4*dx/w) gives ~16× shrink at full right, 16× widen at full left.
-        let widthScale = pow(2.0, -4.0 * dx / w)
-        let newWidth = width0 * widthScale
-
-        // Vertical: bias. Drag up → centre moves up by up to ±width0 across one view height.
-        let newCenter = center0 + (dy / h) * width0
-
-        let newVmin = Float(newCenter - newWidth / 2)
-        let newVmax = Float(newCenter + newWidth / 2)
-        if newVmax > newVmin {
-            r.vmin = newVmin
-            r.vmax = newVmax
+        if interaction?.pointer(pointerEvent(.dragged, .secondary, event)) == true {
             setNeedsDisplay(bounds)
         }
     }
 
     public override func rightMouseUp(with event: NSEvent) {
-        levelsDragStart = nil
+        interaction?.pointer(pointerEvent(.up, .secondary, event))
+    }
+
+    public override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { super.otherMouseDown(with: event); return }
+        interaction?.pointer(pointerEvent(.down, .middle, event))
+    }
+
+    public override func otherMouseDragged(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { super.otherMouseDragged(with: event); return }
+        if interaction?.pointer(pointerEvent(.dragged, .middle, event)) == true {
+            setNeedsDisplay(bounds)
+        }
+    }
+
+    public override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2 else { super.otherMouseUp(with: event); return }
+        interaction?.pointer(pointerEvent(.up, .middle, event))
     }
 
     public override func mouseUp(with event: NSEvent) {
         defer {
+            interaction?.pointer(pointerEvent(.up, .primary, event))
             dragStartImage = nil
             activeEdit = nil
             ignoreDragUntilMouseUp = false
@@ -555,8 +560,9 @@ public final class InteractiveMTKView: MTKView {
         }
         switch drawMode {
         case .pan, .drawPolygon:
-            r.viewport.pan(by: SIMD2(Double(event.deltaX), -Double(event.deltaY)))
-            setNeedsDisplay(bounds)
+            if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {
+                setNeedsDisplay(bounds)
+            }
         case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
             guard let start = dragStartImage,
                   let current = imagePoint(at: event.locationInWindow, renderer: r),
@@ -597,20 +603,34 @@ public final class InteractiveMTKView: MTKView {
     }
 
     public override func magnify(with event: NSEvent) {
-        zoom(by: 1 + Double(event.magnification), at: event.locationInWindow)
+        let location = topLeftViewPoint(at: event.locationInWindow)
+        if interaction?.magnify(.init(location: location, factor: 1 + Double(event.magnification))) == true {
+            setNeedsDisplay(bounds)
+        }
     }
 
     public override func scrollWheel(with event: NSEvent) {
-        // Pinch-trackpad gestures come through as magnify; this handles mouse-wheel zoom.
-        let factor = pow(1.0015, Double(event.scrollingDeltaY))
-        zoom(by: factor, at: event.locationInWindow)
+        let location = topLeftViewPoint(at: event.locationInWindow)
+        if interaction?.scroll(.init(location: location, deltaY: Double(event.scrollingDeltaY),
+                                     isPrecise: event.hasPreciseScrollingDeltas)) == true {
+            setNeedsDisplay(bounds)
+        }
     }
 
-    private func zoom(by factor: Double, at windowLocation: NSPoint) {
-        guard let r = fitsRenderer else { return }
-        let p = convert(windowLocation, from: nil)
-        let anchor = viewMapping(for: r).viewYUpToImage(SIMD2(Double(p.x), Double(p.y)))
-        r.viewport.zoom(by: factor, aroundImagePoint: anchor)
-        setNeedsDisplay(bounds)
+    private func topLeftViewPoint(at windowLocation: NSPoint) -> SIMD2<Double> {
+        let local = convert(windowLocation, from: nil)
+        return SIMD2(Double(local.x), Double(bounds.height - local.y))
+    }
+
+    private func pointerEvent(_ phase: PointerEvent.Phase, _ button: PointerEvent.Button,
+                              _ event: NSEvent) -> PointerEvent {
+        var modifiers: PointerEvent.Modifiers = []
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if event.modifierFlags.contains(.command) { modifiers.insert(.primary) }
+        if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
+        return PointerEvent(phase: phase, button: button,
+                            location: topLeftViewPoint(at: event.locationInWindow),
+                            modifiers: modifiers, clickCount: event.clickCount)
     }
 }
