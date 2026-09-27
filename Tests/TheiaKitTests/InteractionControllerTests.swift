@@ -343,6 +343,69 @@ final class InteractionControllerTests: XCTestCase {
         }
     }
 
+    func testAnalysisGesturesEmitTypedRequestsAndPreviewRadius() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            let start = SIMD2<Double>(0, 0), end = SIMD2<Double>(10, 0)
+            let cases: [(DrawMode, AnalysisRequest)] = [
+                (.lineProfile, .lineProfile(from: start, to: end)),
+                (.radialProfile, .radialProfile(center: start, radius: 10)),
+                (.growthCurve, .growthCurve(center: start, radius: 10)),
+                (.measure, .measure(from: start, to: end)),
+            ]
+            for (mode, expected) in cases {
+                controller.drawMode = mode
+                controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+                controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(60, 50)))
+                if mode == .radialProfile {
+                    XCTAssertEqual(session.profileMarker, .radial(center: start, maxRadius: 10))
+                }
+                if mode == .growthCurve {
+                    XCTAssertEqual(session.profileMarker, .growth(center: start, maxRadius: 10))
+                }
+                controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(60, 50)))
+                XCTAssertEqual(controller.takeEffects(), [.openAnalysis(expected)])
+            }
+            controller.drawMode = .cubeSpectrum
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(controller.takeEffects(), [.openAnalysis(.cubeSpectrum(at: start))])
+        }
+    }
+
+    func testCancellingAnalysisDragRestoresPreviousMarker() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let original = ProfileGeometry.point(SIMD2<Double>(2, 3))
+            session.profileMarker = original
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .radialProfile
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(60, 50)))
+            XCTAssertNotEqual(session.profileMarker, original)
+            XCTAssertTrue(controller.key(.init(key: .escape)))
+            XCTAssertEqual(session.profileMarker, original)
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(60, 50)))
+            XCTAssertTrue(controller.takeEffects().isEmpty)
+            controller.drawMode = .growthCurve
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(51, 50)))
+            controller.drawMode = .pan
+            XCTAssertEqual(session.profileMarker, original)
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(51, 50)))
+            XCTAssertTrue(controller.takeEffects().isEmpty)
+            controller.drawMode = .radialProfile
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(51, 50)))
+            XCTAssertEqual(controller.takeEffects(),
+                           [.openAnalysis(.radialProfile(center: SIMD2(0, 0), radius: 0))])
+        }
+    }
+
     @MainActor private func makeCubeSession() throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",

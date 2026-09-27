@@ -442,7 +442,6 @@ struct FITSImageView: View {
     let onMeasure: (SIMD2<Double>, SIMD2<Double>) -> Void
     let onCubeSpectrumAt: (SIMD2<Double>) -> Void
     let onRegionContextMenu: (Int, NSEvent) -> Void
-    let onProfileDragPreview: (((SIMD2<Double>, Double, DrawMode)?) -> Void)
     let remoteCrosshair: SIMD2<Double>?
     let profileGeometry: ProfileGeometry?
 
@@ -464,8 +463,7 @@ struct FITSImageView: View {
                     onGrowthCurve: onGrowthCurve,
                     onMeasure: onMeasure,
                     onCubeSpectrumAt: onCubeSpectrumAt,
-                    onRegionContextMenu: onRegionContextMenu,
-                    onProfileDragPreview: onProfileDragPreview
+                    onRegionContextMenu: onRegionContextMenu
                 )
                 if showWCSGrid, let wcs {
                     WCSGridOverlay(image: image, wcs: wcs, viewport: viewport)
@@ -858,7 +856,6 @@ extension DocumentView {
             onMeasure: { from, to in handleMeasure(from: from, to: to) },
             onCubeSpectrumAt: { p in handleCubeSpectrum(at: p) },
             onRegionContextMenu: { idx, event in showRegionContextMenu(index: idx, event: event) },
-            onProfileDragPreview: { preview in handleProfileDragPreview(preview) },
             remoteCrosshair: session.remoteCrosshair,
             profileGeometry: profileGeometry
         )
@@ -893,16 +890,6 @@ extension DocumentView {
             attachedTo: NSApp.keyWindow,
             onRadiusChange: { newR in profileGeometry = .radial(center: center, maxRadius: newR) }
         )
-    }
-
-    private func handleProfileDragPreview(_ preview: (SIMD2<Double>, Double, DrawMode)?) {
-        guard let preview else { return }
-        let (center, radius, mode) = preview
-        if mode == .radialProfile {
-            profileGeometry = .radial(center: center, maxRadius: radius)
-        } else if mode == .growthCurve {
-            profileGeometry = .growth(center: center, maxRadius: radius)
-        }
     }
 
     private func handleMeasure(from: SIMD2<Double>, to: SIMD2<Double>) {

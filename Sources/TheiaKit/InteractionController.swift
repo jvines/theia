@@ -75,6 +75,15 @@ public enum CursorHint: Sendable, Equatable {
 
 public enum InteractionEffect: Sendable, Equatable {
     case showContextMenu(regionIndex: Int, at: SIMD2<Double>)
+    case openAnalysis(AnalysisRequest)
+}
+
+public enum AnalysisRequest: Sendable, Equatable {
+    case lineProfile(from: SIMD2<Double>, to: SIMD2<Double>)
+    case radialProfile(center: SIMD2<Double>, radius: Double)
+    case growthCurve(center: SIMD2<Double>, radius: Double)
+    case measure(from: SIMD2<Double>, to: SIMD2<Double>)
+    case cubeSpectrum(at: SIMD2<Double>)
 }
 
 /// Shared canvas interaction state. Native views only translate input coordinates.
@@ -91,6 +100,7 @@ public enum InteractionEffect: Sendable, Equatable {
             if mode != oldValue {
                 cancelActiveRegionEdit()
                 cancelActiveDrawing()
+                cancelActiveAnalysis()
                 activePan = nil
                 levelsDrag = nil
             }
@@ -101,6 +111,7 @@ public enum InteractionEffect: Sendable, Equatable {
             if drawMode != oldValue {
                 cancelActiveRegionEdit()
                 cancelActiveDrawing()
+                cancelActiveAnalysis()
                 if activePan?.button == .primary { activePan = nil }
             }
         }
@@ -125,12 +136,20 @@ public enum InteractionEffect: Sendable, Equatable {
         let startImage: SIMD2<Double>
     }
 
+    private struct AnalysisDrag {
+        let mode: DrawMode
+        let startImage: SIMD2<Double>
+        let previousMarker: ProfileGeometry?
+        var previewMarker: ProfileGeometry?
+    }
+
     private var activePan: Pan?
     private var levelsDrag: LevelsDrag?
     private var regionDrag: RegionDrag?
     private var ignorePrimaryUntilUp = false
     private var drawStartImage: SIMD2<Double>?
     private var polygonVertices: [SIMD2<Double>] = []
+    private var analysisDrag: AnalysisDrag?
     public var regionColorProvider: @MainActor () -> String = { RegionList.defaultColor }
     public private(set) var cursorHint: CursorHint = .arrow
     private var pendingEffects: [InteractionEffect] = []
@@ -199,6 +218,7 @@ public enum InteractionEffect: Sendable, Equatable {
             if cancelActiveDrawing() { return true }
             guard event.modifiers.isEmpty else { return false }
             if cancelActiveRegionEdit() { return true }
+            if cancelActiveAnalysis() { return true }
             if session.selectedRegionIndex != nil { session.selectedRegionIndex = nil; return true }
             if session.profileMarker != nil { session.profileMarker = nil; return true }
             return false
@@ -229,6 +249,15 @@ public enum InteractionEffect: Sendable, Equatable {
             if event.button == .primary {
                 ignorePrimaryUntilUp = false
                 if mode == .full, let session, let image = imagePoint(at: event.location) {
+                    if drawMode == .cubeSpectrum {
+                        pendingEffects.append(.openAnalysis(.cubeSpectrum(at: image)))
+                        return false
+                    }
+                    if isAnalysisDragMode {
+                        analysisDrag = AnalysisDrag(mode: drawMode, startImage: image,
+                                                    previousMarker: session.profileMarker)
+                        return false
+                    }
                     if drawMode == .drawPolygon {
                         if event.clickCount >= 2 {
                             completePolygon()
@@ -283,6 +312,21 @@ public enum InteractionEffect: Sendable, Equatable {
                     session.previewRegion = preview
                     return true
                 }
+                if var drag = analysisDrag, let current = imagePoint(at: event.location), let session {
+                    let radius = distance(drag.startImage, current)
+                    switch drag.mode {
+                    case .radialProfile:
+                        drag.previewMarker = .radial(center: drag.startImage, maxRadius: radius)
+                    case .growthCurve:
+                        drag.previewMarker = .growth(center: drag.startImage, maxRadius: radius)
+                    default: break
+                    }
+                    if let marker = drag.previewMarker {
+                        session.profileMarker = marker
+                        analysisDrag = drag
+                        return true
+                    }
+                }
                 if let drag = regionDrag {
                     guard let session, let current = imagePoint(at: event.location) else { return false }
                     let updated = RegionEdit.apply(to: drag.baseRegion, handle: drag.handle,
@@ -309,6 +353,28 @@ public enum InteractionEffect: Sendable, Equatable {
             return false
         case .up:
             if event.button == .primary {
+                if let drag = analysisDrag {
+                    if let end = imagePoint(at: event.location) {
+                        let request: AnalysisRequest
+                        switch drag.mode {
+                        case .lineProfile:
+                            request = .lineProfile(from: drag.startImage, to: end)
+                        case .radialProfile:
+                            let radius = distance(drag.startImage, end)
+                            request = .radialProfile(center: drag.startImage, radius: radius < 2 ? 0 : radius)
+                        case .growthCurve:
+                            let radius = distance(drag.startImage, end)
+                            request = .growthCurve(center: drag.startImage, radius: radius < 2 ? 0 : radius)
+                        case .measure:
+                            request = .measure(from: drag.startImage, to: end)
+                        default:
+                            analysisDrag = nil
+                            return false
+                        }
+                        pendingEffects.append(.openAnalysis(request))
+                    }
+                    analysisDrag = nil
+                }
                 if let start = drawStartImage {
                     if let end = imagePoint(at: event.location),
                        let region = drawnRegion(start: start, end: end) {
@@ -350,6 +416,27 @@ public enum InteractionEffect: Sendable, Equatable {
         polygonVertices.removeAll()
         session?.previewRegion = nil
         return true
+    }
+
+    @discardableResult public func cancelActiveAnalysis() -> Bool {
+        guard let drag = analysisDrag else { return false }
+        if let preview = drag.previewMarker, session?.profileMarker == preview {
+            session?.profileMarker = drag.previousMarker
+        }
+        analysisDrag = nil
+        return true
+    }
+
+    private var isAnalysisDragMode: Bool {
+        switch drawMode {
+        case .lineProfile, .radialProfile, .growthCurve, .measure: true
+        default: false
+        }
+    }
+
+    private func distance(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+        let delta = b - a
+        return (delta.x * delta.x + delta.y * delta.y).squareRoot()
     }
 
     private var isRegionDrawingMode: Bool {

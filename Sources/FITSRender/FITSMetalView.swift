@@ -22,7 +22,6 @@ public struct FITSMetalView: NSViewRepresentable {
     public let onMeasure: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public let onCubeSpectrumAt: ((SIMD2<Double>) -> Void)?
     public let onRegionContextMenu: ((Int, NSEvent) -> Void)?
-    public let onProfileDragPreview: (((SIMD2<Double>, Double, DrawMode)?) -> Void)?
 
     public init(
         image: FITSImage,
@@ -37,8 +36,7 @@ public struct FITSMetalView: NSViewRepresentable {
         onGrowthCurve: ((SIMD2<Double>, Double) -> Void)? = nil,
         onMeasure: ((SIMD2<Double>, SIMD2<Double>) -> Void)? = nil,
         onCubeSpectrumAt: ((SIMD2<Double>) -> Void)? = nil,
-        onRegionContextMenu: ((Int, NSEvent) -> Void)? = nil,
-        onProfileDragPreview: (((SIMD2<Double>, Double, DrawMode)?) -> Void)? = nil
+        onRegionContextMenu: ((Int, NSEvent) -> Void)? = nil
     ) {
         self.image = image
         self.imageRevision = imageRevision
@@ -52,7 +50,6 @@ public struct FITSMetalView: NSViewRepresentable {
         self.onMeasure = onMeasure
         self.onCubeSpectrumAt = onCubeSpectrumAt
         self.onRegionContextMenu = onRegionContextMenu
-        self.onProfileDragPreview = onProfileDragPreview
         self.onCursorChange = onCursorChange
     }
 
@@ -78,9 +75,6 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.onMeasure = onMeasure
                 view.onCubeSpectrumAt = onCubeSpectrumAt
                 view.onRegionContextMenu = onRegionContextMenu
-                view.onProfileDragPreview = { preview in
-                    onProfileDragPreview?(preview)
-                }
                 view.drawMode = drawMode
                 view.interaction = interactionController ?? InteractionController(view: viewport, mode: interactionMode)
                 view.interaction?.drawMode = drawMode
@@ -105,9 +99,6 @@ public struct FITSMetalView: NSViewRepresentable {
         view.onMeasure = onMeasure
         view.onCubeSpectrumAt = onCubeSpectrumAt
         view.onRegionContextMenu = onRegionContextMenu
-        view.onProfileDragPreview = { preview in
-            onProfileDragPreview?(preview)
-        }
         view.drawMode = drawMode
         if let interactionController {
             view.interaction = interactionController
@@ -197,9 +188,6 @@ public final class InteractiveMTKView: MTKView {
     public var onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public var onRadialProfile: ((SIMD2<Double>, Double) -> Void)?
     public var onGrowthCurve: ((SIMD2<Double>, Double) -> Void)?
-    /// In-flight (center, radius, mode) during a radial/growth drag. `mode` is the
-    /// originating `DrawMode`. nil = drag ended.
-    public var onProfileDragPreview: ((SIMD2<Double>, Double, DrawMode)?) -> Void = { _ in }
     public var onMeasure: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public var onCubeSpectrumAt: ((SIMD2<Double>) -> Void)?
     public var drawMode: DrawMode = .pan {
@@ -215,6 +203,7 @@ public final class InteractiveMTKView: MTKView {
         if window == nil {
             interaction?.cancelActiveRegionEdit()
             interaction?.cancelActiveDrawing()
+            interaction?.cancelActiveAnalysis()
         }
         // Without this, mouseMoved events don't reach the view in some hosting setups.
         window?.acceptsMouseMovedEvents = true
@@ -222,7 +211,6 @@ public final class InteractiveMTKView: MTKView {
     }
 
     private var trackingArea: NSTrackingArea?
-    private var dragStartImage: SIMD2<Double>?
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -276,17 +264,9 @@ public final class InteractiveMTKView: MTKView {
     }
 
     public override func mouseDown(with event: NSEvent) {
-        guard let r = fitsRenderer, r.image != nil else { return }
-        if drawMode.isDrag && !isRegionDrawingMode {
-            dragStartImage = imagePoint(at: event.locationInWindow, renderer: r)
-            return
-        }
-        if drawMode == .cubeSpectrum,
-           let p = imagePoint(at: event.locationInWindow, renderer: r) {
-            onCubeSpectrumAt?(p)
-            return
-        }
+        guard fitsRenderer?.image != nil else { return }
         interaction?.pointer(pointerEvent(.down, .primary, event))
+        dispatchEffects(for: event)
         updateHoverCursor()
     }
 
@@ -299,11 +279,7 @@ public final class InteractiveMTKView: MTKView {
 
     public override func rightMouseDown(with event: NSEvent) {
         interaction?.pointer(pointerEvent(.down, .secondary, event))
-        for effect in interaction?.takeEffects() ?? [] {
-            if case .showContextMenu(let index, _) = effect {
-                onRegionContextMenu?(index, event)
-            }
-        }
+        dispatchEffects(for: event)
     }
 
     public override func rightMouseDragged(with event: NSEvent) {
@@ -334,68 +310,32 @@ public final class InteractiveMTKView: MTKView {
     }
 
     public override func mouseUp(with event: NSEvent) {
-        defer {
-            interaction?.pointer(pointerEvent(.up, .primary, event))
-            updateHoverCursor()
-            dragStartImage = nil
-            onProfileDragPreview(nil)
-        }
-        guard drawMode.isDrag,
-              let r = fitsRenderer,
-              let start = dragStartImage,
-              let end = imagePoint(at: event.locationInWindow, renderer: r) else { return }
-        if drawMode == .lineProfile {
-            onLineProfile?(start, end)
-            return
-        }
-        if drawMode == .measure {
-            onMeasure?(start, end)
-            return
-        }
-        if drawMode == .radialProfile {
-            let dx = end.x - start.x, dy = end.y - start.y
-            let radius = (dx * dx + dy * dy).squareRoot()
-            // If user just clicked (≤ 2 px), pass 0 — the handler picks a sensible default.
-            onRadialProfile?(start, radius < 2 ? 0 : radius)
-            return
-        }
-        if drawMode == .growthCurve {
-            let dx = end.x - start.x, dy = end.y - start.y
-            let radius = (dx * dx + dy * dy).squareRoot()
-            onGrowthCurve?(start, radius < 2 ? 0 : radius)
-            return
-        }
+        interaction?.pointer(pointerEvent(.up, .primary, event))
+        dispatchEffects(for: event)
+        updateHoverCursor()
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        switch drawMode {
-        case .pan, .drawPolygon, .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
-            if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {
-                setNeedsDisplay(bounds)
+        if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {
+            setNeedsDisplay(bounds)
+        }
+        updateHoverCursor()
+    }
+
+    private func dispatchEffects(for event: NSEvent) {
+        for effect in interaction?.takeEffects() ?? [] {
+            switch effect {
+            case .showContextMenu(let index, _): onRegionContextMenu?(index, event)
+            case .openAnalysis(let request):
+                switch request {
+                case .lineProfile(let from, let to): onLineProfile?(from, to)
+                case .radialProfile(let center, let radius): onRadialProfile?(center, radius)
+                case .growthCurve(let center, let radius): onGrowthCurve?(center, radius)
+                case .measure(let from, let to): onMeasure?(from, to)
+                case .cubeSpectrum(let at): onCubeSpectrumAt?(at)
+                }
             }
-            updateHoverCursor()
-        case .radialProfile, .growthCurve:
-            guard let r = fitsRenderer else { return }
-            guard let start = dragStartImage,
-                  let current = imagePoint(at: event.locationInWindow, renderer: r) else { return }
-            let dx = current.x - start.x, dy = current.y - start.y
-            let radius = (dx * dx + dy * dy).squareRoot()
-            onProfileDragPreview((start, radius, drawMode))
-        case .lineProfile, .measure, .cubeSpectrum:
-            break
         }
-    }
-
-    private var isRegionDrawingMode: Bool {
-        switch drawMode {
-        case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus: true
-        default: false
-        }
-    }
-
-    private func imagePoint(at windowLocation: NSPoint, renderer: FITSRenderer) -> SIMD2<Double>? {
-        let p = convert(windowLocation, from: nil)
-        return viewMapping(for: renderer).viewYUpToImage(SIMD2(Double(p.x), Double(p.y)))
     }
 
     private func viewMapping(for renderer: FITSRenderer) -> ViewMapping {
