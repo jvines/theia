@@ -164,7 +164,6 @@ struct DocumentView: View {
                     regions: regionsBinding,
                     session: session,
                     imageProvider: { currentImage() },
-                    wcsProvider: { session.displayedWCS },
                     onEffect: { applyEffect($0) }
                 )
                     .frame(width: 340)
@@ -532,7 +531,6 @@ struct InspectorPanel: View {
     @Binding var regions: [Region]
     let session: DocumentSession
     let imageProvider: () -> FITSImage?
-    let wcsProvider: () -> WCS?
     let onEffect: (Effect) -> Void
 
     var body: some View {
@@ -546,9 +544,7 @@ struct InspectorPanel: View {
             case .header: HeaderPanel(header: header, hduIndex: session.hdu,
                                       editor: session.headerEditor, imageProvider: imageProvider)
             case .regions: RegionListPanel(regions: $regions, session: session, onEffect: onEffect)
-            case .photometry: PhotometryPanel(regions: regions,
-                                              imageProvider: imageProvider,
-                                              wcsProvider: wcsProvider)
+            case .photometry: PhotometryPanel(session: session)
             case .stats: ImageStatsPanel(imageProvider: imageProvider)
             }
         }

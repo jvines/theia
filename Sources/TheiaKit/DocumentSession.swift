@@ -60,6 +60,7 @@ public struct HDUFacts {
     public let facts: [HDUFacts]
     public let view: ImageViewState
     public let headerEditor = HeaderEditor()
+    public let photometry = PhotometryTable()
     public private(set) var hdu: Int
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""

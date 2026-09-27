@@ -65,7 +65,18 @@ public struct PhotometryResult: Sendable, Equatable {
 public enum Photometry {
     /// Returns nil for unsupported (non-image / no-WCS) frames.
     public static func measure(region: Region, image: FITSImage, wcs: WCS?, psfFit: Bool = true) -> PhotometryResult? {
-        guard var base = measureRaw(region: region, image: image, wcs: wcs) else { return nil }
+        try! measureCheckingCancellation(region: region, image: image, wcs: wcs,
+                                         psfFit: psfFit, checkCancellation: {})
+    }
+
+    /// Checks for cancellation between image rows while measuring large apertures.
+    public static func measureCheckingCancellation(
+        region: Region, image: FITSImage, wcs: WCS?, psfFit: Bool = true,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> PhotometryResult? {
+        guard var base = try measureRaw(region: region, image: image, wcs: wcs,
+                                        checkCancellation: checkCancellation) else { return nil }
+        try checkCancellation()
         if psfFit, let centre = regionImageCentre(region: region, wcs: wcs) {
             let near = (Int(centre.x.rounded()), Int(centre.y.rounded()))
             if let fit = GaussianFit.fit(image: image, near: near, boxRadius: 8), fit.sigmaX > 0.5 {
@@ -98,7 +109,8 @@ public enum Photometry {
         }
     }
 
-    private static func measureRaw(region: Region, image: FITSImage, wcs: WCS?) -> PhotometryResult? {
+    private static func measureRaw(region: Region, image: FITSImage, wcs: WCS?,
+                                   checkCancellation: () throws -> Void) throws -> PhotometryResult? {
         switch region.shape {
         case .annulus(let center, let rIn, let rOut):
             guard let cp = imageCenter(of: center, frame: region.frame, wcs: wcs),
@@ -106,13 +118,16 @@ public enum Photometry {
                   let outPix = pixelLength(rOut, frame: region.frame, wcs: wcs) else { return nil }
             let bbox = clampBBox(cx: cp.x - outPix, cy: cp.y - outPix,
                                  w: 2 * outPix, h: 2 * outPix, image: image)
-            return measureAnnulus(image: image, cx: cp.x, cy: cp.y, inner: inPix, outer: outPix, bbox: bbox)
+            return try measureAnnulus(image: image, cx: cp.x, cy: cp.y,
+                                      inner: inPix, outer: outPix, bbox: bbox,
+                                      checkCancellation: checkCancellation)
         case .circle(let center, let radius):
             guard let cp = imageCenter(of: center, frame: region.frame, wcs: wcs),
                   let rPix = pixelLength(radius, frame: region.frame, wcs: wcs) else { return nil }
             let bbox = clampBBox(cx: cp.x - rPix, cy: cp.y - rPix,
                                  w: 2 * rPix, h: 2 * rPix, image: image)
-            return measureSampling(image: image, bbox: bbox) { x, y in
+            return try measureSampling(image: image, bbox: bbox,
+                                       checkCancellation: checkCancellation) { x, y in
                 let dx = Double(x) - cp.x, dy = Double(y) - cp.y
                 return dx * dx + dy * dy <= rPix * rPix
             }
@@ -124,7 +139,8 @@ public enum Photometry {
             let cosT = Foundation.cos(theta), sinT = Foundation.sin(theta)
             let halfW = wPix / 2, halfH = hPix / 2
             let bbox = rotatedRectBBox(cx: cp.x, cy: cp.y, halfW: halfW, halfH: halfH, cosT: cosT, sinT: sinT, image: image)
-            return measureSampling(image: image, bbox: bbox) { x, y in
+            return try measureSampling(image: image, bbox: bbox,
+                                       checkCancellation: checkCancellation) { x, y in
                 let dx = Double(x) - cp.x, dy = Double(y) - cp.y
                 let lx =  dx * cosT + dy * sinT
                 let ly = -dx * sinT + dy * cosT
@@ -138,7 +154,8 @@ public enum Photometry {
             let theta = angle * .pi / 180
             let cosT = Foundation.cos(theta), sinT = Foundation.sin(theta)
             let bbox = rotatedRectBBox(cx: cp.x, cy: cp.y, halfW: rxPix, halfH: ryPix, cosT: cosT, sinT: sinT, image: image)
-            return measureSampling(image: image, bbox: bbox) { x, y in
+            return try measureSampling(image: image, bbox: bbox,
+                                       checkCancellation: checkCancellation) { x, y in
                 let dx = Double(x) - cp.x, dy = Double(y) - cp.y
                 let lx =  dx * cosT + dy * sinT
                 let ly = -dx * sinT + dy * cosT
@@ -155,7 +172,8 @@ public enum Photometry {
                 minY = min(minY, p.y - 1); maxY = max(maxY, p.y - 1)
             }
             let bbox = clampBBox(cx: minX, cy: minY, w: maxX - minX, h: maxY - minY, image: image)
-            return measureSampling(image: image, bbox: bbox) { x, y in
+            return try measureSampling(image: image, bbox: bbox,
+                                       checkCancellation: checkCancellation) { x, y in
                 Region.pointInPolygon(SIMD2(Double(x), Double(y)), vertices: pts)
             }
         case .point:
@@ -182,28 +200,34 @@ public enum Photometry {
 
     // MARK: - Internals
 
-    private static func measureSampling(image: FITSImage, bbox: (Int, Int, Int, Int), contains: (Int, Int) -> Bool) -> PhotometryResult {
+    private static func measureSampling(image: FITSImage, bbox: (Int, Int, Int, Int),
+                                        checkCancellation: () throws -> Void,
+                                        contains: (Int, Int) -> Bool) throws -> PhotometryResult {
         var values: [Double] = []
         var sumXValue = 0.0, sumYValue = 0.0, weightSum = 0.0
         let (x0, y0, x1, y1) = bbox
         guard x0 <= x1, y0 <= y1 else {
-            return reduce(values: values, centroidWeighted: (0, 0, 0),
-                          sky: nil, sub: nil, skyStddev: nil, skyN: nil,
-                          psfFlux: nil, psfFWHM: nil)
+            return try reduce(values: values, centroidWeighted: (0, 0, 0),
+                              sky: nil, sub: nil, skyStddev: nil, skyN: nil,
+                              psfFlux: nil, psfFWHM: nil,
+                              checkCancellation: checkCancellation)
         }
         // Estimate a background from the pixels we touch (H6): a single pass
         // collects raw values, then we recompute the centroid using sky-
         // subtracted positive weights so a non-zero pedestal doesn't push the
         // result off the source.
         for y in y0...y1 {
+            try checkCancellation()
             for x in x0...x1 where contains(x, y) {
                 let v = image.physicalValue(x: x, y: y)
                 if v.isNaN { continue }
                 values.append(v)
             }
         }
-        let bkg = backgroundEstimate(values)
+        let bkg = try median(values, averageEven: false,
+                             checkCancellation: checkCancellation)
         for y in y0...y1 {
+            try checkCancellation()
             for x in x0...x1 where contains(x, y) {
                 let v = image.physicalValue(x: x, y: y)
                 if v.isNaN { continue }
@@ -213,30 +237,27 @@ public enum Photometry {
                 weightSum += weight
             }
         }
-        return reduce(values: values, centroidWeighted: (sumXValue, sumYValue, weightSum),
-                      sky: nil, sub: nil, skyStddev: nil, skyN: nil,
-                      psfFlux: nil, psfFWHM: nil)
+        return try reduce(values: values, centroidWeighted: (sumXValue, sumYValue, weightSum),
+                          sky: nil, sub: nil, skyStddev: nil, skyN: nil,
+                          psfFlux: nil, psfFWHM: nil,
+                          checkCancellation: checkCancellation)
     }
 
-    /// Median of NaN-skipped values; falls back to 0 if empty. Used as the
-    /// background subtracted from centroid weights so pedestals / negative
-    /// pixels don't distort the centre.
-    private static func backgroundEstimate(_ values: [Double]) -> Double {
-        guard !values.isEmpty else { return 0 }
-        var sorted = values
-        sorted.sort()
-        return sorted[sorted.count / 2]
-    }
-
-    private static func measureAnnulus(image: FITSImage, cx: Double, cy: Double, inner: Double, outer: Double, bbox: (Int, Int, Int, Int)) -> PhotometryResult {
+    private static func measureAnnulus(image: FITSImage, cx: Double, cy: Double,
+                                       inner: Double, outer: Double,
+                                       bbox: (Int, Int, Int, Int),
+                                       checkCancellation: () throws -> Void) throws -> PhotometryResult {
         var values: [Double] = []
         var sumXValue = 0.0, sumYValue = 0.0, weightSum = 0.0
         let (x0, y0, x1, y1) = bbox
         guard x0 <= x1, y0 <= y1 else {
-            return reduce(values: values, centroidWeighted: (0, 0, 0),
-                          sky: 0, sub: 0, skyStddev: 0, skyN: 0, psfFlux: nil, psfFWHM: nil)
+            return try reduce(values: values, centroidWeighted: (0, 0, 0),
+                              sky: 0, sub: 0, skyStddev: 0, skyN: 0,
+                              psfFlux: nil, psfFWHM: nil,
+                              checkCancellation: checkCancellation)
         }
         for y in y0...y1 {
+            try checkCancellation()
             for x in x0...x1 {
                 let dx = Double(x) - cx, dy = Double(y) - cy
                 let d2 = dx * dx + dy * dy
@@ -249,45 +270,113 @@ public enum Photometry {
                 weightSum += v
             }
         }
-        var sortedValues = values
-        sortedValues.sort()
-        let sky = sortedValues.isEmpty ? 0 : sortedValues[sortedValues.count / 2]
-        let subtracted = values.reduce(0, +) - sky * Double(values.count)
+        let sky = try median(values, averageEven: false,
+                             checkCancellation: checkCancellation)
+        var valueSum = 0.0
+        for index in values.indices {
+            if index & 8_191 == 0 { try checkCancellation() }
+            valueSum += values[index]
+        }
+        let subtracted = valueSum - sky * Double(values.count)
         // Sky stddev (sample, NaN-skipped — already filtered above).
-        let skyMean = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
-        let skyVar = values.count <= 1 ? 0 : values.reduce(0) { $0 + ($1 - skyMean) * ($1 - skyMean) } / Double(values.count - 1)
+        let skyMean = values.isEmpty ? 0 : valueSum / Double(values.count)
+        var varianceSum = 0.0
+        for index in values.indices {
+            if index & 8_191 == 0 { try checkCancellation() }
+            varianceSum += (values[index] - skyMean) * (values[index] - skyMean)
+        }
+        let skyVar = values.count <= 1 ? 0 : varianceSum / Double(values.count - 1)
         let skyStd = skyVar.squareRoot()
-        return reduce(values: values, centroidWeighted: (sumXValue, sumYValue, weightSum),
-                      sky: sky, sub: subtracted, skyStddev: skyStd, skyN: values.count,
-                      psfFlux: nil, psfFWHM: nil)
+        return try reduce(values: values, centroidWeighted: (sumXValue, sumYValue, weightSum),
+                          sky: sky, sub: subtracted, skyStddev: skyStd, skyN: values.count,
+                          psfFlux: nil, psfFWHM: nil,
+                          checkCancellation: checkCancellation)
     }
 
     private static func reduce(values: [Double], centroidWeighted: (Double, Double, Double),
                                sky: Double?, sub: Double?, skyStddev: Double?, skyN: Int?,
-                               psfFlux: Double?, psfFWHM: Double?) -> PhotometryResult {
+                               psfFlux: Double?, psfFWHM: Double?,
+                               checkCancellation: () throws -> Void) throws -> PhotometryResult {
         let n = values.count
-        let sum = values.reduce(0, +)
+        var sum = 0.0
+        var lo = Double.infinity
+        var hi = -Double.infinity
+        for index in values.indices {
+            if index & 8_191 == 0 { try checkCancellation() }
+            let value = values[index]
+            sum += value
+            lo = min(lo, value)
+            hi = max(hi, value)
+        }
         let mean = n == 0 ? 0 : sum / Double(n)
-        var sorted = values
-        sorted.sort()
-        let median: Double
-        if sorted.isEmpty { median = 0 }
-        else if sorted.count % 2 == 1 { median = sorted[sorted.count / 2] }
-        else { median = (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2 }
-        let variance = n <= 1 ? 0 : values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(n - 1)
+        let middle = try median(values, averageEven: true,
+                                checkCancellation: checkCancellation)
+        var varianceSum = 0.0
+        for index in values.indices {
+            if index & 8_191 == 0 { try checkCancellation() }
+            varianceSum += (values[index] - mean) * (values[index] - mean)
+        }
+        let variance = n <= 1 ? 0 : varianceSum / Double(n - 1)
         let std = variance.squareRoot()
-        let lo = sorted.first ?? 0
-        let hi = sorted.last ?? 0
+        if n == 0 { lo = 0; hi = 0 }
         let (sx, sy, ws) = centroidWeighted
         let cx = abs(ws) > 0 ? sx / ws : 0
         let cy = abs(ws) > 0 ? sy / ws : 0
         return PhotometryResult(
-            pixelCount: n, sum: sum, mean: mean, median: median, stddev: std,
+            pixelCount: n, sum: sum, mean: mean, median: middle, stddev: std,
             min: lo, max: hi, centroid: (cx, cy),
             sky: sky, skySubtractedFlux: sub,
             skyStddev: skyStddev, skyPixelCount: skyN,
             psfFlux: psfFlux, psfFWHM: psfFWHM
         )
     }
-}
 
+    /// Select the upper median without sorting the entire aperture. The caller
+    /// chooses whether even-sized sets use that value or the mean of both middles.
+    private static func median(_ input: [Double], averageEven: Bool,
+                               checkCancellation: () throws -> Void) throws -> Double {
+        guard !input.isEmpty else { return 0 }
+        var values = input
+        let target = values.count / 2
+        var left = 0
+        var right = values.count - 1
+        while left <= right {
+            try checkCancellation()
+            let midpoint = left + (right - left) / 2
+            let pivot = [values[left], values[midpoint], values[right]].sorted()[1]
+            var lower = left
+            var cursor = left
+            var upper = right
+            var visited = 0
+            while cursor <= upper {
+                if visited & 8_191 == 0 { try checkCancellation() }
+                visited += 1
+                if values[cursor] < pivot {
+                    values.swapAt(lower, cursor)
+                    lower += 1
+                    cursor += 1
+                } else if values[cursor] > pivot {
+                    values.swapAt(cursor, upper)
+                    upper -= 1
+                } else {
+                    cursor += 1
+                }
+            }
+            if target < lower {
+                right = lower - 1
+            } else if target > upper {
+                left = upper + 1
+            } else {
+                break
+            }
+        }
+        let upperMiddle = values[target]
+        guard averageEven, values.count % 2 == 0 else { return upperMiddle }
+        var lowerMiddle = -Double.infinity
+        for index in 0..<target {
+            if index & 8_191 == 0 { try checkCancellation() }
+            lowerMiddle = max(lowerMiddle, values[index])
+        }
+        return (lowerMiddle + upperMiddle) / 2
+    }
+}

@@ -23,6 +23,7 @@ public enum GaussianFit {
     public static func fit(image: FITSImage, near: (Int, Int), boxRadius: Int) -> Result? {
         let xLo = Swift.max(0, near.0 - boxRadius), xHi = Swift.min(image.width - 1, near.0 + boxRadius)
         let yLo = Swift.max(0, near.1 - boxRadius), yHi = Swift.min(image.height - 1, near.1 + boxRadius)
+        guard xLo <= xHi, yLo <= yHi else { return nil }
         var pts: [(Double, Double, Double)] = []
         for y in yLo...yHi {
             for x in xLo...xHi {

@@ -1,108 +1,68 @@
 import SwiftUI
 import FITSCore
+import TheiaKit
 
 /// Shows aperture-photometry stats for each region in the document. Recomputes
 /// whenever the selected image or region list changes.
 struct PhotometryPanel: View {
-    let regions: [Region]
-    let imageProvider: () -> FITSImage?
-    let wcsProvider: () -> WCS?
-
-    @State private var results: [Int: PhotometryResult] = [:]
-    @State private var computing = false
+    let session: DocumentSession
+    private var table: PhotometryTable { session.photometry }
 
     var body: some View {
-        if regions.isEmpty {
-            ContentUnavailableView(
-                "Nothing to measure yet",
-                systemImage: "circle.dashed",
-                description: Text("Mark a star or aperture on the image — photometry shows up here as you go.")
-            )
-        } else {
-            content
+        Group {
+            if session.regions.isEmpty {
+                ContentUnavailableView(
+                    "Nothing to measure yet",
+                    systemImage: "circle.dashed",
+                    description: Text("Mark a star or aperture on the image — photometry shows up here as you go.")
+                )
+            } else {
+                content
+            }
         }
+        .onAppear(perform: refresh)
+        .onChange(of: session.regions) { _, _ in refresh() }
+        .onChange(of: session.imageRevision) { _, _ in refresh() }
+        .onChange(of: session.wcsVariant) { _, _ in refresh() }
     }
 
     @ViewBuilder
     private var content: some View {
-        let pairs: [(Int, Region, PhotometryResult?)] = regions.enumerated().map { idx, r in
-            (idx, r, results[idx])
-        }
-        let grouped = Dictionary(grouping: pairs, by: { $0.1.attributes["tag"] ?? "" })
-        let tags = grouped.keys.sorted { (a, b) in
-            if a.isEmpty { return false }; if b.isEmpty { return true }; return a < b
-        }
+        let groups = table.groups
         VStack(spacing: 0) {
-            if computing {
+            if table.isComputing {
                 ProgressView("Computing…")
                     .padding(.top, 6)
             }
             List {
-                ForEach(tags, id: \.self) { tag in
-                    Section(header: tagHeader(tag: tag, items: grouped[tag] ?? [])) {
-                        ForEach(grouped[tag] ?? [], id: \.0) { idx, region, result in
-                            if let result {
-                                row(idx: idx, region: region, result: result)
+                ForEach(groups, id: \.tag) { group in
+                    Section(header: tagHeader(group: group)) {
+                        ForEach(group.rows) { item in
+                            if let result = item.result {
+                                row(idx: item.id, region: item.region, result: result)
                             } else {
-                                Text("#\(idx) — computing…").foregroundStyle(.tertiary)
+                                Text("#\(item.id) — computing…").foregroundStyle(.tertiary)
                             }
                         }
                     }
                 }
             }
         }
-        .onAppear { recompute() }
-        .onChange(of: regions.count) { _, _ in recompute() }
-        .onChange(of: regionsDigest) { _, _ in recompute() }
     }
 
-    private var regionsDigest: Int {
-        var h = Hasher()
-        for r in regions {
-            h.combine(r.attributes["tag"] ?? "")
-            switch r.shape {
-            case .circle(let c, let rad): h.combine("c"); h.combine(c.x); h.combine(c.y); h.combine(rad.value)
-            case .box(let c, let w, let h2, _): h.combine("b"); h.combine(c.x); h.combine(c.y); h.combine(w.value); h.combine(h2.value)
-            case .ellipse(let c, let rx, let ry, _): h.combine("e"); h.combine(c.x); h.combine(c.y); h.combine(rx.value); h.combine(ry.value)
-            case .annulus(let c, let i, let o): h.combine("a"); h.combine(c.x); h.combine(c.y); h.combine(i.value); h.combine(o.value)
-            case .polygon(let pts): h.combine("p"); for p in pts { h.combine(p.x); h.combine(p.y) }
-            case .point(let p): h.combine("pt"); h.combine(p.x); h.combine(p.y)
-            }
-        }
-        return h.finalize()
-    }
-
-    private func recompute() {
-        guard let image = imageProvider() else { return }
-        let wcs = wcsProvider()
-        let snapshot = regions
-        computing = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            var out: [Int: PhotometryResult] = [:]
-            for (idx, r) in snapshot.enumerated() {
-                if let res = Photometry.measure(region: r, image: image, wcs: wcs) {
-                    out[idx] = res
-                }
-            }
-            DispatchQueue.main.async {
-                self.results = out
-                self.computing = false
-            }
-        }
+    private func refresh() {
+        table.refresh(regions: session.regions, image: session.displayed,
+                      imageRevision: session.imageRevision, wcs: session.displayedWCS)
     }
 
     @ViewBuilder
-    private func tagHeader(tag: String, items: [(Int, Region, PhotometryResult?)]) -> some View {
-        let sums = items.compactMap { $0.2?.sum }
-        let totalSum = sums.reduce(0, +)
-        let netSums = items.compactMap { $0.2?.skySubtractedFlux }
-        let netSum = netSums.reduce(0, +)
+    private func tagHeader(group: PhotometryGroup) -> some View {
         HStack(spacing: 8) {
-            Text(tag.isEmpty ? "Untagged" : tag).font(.subheadline.weight(.semibold))
+            Text(group.tag.isEmpty ? "Untagged" : group.tag).font(.subheadline.weight(.semibold))
             Spacer()
-            Text("n=\(items.count)").foregroundStyle(.secondary)
-            Text("Σ=\(fmt(totalSum))").foregroundStyle(.secondary)
-            if !netSums.isEmpty {
+            Text("n=\(group.rows.count)").foregroundStyle(.secondary)
+            Text("Σ=\(fmt(group.totalSum))").foregroundStyle(.secondary)
+            if let netSum = group.totalNetFlux {
                 Text("Σ−sky=\(fmt(netSum))").foregroundStyle(.secondary)
             }
         }

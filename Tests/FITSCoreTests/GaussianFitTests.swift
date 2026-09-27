@@ -40,4 +40,11 @@ final class GaussianFitTests: XCTestCase {
         // Flat background — fit may converge but amplitude should be ~0.
         XCTAssertTrue(fit == nil || abs(fit!.amplitude) < 1)
     }
+
+    func testReturnsNilWhenProjectedCenterIsOutsideImage() {
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 400),
+                                         width: 20, height: 20)
+        XCTAssertNil(GaussianFit.fit(image: img, near: (3600, 10), boxRadius: 8))
+        XCTAssertNil(GaussianFit.fit(image: img, near: (-3600, 10), boxRadius: 8))
+    }
 }

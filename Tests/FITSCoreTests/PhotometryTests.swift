@@ -104,4 +104,71 @@ final class PhotometryTests: XCTestCase {
         let img = ramp(width: 10, height: 10)
         XCTAssertNil(Photometry.measure(region: region, image: img, wcs: nil))
     }
+
+    func testLargeApertureChecksCancellationDuringPixelScan() {
+        enum Stop: Error { case requested }
+        let img = ramp(width: 100, height: 100)
+        let region = Region(
+            shape: .circle(center: .init(x: 50, y: 50),
+                           radius: .init(value: 70, unit: .pixel)),
+            frame: .image
+        )
+        var checks = 0
+        XCTAssertThrowsError(try Photometry.measureCheckingCancellation(
+            region: region, image: img, wcs: nil, psfFit: false,
+            checkCancellation: {
+                checks += 1
+                if checks == 5 { throw Stop.requested }
+            }
+        )) { error in
+            XCTAssertTrue(error is Stop)
+        }
+        XCTAssertEqual(checks, 5)
+    }
+
+    func testCancellationInterruptsMedianSelection() {
+        enum Stop: Error { case requested }
+        let values = (0..<65_536).map { Float(($0 * 37) % 997) }
+        let img = FITSImage.fromFloat32(pixels: values, width: values.count, height: 1)
+        let region = Region(
+            shape: .circle(center: .init(x: 32_769, y: 1),
+                           radius: .init(value: 70_000, unit: .pixel)),
+            frame: .image
+        )
+        var checks = 0
+        XCTAssertThrowsError(try Photometry.measureCheckingCancellation(
+            region: region, image: img, wcs: nil, psfFit: false,
+            checkCancellation: {
+                checks += 1
+                if checks == 5 { throw Stop.requested }
+            }
+        )) { error in
+            XCTAssertTrue(error is Stop)
+        }
+        XCTAssertEqual(checks, 5)
+    }
+
+    func testMedianMatchesSortedSamplesForOddEvenAndRepeatedValues() {
+        for count in 1...99 {
+            let pixels = (0..<count).map { index in
+                Float(((index * 37 + count * 11) % 23) - 11)
+            }
+            let image = FITSImage.fromFloat32(pixels: pixels, width: count, height: 1)
+            let region = Region(
+                shape: .circle(center: .init(x: 1, y: 1),
+                               radius: .init(value: 100, unit: .pixel)),
+                frame: .image
+            )
+            let result = Photometry.measure(region: region, image: image,
+                                            wcs: nil, psfFit: false)!
+            let sorted = pixels.map(Double.init).sorted()
+            let expected = count.isMultiple(of: 2)
+                ? (sorted[count / 2 - 1] + sorted[count / 2]) / 2
+                : sorted[count / 2]
+            XCTAssertEqual(result.median, expected, accuracy: 1e-10,
+                           "median differs for \(count) samples")
+            XCTAssertEqual(result.min, sorted.first!, accuracy: 1e-10)
+            XCTAssertEqual(result.max, sorted.last!, accuracy: 1e-10)
+        }
+    }
 }
