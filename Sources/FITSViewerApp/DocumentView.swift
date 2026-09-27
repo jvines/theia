@@ -884,7 +884,6 @@ extension DocumentView {
         toolbarState.onCollapseCube = { mode in collapseCube(mode) }
         toolbarState.onDetectSources = { detectSourcesAndAddRegions() }
         toolbarState.onCropToSelection = { cropToSelectedRegion() }
-        toolbarState.onExportCubeMP4 = { exportCubeAsMP4() }
         toolbarState.onSubtractBackground = { subtractBackground() }
         toolbarState.onBinImage = { n in binImage(by: n) }
         toolbarState.onCubeSlab = { _, _ in promptForSlab() }
@@ -1469,44 +1468,6 @@ extension DocumentView {
         }
     }
 
-    fileprivate func exportCubeAsMP4() {
-        guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { NSSound.beep(); return }
-        let exportStretch = stretch
-        let exportVmin = Double(viewport.vmin)
-        let exportVmax = Double(viewport.vmax)
-        let exportMap = colorMap
-        let exportParameter = viewport.stretchParameter
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = document.url.deletingPathExtension().lastPathComponent + ".mp4"
-        guard let parent = NSApp.keyWindow else { return }
-        panel.beginSheetModal(for: parent) { resp in
-            guard resp == .OK, let url = panel.url else { return }
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try MPEGExport.writeCube(
-                        hdu: hdu,
-                        to: url,
-                        stretch: exportStretch,
-                        vmin: exportVmin,
-                        vmax: exportVmax,
-                        colorMap: exportMap,
-                        parameter: exportParameter,
-                        fps: 8
-                    )
-                    DispatchQueue.main.async {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        let a = NSAlert(error: error)
-                        a.runModal()
-                    }
-                }
-            }
-        }
-    }
-
     fileprivate func detectSourcesAndAddRegions() {
         guard let image = currentImage() else { return }
         let detections = SourceExtractor.detect(image: image,
@@ -1696,12 +1657,17 @@ extension DocumentView {
             panel.allowedContentTypes = types.compactMap { UTType(filenameExtension: $0) }
             panel.nameFieldStringValue = suggestedName
             panel.canCreateDirectories = true
-            panel.begin { response in
+            let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
                 let answer: Answer
                 if response == .OK, let url = panel.url { answer = .path(url) }
                 else { answer = .cancelled }
                 let outcome = session.perform(.answer(request, answer), origin: .user)
                 for next in outcome.effects { applyEffect(next) }
+            }
+            if case .exportCube = request, let parent = NSApp.keyWindow {
+                panel.beginSheetModal(for: parent, completionHandler: handleResponse)
+            } else {
+                panel.begin(completionHandler: handleResponse)
             }
         case .ask:
             break
@@ -1709,6 +1675,22 @@ extension DocumentView {
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try snapshot.writeImage(to: url)
+                } catch {
+                    DispatchQueue.main.async { NSAlert(error: error).runModal() }
+                }
+            }
+        case .exportCube(let snapshot, let url):
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try MPEGExport.writeCube(
+                        hdu: snapshot.hdu, to: url, stretch: snapshot.stretch,
+                        vmin: Double(snapshot.vmin), vmax: Double(snapshot.vmax),
+                        colorMap: snapshot.colorMap, parameter: snapshot.stretchParameter,
+                        fps: snapshot.fps
+                    )
+                    DispatchQueue.main.async {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 } catch {
                     DispatchQueue.main.async { NSAlert(error: error).runModal() }
                 }

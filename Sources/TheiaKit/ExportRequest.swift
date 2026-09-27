@@ -47,6 +47,38 @@ public struct RenderSnapshot: Sendable, Equatable {
     }
 }
 
+/// A cube and render settings captured before the Mac asks for an MP4 path.
+/// AVFoundation encoding remains a Mac shell operation.
+public struct CubeRenderSnapshot: Sendable, Equatable {
+    public let id: UUID
+    public let documentID: UUID
+    public let imageRevision: Int
+    public let hduIndex: Int
+    public let hdu: FITSHDU
+    public let stretch: ImageStretch
+    public let colorMap: ColorMap
+    public let vmin: Float
+    public let vmax: Float
+    public let stretchParameter: Float
+    public let fps: Int
+
+    @MainActor init(session: DocumentSession, hdu: FITSHDU) {
+        id = UUID()
+        documentID = session.id
+        imageRevision = session.imageRevision
+        hduIndex = session.hdu
+        self.hdu = hdu
+        stretch = session.view.stretch
+        colorMap = session.view.colorMap
+        vmin = session.view.vmin
+        vmax = session.view.vmax
+        stretchParameter = session.view.stretchParameter
+        fps = 8
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+}
+
 public enum Question: Sendable, Equatable {
     case savePath(suggestedName: String, types: [String])
     case openPath(types: [String], multiple: Bool)
@@ -55,10 +87,19 @@ public enum Question: Sendable, Equatable {
 
 public enum PendingRequest: Sendable, Equatable {
     case exportImage(RenderSnapshot)
+    case exportCube(CubeRenderSnapshot)
+
+    public var id: UUID {
+        switch self {
+        case .exportImage(let snapshot): snapshot.id
+        case .exportCube(let snapshot): snapshot.id
+        }
+    }
 
     public var documentID: UUID {
         switch self {
         case .exportImage(let snapshot): snapshot.documentID
+        case .exportCube(let snapshot): snapshot.documentID
         }
     }
 }
@@ -81,37 +122,52 @@ extension DocumentSession {
         guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
         guard let image = displayed else { return CommandOutcome(failure: .noDisplayedImage) }
         let snapshot = RenderSnapshot(session: self, image: image)
-        pendingExportRequests[snapshot.id] = snapshot
+        let request = PendingRequest.exportImage(snapshot)
+        pendingRequests[snapshot.id] = request
         return CommandOutcome(effects: [
             .ask(.savePath(suggestedName: "image.png", types: ["png", "tiff"]),
-                 .exportImage(snapshot))
+                 request)
+        ])
+    }
+
+    func requestCubeExport() -> CommandOutcome {
+        guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+        let hdu = file.hdus[self.hdu]
+        guard hdu.naxis == 3 else { return CommandOutcome(failure: .unavailableCube) }
+        let snapshot = CubeRenderSnapshot(session: self, hdu: hdu)
+        let request = PendingRequest.exportCube(snapshot)
+        pendingRequests[snapshot.id] = request
+        let name = url.deletingPathExtension().lastPathComponent + ".mp4"
+        return CommandOutcome(effects: [
+            .ask(.savePath(suggestedName: name, types: ["mp4"]), request)
         ])
     }
 
     func answer(_ request: PendingRequest, with answer: Answer) -> CommandOutcome {
         guard !isClosed else { return rejectedAnswer(.documentClosed) }
-        switch request {
-        case .exportImage(let supplied):
-            guard let snapshot = pendingExportRequests[supplied.id],
-                  snapshot.documentID == id else {
-                return rejectedAnswer(.invalidPendingRequest)
-            }
-            switch answer {
-            case .cancelled:
-                pendingExportRequests[supplied.id] = nil
-                return CommandOutcome()
-            case .path(let url):
-                guard url.isFileURL else { return rejectedAnswer(.invalidAnswer) }
-                pendingExportRequests[supplied.id] = nil
+        guard let stored = pendingRequests[request.id], stored.documentID == id else {
+            return rejectedAnswer(.invalidPendingRequest)
+        }
+        switch answer {
+        case .cancelled:
+            pendingRequests[request.id] = nil
+            return CommandOutcome()
+        case .path(let url):
+            guard url.isFileURL else { return rejectedAnswer(.invalidAnswer) }
+            pendingRequests[request.id] = nil
+            switch stored {
+            case .exportImage(let snapshot):
                 return CommandOutcome(effects: [.exportImage(snapshot, url)])
-            case .paths, .numbers:
-                return rejectedAnswer(.invalidAnswer)
+            case .exportCube(let snapshot):
+                return CommandOutcome(effects: [.exportCube(snapshot, url)])
             }
+        case .paths, .numbers:
+            return rejectedAnswer(.invalidAnswer)
         }
     }
 
     public func close() {
         isClosed = true
-        pendingExportRequests.removeAll()
+        pendingRequests.removeAll()
     }
 }

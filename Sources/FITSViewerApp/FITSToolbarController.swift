@@ -322,7 +322,11 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         switch box.action {
         case .collapse(let mode): state.onCollapseCube(mode)
         case .extractSlab: state.onCubeSlab(0, -1)
-        case .exportCube: state.onExportCubeMP4()
+        case .exportCube:
+            let outcome = state.session.perform(.exportCube, origin: .user)
+            if outcome.failure == nil {
+                for effect in outcome.effects { state.onEffect(effect) }
+            }
         case .stack(let mode): state.onStackOpenDocuments(mode)
         case .lightCurve: state.onLightCurve()
         case .detectSources: state.onDetectSources()

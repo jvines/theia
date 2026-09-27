@@ -78,6 +78,38 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testCubeExportAnswerUsesTheRequestTimeHDU() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let asked = session.perform(.exportCube, origin: .user)
+            XCTAssertNil(asked.failure)
+            guard case .ask(let question, let request) = asked.effects.first,
+                  case .exportCube(let snapshot) = request else {
+                return XCTFail("Cube export should ask for an MP4 path")
+            }
+            XCTAssertEqual(question, .savePath(suggestedName: "session.mp4", types: ["mp4"]))
+            XCTAssertEqual(snapshot.hduIndex, 1)
+            XCTAssertEqual(snapshot.hdu.axes, [2, 2, 2])
+            XCTAssertEqual(snapshot.imageRevision, session.imageRevision)
+
+            session.selectHDU(2)
+            let destination = URL(fileURLWithPath: "/tmp/theia-cube-export.mp4")
+            let answered = session.perform(.answer(request, .path(destination)), origin: .user)
+            XCTAssertNil(answered.failure)
+            guard case .exportCube(let saved, let url) = answered.effects.first else {
+                return XCTFail("Cube export should use the captured HDU")
+            }
+            XCTAssertEqual(url, destination)
+            XCTAssertEqual(saved.id, snapshot.id)
+            XCTAssertEqual(try FITSImage(hdu: saved.hdu, plane: 1).physicalValue(x: 0, y: 0), 4)
+            XCTAssertEqual(session.perform(.answer(request, .path(destination)), origin: .user).failure,
+                           .invalidPendingRequest)
+            XCTAssertEqual(session.perform(.exportCube, origin: .script).failure,
+                           .requiresUserInterface)
+            XCTAssertEqual(session.perform(.exportCube, origin: .user).failure, .unavailableCube)
+        }
+    }
+
     func testToolsMenuUsesSharedSectionsAndTypedActions() async throws {
         try await MainActor.run {
             let session = try makeSession()

@@ -140,7 +140,7 @@ public struct HDUFacts {
     @ObservationIgnored private var eventOrigin: CommandOrigin = .user
     @ObservationIgnored private var eventEchoTag: UUID?
     @ObservationIgnored private var persistSelection = true
-    @ObservationIgnored var pendingExportRequests: [UUID: RenderSnapshot] = [:]
+    @ObservationIgnored var pendingRequests: [UUID: PendingRequest] = [:]
     @ObservationIgnored var isClosed = false
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {

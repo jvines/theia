@@ -38,7 +38,6 @@ final class ToolbarState: ObservableObject {
     var onApplyBinary: (ImageArithmetic.BinaryOp, Int) -> Void = { _, _ in }
     var onDetectSources: () -> Void = {}
     var onCropToSelection: () -> Void = {}
-    var onExportCubeMP4: () -> Void = {}
     var onSubtractBackground: () -> Void = {}
     var onBinImage: (Int) -> Void = { _ in }
     var onCubeSlab: (Int, Int) -> Void = { _, _ in }

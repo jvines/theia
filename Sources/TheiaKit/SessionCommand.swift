@@ -65,6 +65,7 @@ public enum SessionCommand: Sendable, Equatable {
     case toggleBlink
     case clearDerivedImage
     case exportImage
+    case exportCube
     case answer(PendingRequest, Answer)
     case showPanel(PanelKind)
     case fitView
@@ -92,6 +93,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidPendingRequest
     case invalidAnswer
     case documentClosed
+    case unavailableCube
 
     public var message: String {
         switch self {
@@ -111,6 +113,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidPendingRequest: "Save request is no longer pending"
         case .invalidAnswer: "Answer does not match the save request"
         case .documentClosed: "Document is closed"
+        case .unavailableCube: "Current HDU is not a three-dimensional cube"
         }
     }
 }
@@ -138,6 +141,7 @@ public enum Effect: Sendable, Equatable {
     case alert(title: String, message: String, style: AlertStyle)
     case ask(Question, PendingRequest)
     case exportImage(RenderSnapshot, URL)
+    case exportCube(CubeRenderSnapshot, URL)
     case showPanel(PanelKind)
     case showAppWindow(AppWindowKind)
     case openURL(URL)
@@ -275,6 +279,11 @@ extension DocumentSession {
                     return CommandOutcome(failure: .requiresUserInterface)
                 }
                 return requestImageExport()
+            case .exportCube:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestCubeExport()
             case .answer(let request, let answer):
                 guard origin == .user else {
                     return CommandOutcome(failure: .requiresUserInterface)
