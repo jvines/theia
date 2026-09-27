@@ -123,6 +123,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidAnswer
     case documentClosed
     case unavailableCube
+    case requiresOriginalCube
     case noRegions
     case supersededRegionLoad
     case staleRequest
@@ -161,6 +162,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidAnswer: "Answer does not match the request"
         case .documentClosed: "Document is closed"
         case .unavailableCube: "Current HDU is not a three-dimensional cube"
+        case .requiresOriginalCube: "Show the original cube before collapsing or extracting a slab"
         case .noRegions: "There are no regions to save"
         case .supersededRegionLoad: "A newer region load or edit has replaced this load"
         case .staleRequest: "Source image changed before the request was answered"
@@ -171,7 +173,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .catalogFetchInProgress: "A catalog fetch is already in progress"
         case .invalidFilter: "Filter size or sigma is invalid"
         case .imageDimensionMismatch: "Images must have the same dimensions"
-        case .invalidBinFactor: "Binning factor must be at least two"
+        case .invalidBinFactor: "Binning factor must be at least two and fit the image"
         case .invalidSlabRange(let from, let to): "Invalid slab range \(from)…\(to)"
         case .noSelectedRegion: "Select a region to crop"
         case .insufficientStackImages: "Stack requires at least two open images"
@@ -340,8 +342,14 @@ extension DocumentSession {
                 queueImageOperation(.reproject(referenceHDU))
             case .bin(let factor):
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
-                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard let image = displayed else {
+                    return CommandOutcome(failure: .noDisplayedImage)
+                }
                 guard factor >= 2 else { return CommandOutcome(failure: .invalidBinFactor) }
+                if !jobs.hasActive(kind: .imageOperation),
+                   (factor > image.width || factor > image.height) {
+                    return CommandOutcome(failure: .invalidBinFactor)
+                }
                 queueImageOperation(.bin(factor))
             case .cropToSelection:
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
@@ -357,12 +365,18 @@ extension DocumentSession {
                       displayed != nil else {
                     return CommandOutcome(failure: .unavailableCube)
                 }
+                guard derived == nil, !jobs.hasActive(kind: .imageOperation) else {
+                    return CommandOutcome(failure: .requiresOriginalCube)
+                }
                 queueImageOperation(.collapseCube(hdu: hdu, mode: mode))
             case .applySlab(let from, let to):
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
                 guard file.hdus[hdu].naxis == 3, facts[hdu].isDisplayableImage,
                       displayed != nil else {
                     return CommandOutcome(failure: .unavailableCube)
+                }
+                guard derived == nil, !jobs.hasActive(kind: .imageOperation) else {
+                    return CommandOutcome(failure: .requiresOriginalCube)
                 }
                 guard from >= 0, from <= to, to < facts[hdu].planeCount else {
                     return CommandOutcome(failure: .invalidSlabRange(from: from, to: to))

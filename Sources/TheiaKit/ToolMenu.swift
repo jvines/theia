@@ -79,6 +79,8 @@ extension CommandCatalog {
     ) -> [ToolMenuEntry] {
         let image = session.displayed
         let hasCube = session.file.hdus[session.hdu].naxis == 3
+        let canOperateOnCube = hasCube && session.derived == nil &&
+            !session.jobs.hasActive(kind: .imageOperation)
         var entries: [ToolMenuEntry] = []
 
         func item(
@@ -96,10 +98,12 @@ extension CommandCatalog {
             entries.append(.section(.collapseCube))
             for mode in FITSImage.CollapseMode.allCases {
                 entries.append(.item(item("tools.collapse.\(mode.rawValue)", mode.label,
-                                          .collapseCube, .collapse(mode))))
+                                          .collapseCube, .collapse(mode),
+                                          enabled: canOperateOnCube)))
             }
             entries.append(.item(item("tools.extractSlab", "Extract slab (planes…)",
-                                      .collapseCube, .extractSlab)))
+                                      .collapseCube, .extractSlab,
+                                      enabled: canOperateOnCube)))
             entries.append(.item(item("tools.exportCube", "Export cube as MP4…",
                                       .collapseCube, .exportCube)))
         }

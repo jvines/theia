@@ -188,6 +188,8 @@ extension DocumentSession {
             }
             return ImageOperationOutput(snapshot.revision, result: result)
         case .collapseCube(let index, let mode):
+            // Only accepted with the original cube displayed and no earlier
+            // image job pending; a 2D derived image has no plane axis to collapse.
             let collapsed = try FITSImage.collapsedCheckingCancellation(
                 hdu: file.hdus[index], mode: mode
             )
@@ -195,6 +197,7 @@ extension DocumentSession {
                 image: collapsed, wcs: cubeWCS, label: "\(mode.label) over plane axis"
             ))
         case .slab(let index, let from, let to):
+            // The command preflight applies the same original-cube rule.
             let slab = try FITSImage.slabCheckingCancellation(
                 hdu: file.hdus[index], from: from, to: to
             )

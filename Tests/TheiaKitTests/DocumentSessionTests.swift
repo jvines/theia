@@ -417,6 +417,10 @@ final class DocumentSessionTests: XCTestCase {
             let displayed = try XCTUnwrap(session.displayed)
             session.setDerived(DerivedImage(image: displayed, wcs: nil, label: "Test"))
             let derivedEntries = CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1)
+            XCTAssertEqual(derivedEntries.compactMap(\.item)
+                .first { $0.identifier == "tools.collapse.sum" }?.enabled, false)
+            XCTAssertEqual(derivedEntries.compactMap(\.item)
+                .first { $0.identifier == "tools.extractSlab" }?.enabled, false)
             XCTAssertEqual(derivedEntries.last?.item?.identifier, "tools.showOriginal")
             XCTAssertEqual(derivedEntries.last?.item?.action, .clearDerivedImage)
             XCTAssertTrue(derivedEntries.contains { if case .separator = $0 { return true }; return false })
@@ -1174,6 +1178,16 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 3.5)
             XCTAssertEqual(session.derived?.label, "Binned 2×2")
             XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
+        }
+    }
+
+    func testBinRejectsFactorLargerThanCurrentImageBeforeQueuing() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.bin(3), origin: .script).failure,
+                           .invalidBinFactor)
+            XCTAssertEqual(session.perform(.bin(1), origin: .script).failure,
+                           .invalidBinFactor)
         }
     }
 

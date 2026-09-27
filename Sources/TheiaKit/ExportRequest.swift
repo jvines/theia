@@ -184,6 +184,9 @@ extension DocumentSession {
         guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
         let cube = file.hdus[hdu]
         guard cube.naxis == 3 else { return CommandOutcome(failure: .unavailableCube) }
+        guard derived == nil, !jobs.hasActive(kind: .imageOperation) else {
+            return CommandOutcome(failure: .requiresOriginalCube)
+        }
         let slab = SlabRequest(session: self)
         let request = PendingRequest.slab(slab)
         pendingRequests[slab.id] = request

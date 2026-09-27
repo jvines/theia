@@ -4,11 +4,26 @@ import FITSCore
 @testable import TheiaKit
 
 final class CubeSessionOperationTests: XCTestCase {
-    func testCollapseRunsAfterEarlierJobAndUsesSourceCubeWCS() async throws {
+    func testCubeOperationsRejectPendingOrDisplayedTwoDimensionalEdits() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertEqual(session.perform(.collapseCube(.sum), origin: .user).failure,
+                           .requiresOriginalCube)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.perform(.applySlab(from: 0, to: 2), origin: .user).failure,
+                           .requiresOriginalCube)
+            XCTAssertEqual(session.perform(.extractSlab, origin: .user).failure,
+                           .requiresOriginalCube)
+        }
+    }
+
+    func testCollapseUsesSourceCubeAndSelectedWCS() async throws {
         let session = try await MainActor.run { try makeSession() }
         await MainActor.run {
             XCTAssertNil(session.perform(.selectWCSVariant("A"), origin: .user).failure)
-            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
             XCTAssertNil(session.perform(.collapseCube(.sum), origin: .user).failure)
         }
         await session.idle()
@@ -19,11 +34,10 @@ final class CubeSessionOperationTests: XCTestCase {
         }
     }
 
-    func testSlabRunsAfterEarlierJobAndUsesSourceCubeWCS() async throws {
+    func testSlabUsesSourceCubeAndSelectedWCS() async throws {
         let session = try await MainActor.run { try makeSession() }
         await MainActor.run {
             XCTAssertNil(session.perform(.selectWCSVariant("A"), origin: .user).failure)
-            XCTAssertNil(session.perform(.unary(.negate), origin: .user).failure)
             XCTAssertNil(session.perform(.applySlab(from: 1, to: 2), origin: .user).failure)
         }
         await session.idle()
