@@ -208,6 +208,29 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testImageMenuReflectsActiveSessionAndPanelEffects() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let entries = CommandCatalog.imageMenu(for: session)
+            XCTAssertEqual(entries.map { $0.item?.identifier ?? "separator" }, [
+                "image.zscale", "separator", "image.grid", "image.compass",
+                "image.colorBar", "separator", "image.pixelTable", "image.contours",
+            ])
+            XCTAssertEqual(entries[2].item?.state, .checked(false))
+            _ = session.perform(.setGridVisible(true), origin: .user)
+            let updated = CommandCatalog.imageMenu(for: session)
+            XCTAssertEqual(updated[2].item?.state, .checked(true))
+            if case .setGridVisible(false) = updated[2].item?.command {} else {
+                XCTFail("Image menu should offer the current inverse toggle")
+            }
+            let panel = try XCTUnwrap(updated.last?.item?.command)
+            XCTAssertEqual(session.perform(panel, origin: .user).effects,
+                           [.showPanel(.contourLevels)])
+            let noDocument = CommandCatalog.imageMenu(for: nil)
+            XCTAssertTrue(noDocument.compactMap(\.item).allSatisfy { !$0.enabled })
+        }
+    }
+
     func testToolbarCatalogueDisablesImageActionsOnTablesAndAllowsSingleImageTools() async throws {
         try await MainActor.run {
             let session = try makeSession()

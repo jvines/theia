@@ -193,6 +193,26 @@ public enum CommandMenuEntry: Sendable {
         ]
     }
 
+    public static func imageMenu(for session: DocumentSession?) -> [CommandMenuEntry] {
+        func item(_ id: String, _ toolbarID: String, _ title: String) -> CommandMenuEntry {
+            let toolbar = session.flatMap { toolbarItem(toolbarID, for: $0) }
+            return .item(CommandMenuItem(
+                identifier: id, title: title, enabled: toolbar?.enabled ?? false,
+                state: toolbar?.state ?? .none, command: toolbar?.command, shortcut: nil
+            ))
+        }
+        return [
+            item("image.zscale", "zscale", "ZScale"),
+            .separator,
+            item("image.grid", "grid", "WCS Grid"),
+            item("image.compass", "compass", "Compass + Scale Bar"),
+            item("image.colorBar", "colorbar", "Color Bar"),
+            .separator,
+            item("image.pixelTable", "pixeltable", "Pixel Table…"),
+            item("image.contours", "contour", "Contour Levels…"),
+        ]
+    }
+
     public static func sessionMenu(
         _ identifier: String, for session: DocumentSession
     ) -> [CommandMenuEntry]? {
