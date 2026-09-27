@@ -1,13 +1,13 @@
 import SwiftUI
 import AppKit
+import TheiaKit
 
 @MainActor
 final class LightCurveWindowController: NSWindowController {
     static private(set) var shared: LightCurveWindowController?
 
-    static func show(points: [(time: Double, flux: Double, err: Double)],
-                     timeLabel: String, attachedTo parent: NSWindow?) {
-        let view = LightCurveView(points: points, timeLabel: timeLabel)
+    static func show(model: LightCurveModel, attachedTo parent: NSWindow?) {
+        let view = LightCurveView(model: model)
         if let existing = shared {
             existing.window?.contentView = NSHostingView(rootView: view)
             existing.window?.makeKeyAndOrderFront(nil)
@@ -37,18 +37,19 @@ extension LightCurveWindowController: NSWindowDelegate {
 }
 
 private struct LightCurveView: View {
-    let points: [(time: Double, flux: Double, err: Double)]
-    let timeLabel: String
+    @State private var model: LightCurveModel
 
-    @State private var normalized: Bool = false
+    init(model: LightCurveModel) {
+        self._model = State(initialValue: model)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Light curve — \(points.count) frames")
+                Text("Light curve — \(model.points.count) frames")
                     .font(.headline)
                 Spacer()
-                Toggle("Normalize to median", isOn: $normalized)
+                Toggle("Normalize to median", isOn: $model.normalized)
                     .controlSize(.small)
                 Button("Copy CSV") { copyCSV() }
                     .controlSize(.small)
@@ -61,39 +62,22 @@ private struct LightCurveView: View {
                 .cornerRadius(4)
             }
             HStack {
-                Text(timeLabel).font(.caption).foregroundStyle(.secondary)
+                Text(model.timeLabel).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(normalized ? "flux / median" : "flux").font(.caption).foregroundStyle(.secondary)
+                Text(model.yLabel).font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(12)
     }
 
-    private var displayedFlux: [Double] {
-        guard normalized, !points.isEmpty else { return points.map(\.flux) }
-        var sorted = points.map(\.flux).filter { $0.isFinite }
-        sorted.sort()
-        let med = sorted.isEmpty ? 1 : sorted[sorted.count / 2]
-        guard med != 0 else { return points.map(\.flux) }
-        return points.map { $0.flux / med }
-    }
-
-    private var displayedErr: [Double] {
-        guard normalized, !points.isEmpty else { return points.map(\.err) }
-        var sorted = points.map(\.flux).filter { $0.isFinite }
-        sorted.sort()
-        let med = sorted.isEmpty ? 1 : sorted[sorted.count / 2]
-        guard med != 0 else { return points.map(\.err) }
-        return points.map { $0.err / abs(med) }
-    }
-
     private func draw(in ctx: GraphicsContext, size: CGSize) {
         let pad: CGFloat = 24
         let w = size.width - 2 * pad, h = size.height - 2 * pad
+        let points = model.displayedPoints
         guard w > 0, h > 0, !points.isEmpty else { return }
         let xs = points.map(\.time)
-        let ys = displayedFlux
-        let errs = displayedErr
+        let ys = points.map(\.flux)
+        let errs = points.map(\.err)
         let xMin = xs.min() ?? 0, xMax = xs.max() ?? 1
         let span = max(xMax - xMin, 1e-12)
         var yLo = (ys + zip(ys, errs).map(-)).min() ?? 0
@@ -129,9 +113,7 @@ private struct LightCurveView: View {
     }
 
     private func copyCSV() {
-        let lines = ["time,flux,err"] + points.map { "\($0.time),\($0.flux),\($0.err)" }
-        let csv = lines.joined(separator: "\n")
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(csv, forType: .string)
+        NSPasteboard.general.setString(model.csv, forType: .string)
     }
 }

@@ -1167,8 +1167,10 @@ extension DocumentView {
         }
         points.sort { $0.time < $1.time }
         LightCurveWindowController.show(
-            points: points.map { (time: $0.time, flux: $0.flux, err: $0.err) },
-            timeLabel: timeLabel,
+            model: LightCurveModel(
+                points: points.map { LightCurvePoint(time: $0.time, flux: $0.flux, err: $0.err) },
+                timeLabel: timeLabel
+            ),
             attachedTo: NSApp.keyWindow
         )
     }
