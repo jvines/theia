@@ -55,9 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openDocument(at: url)
             }
         }
-        let hasSeenOnboarding = UserDefaults.standard.bool(forKey: "hasSeenOnboarding")
-        if !hasSeenOnboarding {
-            UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+        if !UserPreferences.shared.hasSeenOnboarding {
+            UserPreferences.shared.hasSeenOnboarding = true
             OnboardingWindowController.show()
         } else if controllers.isEmpty {
             WelcomeWindowController.show()

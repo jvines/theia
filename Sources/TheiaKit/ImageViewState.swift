@@ -35,6 +35,7 @@ enum ImageViewChange {
     }
     @ObservationIgnored var onChange: ((ImageViewChange) -> Void)?
     @ObservationIgnored private var displaying = false
+    @ObservationIgnored private let zscaleContrast: @MainActor () -> Double
 
     public init(
         image: FITSImage? = nil,
@@ -46,14 +47,16 @@ enum ImageViewChange {
         vmax: Float? = nil,
         stretch: ImageStretch = .linear,
         stretchParameter: Float = 2,
-        colorMap: ColorMap = .gray
+        colorMap: ColorMap = .gray,
+        zscaleContrast: @escaping @MainActor () -> Double = { PreferenceKeys.ZScaleContrast.defaultValue }
     ) {
         self.image = image
         self.imageRevision = imageRevision
         self.transform = transform
         self.viewSizePoints = viewSizePoints
         self.backingScale = backingScale
-        let levels = image.map { DocumentSession.recommendedLevels(for: $0) }
+        self.zscaleContrast = zscaleContrast
+        let levels = image.map { DocumentSession.recommendedLevels(for: $0, contrast: zscaleContrast()) }
         self.vmin = vmin ?? levels?.vmin ?? 0
         self.vmax = vmax ?? levels?.vmax ?? 1
         self.stretch = stretch
@@ -71,7 +74,7 @@ enum ImageViewChange {
         self.image = image
         self.imageRevision = revision
         if resetLevels, let image {
-            let levels = DocumentSession.recommendedLevels(for: image)
+            let levels = DocumentSession.recommendedLevels(for: image, contrast: zscaleContrast())
             vmin = levels.vmin
             vmax = levels.vmax
         }

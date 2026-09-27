@@ -156,18 +156,23 @@ public struct HDUFacts {
     @ObservationIgnored private var persistSelection = true
     @ObservationIgnored var pendingRequests: [UUID: PendingRequest] = [:]
     @ObservationIgnored var isClosed = false
+    @ObservationIgnored private let zscaleContrast: @MainActor () -> Double
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear,
-                colorMap: ColorMap = .gray, catalogClient: CatalogClient? = nil) {
+                colorMap: ColorMap = .gray,
+                zscaleContrast: @escaping @MainActor () -> Double = { PreferenceKeys.ZScaleContrast.defaultValue },
+                catalogClient: CatalogClient? = nil) {
         let fileFacts = file.hdus.map(HDUFacts.init)
         let initialHDU = file.firstImageHDUIndex ?? 0
         self.url = url
         self.file = file
         self.catalogClient = catalogClient
+        self.zscaleContrast = zscaleContrast
         self.facts = fileFacts
         self.hdu = initialHDU
         self.sourceWCSVariant = fileFacts[initialHDU].wcsVariants.first ?? ""
-        self.view = ImageViewState(stretch: stretch, colorMap: colorMap)
+        self.view = ImageViewState(stretch: stretch, colorMap: colorMap,
+                                   zscaleContrast: zscaleContrast)
         view.display(sourceImage(), revision: 0)
         view.onChange = { [weak self] change in
             guard let self else { return }
@@ -252,8 +257,9 @@ public struct HDUFacts {
 
     /// The default levels for a newly displayed image. Zscale reads at most 600
     /// source pixels; a full finite scan is only needed if that sample is empty.
-    public static func recommendedLevels(for image: FITSImage) -> RasterLevels {
-        let range = image.defaultRange().map { ($0.z1, $0.z2) }
+    public static func recommendedLevels(for image: FITSImage, contrast: Double = 0.25) -> RasterLevels {
+        let range = image.defaultRange(contrast: PreferenceKeys.ZScaleContrast.normalize(contrast))
+            .map { ($0.z1, $0.z2) }
             ?? image.physicalMinMax().map { ($0.min, $0.max) }
         guard let range else { return RasterLevels(vmin: 0, vmax: 1) }
         let lo = Float(range.0)
@@ -264,7 +270,7 @@ public struct HDUFacts {
 
     public func resetLevels() {
         guard let displayed else { return }
-        let levels = Self.recommendedLevels(for: displayed)
+        let levels = Self.recommendedLevels(for: displayed, contrast: zscaleContrast())
         view.vmin = levels.vmin
         view.vmax = levels.vmax
     }
