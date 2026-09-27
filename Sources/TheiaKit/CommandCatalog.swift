@@ -73,6 +73,13 @@ public enum WorkspaceMenuEntry: Sendable {
     }
 }
 
+public enum ToolbarSlot: Sendable, Equatable {
+    case item(String)
+    case space
+    case flexibleSpace
+    case sidebarTrackingSeparator
+}
+
 public enum CommandMenuEntry: Sendable {
     case item(CommandMenuItem)
     case separator
@@ -86,6 +93,19 @@ public enum CommandMenuEntry: Sendable {
 /// Platform-neutral toolbar metadata and state. Identifiers match the Mac's
 /// existing NSToolbarItem identifiers so saved toolbar layouts remain valid.
 @MainActor public enum CommandCatalog {
+    public static let defaultToolbarLayout: [ToolbarSlot] = [
+        .item("stretch"), .item("map"), .item("mode"), .space,
+        .item("zscale"), .item("scale"), .item("export"),
+        .item("grid"), .item("compass"), .item("colorbar"),
+        .item("pixeltable"), .item("contour"), .item("wcsVariant"),
+        .item("blink"), .item("tools"), .item("catalog"), .item("sync"),
+        .flexibleSpace, .item("header"),
+    ]
+
+    public static let extraAllowedToolbarSlots: [ToolbarSlot] = [
+        .space, .flexibleSpace, .sidebarTrackingSeparator,
+    ]
+
     public static func workspaceMenuItem(_ id: WorkspaceMenuID) -> WorkspaceMenuItem {
         func item(_ identifier: String, _ title: String, _ section: WorkspaceMenuSection,
                   _ command: WorkspaceCommand) -> WorkspaceMenuItem {

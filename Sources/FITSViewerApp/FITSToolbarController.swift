@@ -114,20 +114,21 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            ID.stretch, ID.map, ID.mode,
-            .space,
-            ID.zscale, ID.scale, ID.export,
-            ID.grid, ID.compass, ID.colorbar, ID.pixeltable, ID.contour, ID.wcsVariant,
-            ID.blink,
-            ID.tools, ID.catalog, ID.sync,
-            .flexibleSpace,
-            ID.header,
-        ]
+        CommandCatalog.defaultToolbarLayout.map(toolbarIdentifier)
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [.space, .flexibleSpace, .sidebarTrackingSeparator]
+        toolbarDefaultItemIdentifiers(toolbar)
+            + CommandCatalog.extraAllowedToolbarSlots.map(toolbarIdentifier)
+    }
+
+    private func toolbarIdentifier(_ slot: ToolbarSlot) -> NSToolbarItem.Identifier {
+        switch slot {
+        case .item(let identifier): NSToolbarItem.Identifier(identifier)
+        case .space: .space
+        case .flexibleSpace: .flexibleSpace
+        case .sidebarTrackingSeparator: .sidebarTrackingSeparator
+        }
     }
 
     func toolbar(_ toolbar: NSToolbar,
