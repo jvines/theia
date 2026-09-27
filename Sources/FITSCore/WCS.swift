@@ -130,9 +130,14 @@ public struct WCS: Sendable {
 
     /// Maps a 0-based image (x, y) to sky (RA, Dec) in degrees. Returns nil on math failure.
     public func pixelToSky(imageX x: Int, imageY y: Int) -> (ra: Double, dec: Double)? {
+        pixelToSky(imageX: Double(x), imageY: Double(y))
+    }
+
+    /// Maps a sub-pixel 0-based image position to sky coordinates.
+    public func pixelToSky(imageX x: Double, imageY y: Double) -> (ra: Double, dec: Double)? {
         // FITS pixel coords are 1-based.
-        let dx0 = Double(x) + 1 - crpix.x
-        let dy0 = Double(y) + 1 - crpix.y
+        let dx0 = x + 1 - crpix.x
+        let dy0 = y + 1 - crpix.y
         var dx = dx0, dy = dy0
         if let sip = sipForward {
             let (du, dv) = sip.apply(dx: dx0, dy: dy0)

@@ -1101,24 +1101,9 @@ extension DocumentView {
 
     fileprivate func binImage(by n: Int) {
         guard let image = currentImage(), n >= 2 else { NSSound.beep(); return }
-        let w = image.width / n, h = image.height / n
-        guard w > 0, h > 0 else { return }
-        var out = [Float](repeating: 0, count: w * h)
-        for by in 0..<h {
-            for bx in 0..<w {
-                var sum = 0.0
-                var cnt = 0
-                for j in 0..<n {
-                    for i in 0..<n {
-                        let v = image.physicalValue(x: bx * n + i, y: by * n + j)
-                        if !v.isNaN { sum += v; cnt += 1 }
-                    }
-                }
-                out[by * w + bx] = cnt > 0 ? Float(sum / Double(cnt)) : .nan
-            }
-        }
-        let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
-        displayOverride = DisplayOverride(image: result, wcs: nil, label: "Binned \(n)×\(n)")
+        guard let result = ImageOperations.bin(image, wcs: session.displayedWCS,
+                                               factor: n) else { return }
+        displayOverride = result
     }
 
     private func extractCubeSlab(from: Int, to: Int) {
@@ -1163,26 +1148,10 @@ extension DocumentView {
             alert.runModal()
             return
         }
-        let w = first.width, h = first.height
-        var out = [Float](repeating: 0, count: w * h)
-        for i in 0..<(w * h) {
-            let y = i / w, x = i % w
-            var vals: [Double] = []
-            vals.reserveCapacity(images.count)
-            for img in images {
-                let v = img.physicalValue(x: x, y: y)
-                if !v.isNaN { vals.append(v) }
-            }
-            if vals.isEmpty { out[i] = .nan; continue }
-            switch mode {
-            case .sum:    out[i] = Float(vals.reduce(0, +))
-            case .mean:   out[i] = Float(vals.reduce(0, +) / Double(vals.count))
-            case .median: vals.sort(); out[i] = Float(vals[vals.count / 2])
-            }
-        }
-        let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
-        displayOverride = DisplayOverride(image: result, wcs: nil,
-                                          label: "Stack \(mode.label) of \(images.count) windows")
+        guard let result = ImageOperations.stack(images,
+                                                 referenceWCS: session.displayedWCS,
+                                                 mode: mode) else { return }
+        displayOverride = result
     }
 
     fileprivate func generateLightCurve() {
@@ -1332,16 +1301,10 @@ extension DocumentView {
         guard let bbox = boundingBox(of: region, wcs: wcs, in: image) else { NSSound.beep(); return }
         let w = bbox.maxX - bbox.minX + 1
         let h = bbox.maxY - bbox.minY + 1
-        guard w > 0, h > 0 else { return }
-        var out = [Float](repeating: 0, count: w * h)
-        for dy in 0..<h {
-            for dx in 0..<w {
-                out[dy * w + dx] = Float(image.physicalValue(x: bbox.minX + dx, y: bbox.minY + dy))
-            }
-        }
-        let cropped = FITSImage.fromFloat32(pixels: out, width: w, height: h)
-        displayOverride = DisplayOverride(image: cropped, wcs: nil,
-                                          label: "Crop \(bbox.minX),\(bbox.minY) → \(bbox.maxX),\(bbox.maxY)")
+        guard let result = ImageOperations.crop(image, wcs: wcs,
+                                                originX: bbox.minX, originY: bbox.minY,
+                                                width: w, height: h) else { return }
+        displayOverride = result
     }
 
     private func boundingBox(of region: Region, wcs: WCS?, in image: FITSImage) -> (minX: Int, minY: Int, maxX: Int, maxY: Int)? {
