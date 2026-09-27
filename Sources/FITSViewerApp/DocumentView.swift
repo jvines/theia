@@ -996,13 +996,6 @@ extension DocumentView {
     private func handleCursor(_ info: CursorInfo?) {
         cursor = info
         pixelTableBridge.cursor = info
-        // Broadcast for crosshair sync.
-        if let info, let parent = AppDelegate.shared?.controllerForCurrentDocument(matching: document.url) {
-            WindowSyncCoordinator.shared.broadcastCursor(
-                imagePoint: SIMD2(Double(info.imageX), Double(info.imageY)),
-                from: parent, sourceWCS: session.displayedWCS
-            )
-        }
     }
 
     private func updateRegion(idx: Int, region: Region) {

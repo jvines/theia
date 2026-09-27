@@ -72,6 +72,10 @@ extension DocumentWindowController {
 }
 
 extension DocumentWindowController: NSWindowDelegate {
+    func windowDidBecomeKey(_ notification: Notification) {
+        AppDelegate.shared?.controllerDidFocus(self)
+    }
+
     func windowWillClose(_ notification: Notification) {
         documentModel.session.close()
         frameDriver.close()

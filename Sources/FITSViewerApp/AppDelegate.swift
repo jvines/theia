@@ -22,13 +22,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var imageObserverIDs: [ObjectIdentifier: UUID] = [:]
     private var imageAvailability: [ObjectIdentifier: Bool] = [:]
 
-    /// Stable, monotonic scripting id per controller. Assigned at open and never
-    /// reused, so closing a middle window doesn't renumber the others (a positional
-    /// index would silently retarget any script holding an older id). Keyed by
-    /// object identity because `DocumentWindowController` isn't `Hashable`.
-    private var documentIDs: [ObjectIdentifier: Int] = [:]
-    private var nextDocumentID = 0
-
     /// The document scripting clients act on by default: the most recently opened
     /// or raised window. Used when there's no key window (e.g. headless/scripted).
     private(set) weak var currentController: DocumentWindowController?
@@ -206,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
             currentController = existing
+            workspace.focus(existing.documentModel.session)
             return existing
         }
         let document = try DocumentModel(url: url)
@@ -221,8 +215,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.imageAvailability[controllerID] = available
             self?.refreshDocumentToolbars()
         }
-        documentIDs[ObjectIdentifier(controller)] = nextDocumentID
-        nextDocumentID += 1
         currentController = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -266,8 +258,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         imageAvailability[id] = nil
         controllers.removeAll { $0 === controller }
-        documentIDs[id] = nil   // don't renumber the survivors
+        if currentController === controller {
+            currentController = controllers.first {
+                workspace.id(of: $0.documentModel.session) == workspace.focusedDocumentID
+            }
+        }
         refreshDocumentToolbars()
+    }
+
+    func controllerDidFocus(_ controller: DocumentWindowController) {
+        currentController = controller
+        workspace.focus(controller.documentModel.session)
     }
 
     private func refreshDocumentToolbars() {
@@ -298,10 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let outcome = workspace.perform(command, origin: origin)
         if outcome.failure == nil {
             for effect in outcome.effects { applyEffect(effect) }
-            if case .setSyncFlag(let flag, let enabled) = command {
-                if flag == .crosshair && !enabled {
-                    WindowSyncCoordinator.shared.clearCrosshairs()
-                }
+            if case .setSyncFlag = command {
                 refreshDocumentToolbars()
             }
         }
@@ -372,12 +370,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Looks up a controller by its stable scripting id (not its array position).
     func controllerForScripting(at id: Int) -> DocumentWindowController? {
-        controllers.first { documentIDs[ObjectIdentifier($0)] == id }
+        controllers.first { workspace.id(of: $0.documentModel.session) == id }
     }
 
     /// The stable scripting id assigned to `controller` at open (−1 if unknown).
     func scriptingID(of controller: DocumentWindowController) -> Int {
-        documentIDs[ObjectIdentifier(controller)] ?? -1
+        workspace.id(of: controller.documentModel.session) ?? -1
     }
     func controllerForCurrentDocument(matching url: URL) -> DocumentWindowController? {
         controllers.first { $0.documentModel.url == url }
