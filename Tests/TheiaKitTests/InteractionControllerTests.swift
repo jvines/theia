@@ -77,4 +77,71 @@ final class InteractionControllerTests: XCTestCase {
                                                     location: SIMD2(90, 10))))
         }
     }
+
+    func testKeyboardPlaybackAndPlaneKeysAffectOnlyOwningSession() async throws {
+        try await MainActor.run {
+            let first = try makeCubeSession()
+            let second = try makeCubeSession()
+            let firstController = InteractionController(view: first.view, mode: .full, session: first)
+            let secondController = InteractionController(view: second.view, mode: .full, session: second)
+
+            XCTAssertTrue(firstController.key(.init(key: .space)))
+            XCTAssertTrue(first.playing)
+            XCTAssertFalse(second.playing)
+            XCTAssertTrue(secondController.key(.init(key: .rightArrow)))
+            XCTAssertEqual(first.plane, 0)
+            XCTAssertEqual(second.plane, 1)
+            XCTAssertTrue(firstController.key(.init(key: .leftArrow)))
+            XCTAssertEqual(first.plane, 1)
+            XCTAssertEqual(second.plane, 1)
+            XCTAssertFalse(firstController.key(.init(key: .space, modifiers: [.primary])))
+        }
+    }
+
+    func testKeyboardRegionActionsAndEscapeUseSessionHistory() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            let region = Region(shape: .point(.init(x: 20, y: 20)), frame: .image)
+            session.perform(.addRegion(region), origin: .user)
+            XCTAssertTrue(controller.key(.init(key: .leftArrow, modifiers: [.shift])))
+            XCTAssertEqual(session.regions[0].shape, .point(.init(x: 10, y: 20)))
+            XCTAssertTrue(controller.key(.init(key: .character("z"), modifiers: [.primary])))
+            XCTAssertEqual(session.regions[0], region)
+            XCTAssertTrue(controller.key(.init(key: .character("z"), modifiers: [.primary, .shift])))
+            XCTAssertEqual(session.regions[0].shape, .point(.init(x: 10, y: 20)))
+            XCTAssertTrue(controller.key(.init(key: .character("d"), modifiers: [.primary])))
+            XCTAssertEqual(session.regions.count, 2)
+            XCTAssertTrue(controller.key(.init(key: .escape)))
+            XCTAssertNil(session.selectedRegionIndex)
+            XCTAssertFalse(controller.key(.init(key: .delete)))
+        }
+    }
+
+    func testExtraModifierDoesNotTriggerRegionUndo() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            let region = Region(shape: .point(.init(x: 20, y: 20)), frame: .image)
+            session.perform(.addRegion(region), origin: .user)
+            session.perform(.nudgeRegion(0, dx: -1, dy: 0), origin: .user)
+            XCTAssertFalse(controller.key(.init(key: .character("z"), modifiers: [.primary, .option])))
+            XCTAssertEqual(session.regions[0].shape, .point(.init(x: 19, y: 20)))
+        }
+    }
+
+    @MainActor private func makeCubeSession() throws -> DocumentSession {
+        let cards = [
+            "SIMPLE  =                    T", "BITPIX  =                    8",
+            "NAXIS   =                    3", "NAXIS1  =                    2",
+            "NAXIS2  =                    2", "NAXIS3  =                    2", "END"
+        ]
+        var header = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+        header += String(repeating: " ", count: 2880 - header.utf8.count)
+        var data = Data(header.utf8)
+        data.append(contentsOf: Array(0..<8).map(UInt8.init))
+        data.append(Data(repeating: 0, count: 2880 - 8))
+        return DocumentSession(url: URL(fileURLWithPath: "/tmp/interaction-cube.fits"),
+                               file: try FITSFile(data: data))
+    }
 }

@@ -52,6 +52,22 @@ public struct PointerEvent: Sendable, Equatable {
     }
 }
 
+public struct KeyEvent: Sendable, Equatable {
+    public enum Key: Sendable, Equatable {
+        case leftArrow, rightArrow, upArrow, downArrow
+        case space, delete, forwardDelete, escape, `return`
+        case character(String)
+    }
+
+    public let key: Key
+    public let modifiers: PointerEvent.Modifiers
+
+    public init(key: Key, modifiers: PointerEvent.Modifiers = []) {
+        self.key = key
+        self.modifiers = modifiers
+    }
+}
+
 /// Shared canvas interaction state. Native views only translate input coordinates.
 @MainActor public final class InteractionController {
     public enum Mode: Sendable {
@@ -60,6 +76,7 @@ public struct PointerEvent: Sendable, Equatable {
     }
 
     public let view: ImageViewState
+    private weak var session: DocumentSession?
     public var mode: Mode {
         didSet { if mode != oldValue { activePan = nil; levelsDrag = nil } }
     }
@@ -81,9 +98,10 @@ public struct PointerEvent: Sendable, Equatable {
     private var activePan: Pan?
     private var levelsDrag: LevelsDrag?
 
-    public init(view: ImageViewState, mode: Mode) {
+    public init(view: ImageViewState, mode: Mode, session: DocumentSession? = nil) {
         self.view = view
         self.mode = mode
+        self.session = session
     }
 
     @discardableResult public func scroll(_ event: ScrollEvent) -> Bool {
@@ -92,6 +110,68 @@ public struct PointerEvent: Sendable, Equatable {
 
     @discardableResult public func magnify(_ event: MagnifyEvent) -> Bool {
         zoom(by: event.factor, at: event.location)
+    }
+
+    /// Handle a key for this canvas only; native controls keep keys they consume.
+    @discardableResult public func key(_ event: KeyEvent) -> Bool {
+        if case .character(let text) = event.key,
+           event.modifiers.contains(.primary), text == "=" || text == "+" || text == "-" {
+            guard event.modifiers.subtracting([.primary, .shift]).isEmpty else { return false }
+            let factor = text == "-" ? 0.5 : 2.0
+            if let session, mode == .full {
+                return session.perform(text == "-" ? .zoomOut : .zoomIn, origin: .user).failure == nil
+            }
+            return view.zoom(by: factor, aroundImagePoint: view.transform.centre)
+        }
+        guard mode == .full, let session else { return false }
+        switch event.key {
+        case .space:
+            guard event.modifiers.isEmpty,
+                  session.facts[session.hdu].planeCount > 1 else { return false }
+            return session.perform(.setPlaying(!session.playing), origin: .user).failure == nil
+        case .leftArrow, .rightArrow, .upArrow, .downArrow:
+            guard event.modifiers.subtracting(.shift).isEmpty else { return false }
+            let step = event.modifiers.contains(.shift) ? 10.0 : 1.0
+            let delta: SIMD2<Double>
+            switch event.key {
+            case .leftArrow: delta = SIMD2(-step, 0)
+            case .rightArrow: delta = SIMD2(step, 0)
+            case .upArrow: delta = SIMD2(0, step)
+            case .downArrow: delta = SIMD2(0, -step)
+            default: return false
+            }
+            if let selected = session.selectedRegionIndex {
+                return session.perform(.nudgeRegion(selected, dx: delta.x, dy: delta.y),
+                                       origin: .user).failure == nil
+            }
+            let count = session.facts[session.hdu].planeCount
+            guard count > 1 else { return false }
+            let direction = delta.x < 0 || delta.y < 0 ? -1 : 1
+            return session.perform(.selectPlane((session.plane + direction + count) % count),
+                                   origin: .user).failure == nil
+        case .delete, .forwardDelete:
+            guard event.modifiers.isEmpty, let selected = session.selectedRegionIndex else { return false }
+            return session.perform(.deleteRegion(selected), origin: .user).failure == nil
+        case .escape:
+            guard event.modifiers.isEmpty else { return false }
+            if session.selectedRegionIndex != nil { session.selectedRegionIndex = nil; return true }
+            if session.profileMarker != nil { session.profileMarker = nil; return true }
+            return false
+        case .character(let text):
+            guard event.modifiers.contains(.primary),
+                  event.modifiers.subtracting([.primary, .shift]).isEmpty else { return false }
+            switch text.lowercased() {
+            case "d":
+                guard let selected = session.selectedRegionIndex else { return false }
+                return session.perform(.duplicateRegion(selected, dx: 5, dy: 5), origin: .user).failure == nil
+            case "z":
+                let command: SessionCommand = event.modifiers.contains(.shift) ? .redoRegions : .undoRegions
+                return session.perform(command, origin: .user).failure == nil
+            default: return false
+            }
+        case .return:
+            return false
+        }
     }
 
     /// Returns true when the canvas view or display levels changed.

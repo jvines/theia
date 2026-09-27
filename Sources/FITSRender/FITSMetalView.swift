@@ -14,6 +14,7 @@ public struct FITSMetalView: NSViewRepresentable {
     public let viewport: ImageViewState
     public let drawMode: DrawMode
     public let interactionMode: InteractionController.Mode
+    public let interactionController: InteractionController?
     public let onCursorChange: ((CursorInfo?) -> Void)?
     public let onRegionCreated: ((Region) -> Void)?
     public let onRegionPreview: ((Region?) -> Void)?
@@ -38,6 +39,7 @@ public struct FITSMetalView: NSViewRepresentable {
         viewport: ImageViewState,
         drawMode: DrawMode = .pan,
         interactionMode: InteractionController.Mode = .full,
+        interactionController: InteractionController? = nil,
         regions: [Region] = [],
         wcs: WCS? = nil,
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
@@ -61,6 +63,7 @@ public struct FITSMetalView: NSViewRepresentable {
         self.viewport = viewport
         self.drawMode = drawMode
         self.interactionMode = interactionMode
+        self.interactionController = interactionController
         self.regions = regions
         self.wcs = wcs
         self.onLineProfile = onLineProfile
@@ -115,7 +118,7 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.regions = regions
                 view.wcs = wcs
                 view.drawMode = drawMode
-                view.interaction = InteractionController(view: viewport, mode: interactionMode)
+                view.interaction = interactionController ?? InteractionController(view: viewport, mode: interactionMode)
                 view.interaction?.drawMode = drawMode
                 context.coordinator.renderer = renderer
                 context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
@@ -151,7 +154,9 @@ public struct FITSMetalView: NSViewRepresentable {
         view.regions = regions
         view.wcs = wcs
         view.drawMode = drawMode
-        if view.interaction?.view !== viewport {
+        if let interactionController {
+            view.interaction = interactionController
+        } else if view.interaction?.view !== viewport {
             view.interaction = InteractionController(view: viewport, mode: interactionMode)
         } else {
             view.interaction?.mode = interactionMode
@@ -442,10 +447,13 @@ public final class InteractiveMTKView: MTKView {
                 ignoreDragUntilMouseUp = true
                 return
             }
-            polygonVertices.removeAll()
-            onRegionPreview?(nil)
-            return
+            if !polygonVertices.isEmpty {
+                polygonVertices.removeAll()
+                onRegionPreview?(nil)
+                return
+            }
         }
+        if let key = keyEvent(event), interaction?.key(key) == true { return }
         super.keyDown(with: event)
     }
 
@@ -624,13 +632,36 @@ public final class InteractiveMTKView: MTKView {
 
     private func pointerEvent(_ phase: PointerEvent.Phase, _ button: PointerEvent.Button,
                               _ event: NSEvent) -> PointerEvent {
+        PointerEvent(phase: phase, button: button,
+                     location: topLeftViewPoint(at: event.locationInWindow),
+                     modifiers: inputModifiers(event), clickCount: event.clickCount)
+    }
+
+    private func inputModifiers(_ event: NSEvent) -> PointerEvent.Modifiers {
         var modifiers: PointerEvent.Modifiers = []
         if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
         if event.modifierFlags.contains(.command) { modifiers.insert(.primary) }
         if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
         if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
-        return PointerEvent(phase: phase, button: button,
-                            location: topLeftViewPoint(at: event.locationInWindow),
-                            modifiers: modifiers, clickCount: event.clickCount)
+        return modifiers
+    }
+
+    private func keyEvent(_ event: NSEvent) -> KeyEvent? {
+        let key: KeyEvent.Key
+        switch event.keyCode {
+        case 123: key = .leftArrow
+        case 124: key = .rightArrow
+        case 125: key = .downArrow
+        case 126: key = .upArrow
+        case 49: key = .space
+        case 51: key = .delete
+        case 117: key = .forwardDelete
+        case 53: key = .escape
+        case 36, 76: key = .return
+        default:
+            guard let text = event.charactersIgnoringModifiers, !text.isEmpty else { return nil }
+            key = .character(text)
+        }
+        return KeyEvent(key: key, modifiers: inputModifiers(event))
     }
 }

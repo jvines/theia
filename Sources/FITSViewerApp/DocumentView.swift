@@ -12,6 +12,7 @@ struct DocumentView: View {
 
     @State private var session: DocumentSession
     private let viewport: ImageViewState
+    private let interaction: InteractionController
     private let pixelTableBridge = PixelTableCursorBridge()
 
     private var stretch: ImageStretch {
@@ -120,6 +121,8 @@ struct DocumentView: View {
         self.toolbarState = toolbarState
         self.toolbarController = toolbarController
         self.viewport = document.session.view
+        self.interaction = InteractionController(view: document.session.view, mode: .full,
+                                                 session: document.session)
         self._session = State(initialValue: document.session)
     }
 
@@ -169,58 +172,23 @@ struct DocumentView: View {
         }
             .focusable()
             .focusEffectDisabled()
-            .onKeyPress(.leftArrow, phases: .down) { press in
-                // Nudge selected region first; fall through to cube plane navigation.
-                if selectedRegionIndex != nil {
-                    return nudgeSelected(dx: -1, dy: 0, shift: press.modifiers.contains(.shift))
-                }
-                let planeCount = session.facts[selectedHDU].planeCount
-                guard planeCount > 1 else { return .ignored }
-                selectedPlane = (selectedPlane - 1 + planeCount) % planeCount
-                return .handled
-            }
-            .onKeyPress(.rightArrow, phases: .down) { press in
-                if selectedRegionIndex != nil {
-                    return nudgeSelected(dx: 1, dy: 0, shift: press.modifiers.contains(.shift))
-                }
-                let planeCount = session.facts[selectedHDU].planeCount
-                guard planeCount > 1 else { return .ignored }
-                selectedPlane = (selectedPlane + 1) % planeCount
-                return .handled
-            }
-            .onKeyPress(.space) {
-                guard session.facts[selectedHDU].planeCount > 1 else { return .ignored }
-                planePlaying.toggle()
-                return .handled
-            }
-            .onKeyPress(.delete) { deleteSelectedRegion() }
-            .onKeyPress(.deleteForward) { deleteSelectedRegion() }
-            .onKeyPress(.escape) {
-                if selectedRegionIndex != nil { selectedRegionIndex = nil; return .handled }
-                if profileGeometry != nil { profileGeometry = nil; return .handled }
-                return .ignored
-            }
-            .onKeyPress(.upArrow,    phases: .down) { nudgeSelected(dx: 0,  dy:  1, shift: $0.modifiers.contains(.shift)) }
-            .onKeyPress(.downArrow,  phases: .down) { nudgeSelected(dx: 0,  dy: -1, shift: $0.modifiers.contains(.shift)) }
-            .onKeyPress("d", phases: .down) {
-                guard $0.modifiers.contains(.command) else { return .ignored }
-                return duplicateSelectedRegion()
-            }
-            .background(
-                KeyEventMonitor { event in
-                    // Only intercept plain space (no modifiers, no text input focused)
-                    let isSpace = event.charactersIgnoringModifiers == " "
-                    let noMods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
-                    let inTextEditor = (NSApp.keyWindow?.firstResponder as? NSText) != nil
-                    guard isSpace, noMods, !inTextEditor,
-                          session.facts[selectedHDU].planeCount > 1 else { return event }
-                    planePlaying.toggle()
-                    return nil   // consume
-                }
-            )
+            .onKeyPress(.leftArrow, phases: .down) { handleKey(.leftArrow, modifiers: $0.modifiers) }
+            .onKeyPress(.rightArrow, phases: .down) { handleKey(.rightArrow, modifiers: $0.modifiers) }
+            .onKeyPress(.upArrow, phases: .down) { handleKey(.upArrow, modifiers: $0.modifiers) }
+            .onKeyPress(.downArrow, phases: .down) { handleKey(.downArrow, modifiers: $0.modifiers) }
+            .onKeyPress(.space, phases: .down) { handleKey(.space, modifiers: $0.modifiers) }
+            .onKeyPress(.delete, phases: .down) { handleKey(.delete, modifiers: $0.modifiers) }
+            .onKeyPress(.deleteForward, phases: .down) { handleKey(.forwardDelete, modifiers: $0.modifiers) }
+            .onKeyPress(.escape, phases: .down) { handleKey(.escape, modifiers: $0.modifiers) }
+            .onKeyPress("d", phases: .down) { handleKey(.character("d"), modifiers: $0.modifiers) }
+            .onKeyPress("z", phases: .down) { handleKey(.character("z"), modifiers: $0.modifiers) }
+            .onKeyPress("=", phases: .down) { handleKey(.character("="), modifiers: $0.modifiers) }
+            .onKeyPress("+", phases: .down) { handleKey(.character("+"), modifiers: $0.modifiers) }
+            .onKeyPress("-", phases: .down) { handleKey(.character("-"), modifiers: $0.modifiers) }
             .onAppear {
                 syncToolbarState()
             }
+            .background(DocumentKeyEventMonitor(interaction: interaction))
             .background(
                 SessionAutosaveWatcher(
                     regions: regions, stretch: stretch, colorMap: colorMap, drawMode: drawMode,
@@ -234,6 +202,15 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
+    }
+
+    private func handleKey(_ key: KeyEvent.Key, modifiers: EventModifiers) -> KeyPress.Result {
+        var input: PointerEvent.Modifiers = []
+        if modifiers.contains(.shift) { input.insert(.shift) }
+        if modifiers.contains(.command) { input.insert(.primary) }
+        if modifiers.contains(.option) { input.insert(.option) }
+        if modifiers.contains(.control) { input.insert(.control) }
+        return interaction.key(KeyEvent(key: key, modifiers: input)) ? .handled : .ignored
     }
 
     /// Aggregate of every value that should trigger a toolbar refresh. Hashable
@@ -448,6 +425,7 @@ struct FITSImageView: View {
     let stretch: ImageStretch
     let colorMap: ColorMap
     let viewport: ImageViewState
+    let interaction: InteractionController
     let showWCSGrid: Bool
     let showCompass: Bool
     let showColorBar: Bool
@@ -485,6 +463,7 @@ struct FITSImageView: View {
                     imageRevision: imageRevision,
                     viewport: viewport,
                     drawMode: drawMode,
+                    interactionController: interaction,
                     regions: regions,
                     wcs: wcs,
                     onCursorChange: onCursorChange,
@@ -878,6 +857,7 @@ extension DocumentView {
             stretch: stretch,
             colorMap: colorMap,
             viewport: viewport,
+            interaction: interaction,
             showWCSGrid: showWCSGrid,
             showCompass: showCompass,
             showColorBar: showColorBar,
