@@ -12,11 +12,30 @@ public enum WCSReproject {
         targetWidth: Int,
         targetHeight: Int
     ) -> FITSImage {
-        let sourcePixels = source.normalizedFloat32()
+        try! reprojectCheckingCancellation(
+            source: source, sourceWCS: sourceWCS, targetWCS: targetWCS,
+            targetWidth: targetWidth, targetHeight: targetHeight, checkCancellation: {}
+        )
+    }
+
+    /// Reprojects while checking for cancellation during the target pixel loop.
+    public static func reprojectCheckingCancellation(
+        source: FITSImage,
+        sourceWCS: WCS,
+        targetWCS: WCS,
+        targetWidth: Int,
+        targetHeight: Int,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> FITSImage {
+        try checkCancellation()
+        let sourcePixels = try source.normalizedFloat32CheckingCancellation(
+            checkCancellation: checkCancellation)
         let sw = source.width, sh = source.height
         var out = [Float](repeating: .nan, count: targetWidth * targetHeight)
         for ty in 0..<targetHeight {
+            try checkCancellation()
             for tx in 0..<targetWidth {
+                if tx > 0 && tx % 256 == 0 { try checkCancellation() }
                 guard let sky = targetWCS.pixelToSky(imageX: tx, imageY: ty) else {
                     continue
                 }

@@ -171,20 +171,57 @@ public enum PixelStatistics {
     }
 
     public static func sigmaClippedOptional(_ values: [Double], sigma: Double, iterations: Int) -> SigmaClipped? {
-        var keep = values.filter { !$0.isNaN }
+        try! sigmaClippedOptionalCheckingCancellation(
+            values, sigma: sigma, iterations: iterations, checkCancellation: {})
+    }
+
+    public static func sigmaClippedOptionalCheckingCancellation(
+        _ values: [Double], sigma: Double, iterations: Int,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> SigmaClipped? {
+        try checkCancellation()
+        var keep: [Double] = []
+        keep.reserveCapacity(values.count)
+        for (index, value) in values.enumerated() {
+            if index & 8_191 == 0 { try checkCancellation() }
+            if !value.isNaN { keep.append(value) }
+        }
         guard !keep.isEmpty else { return nil }
-        for _ in 0..<iterations {
-            let mean = keep.reduce(0, +) / Double(keep.count)
-            let varSum = keep.reduce(0) { $0 + ($1 - mean) * ($1 - mean) }
+        for _ in 0..<max(0, iterations) {
+            var sum = 0.0
+            for (index, value) in keep.enumerated() {
+                if index & 8_191 == 0 { try checkCancellation() }
+                sum += value
+            }
+            let mean = sum / Double(keep.count)
+            var varSum = 0.0
+            for (index, value) in keep.enumerated() {
+                if index & 8_191 == 0 { try checkCancellation() }
+                varSum += (value - mean) * (value - mean)
+            }
             let std = (varSum / Double(Swift.max(keep.count - 1, 1))).squareRoot()
             let lo = mean - sigma * std, hi = mean + sigma * std
-            let filtered = keep.filter { $0 >= lo && $0 <= hi }
+            var filtered: [Double] = []
+            filtered.reserveCapacity(keep.count)
+            for (index, value) in keep.enumerated() {
+                if index & 8_191 == 0 { try checkCancellation() }
+                if value >= lo && value <= hi { filtered.append(value) }
+            }
             if filtered.count == keep.count { break }
             if filtered.count < 5 { break }
             keep = filtered
         }
-        let mean = keep.reduce(0, +) / Double(keep.count)
-        let varSum = keep.reduce(0) { $0 + ($1 - mean) * ($1 - mean) }
+        var sum = 0.0
+        for (index, value) in keep.enumerated() {
+            if index & 8_191 == 0 { try checkCancellation() }
+            sum += value
+        }
+        let mean = sum / Double(keep.count)
+        var varSum = 0.0
+        for (index, value) in keep.enumerated() {
+            if index & 8_191 == 0 { try checkCancellation() }
+            varSum += (value - mean) * (value - mean)
+        }
         let std = (varSum / Double(Swift.max(keep.count - 1, 1))).squareRoot()
         return SigmaClipped(mean: mean, stddev: std, count: keep.count)
     }

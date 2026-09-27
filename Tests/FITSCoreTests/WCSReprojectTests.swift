@@ -2,6 +2,40 @@ import XCTest
 @testable import FITSCore
 
 final class WCSReprojectTests: XCTestCase {
+    private enum Stop: Error { case requested }
+
+    func testCancellableReprojectMatchesExistingOutputAndStopsDuringRows() throws {
+        let source = FITSImage.fromFloat32(pixels: (0..<100).map(Float.init),
+                                           width: 10, height: 10)
+        let wcs = try XCTUnwrap(WCS(header: parseHeader(tanHeader(
+            crpix: (5, 5), crval: (180, 0),
+            cd: (-1.0 / 3600, 0, 0, 1.0 / 3600)
+        ))))
+        let expected = WCSReproject.reproject(
+            source: source, sourceWCS: wcs, targetWCS: wcs,
+            targetWidth: 10, targetHeight: 10
+        )
+        let actual = try WCSReproject.reprojectCheckingCancellation(
+            source: source, sourceWCS: wcs, targetWCS: wcs,
+            targetWidth: 10, targetHeight: 10
+        )
+        for y in 0..<10 {
+            for x in 0..<10 {
+                XCTAssertEqual(actual.physicalValue(x: x, y: y),
+                               expected.physicalValue(x: x, y: y))
+            }
+        }
+        var checks = 0
+        XCTAssertThrowsError(try WCSReproject.reprojectCheckingCancellation(
+            source: source, sourceWCS: wcs, targetWCS: wcs,
+            targetWidth: 10, targetHeight: 10,
+            checkCancellation: {
+                checks += 1
+                if checks == 3 { throw Stop.requested }
+            }
+        )) { XCTAssertTrue($0 is Stop) }
+    }
+
     func testReprojectOntoSameWCSPreservesPixelValuesWithinBilinearTolerance() throws {
         let pixels: [Float] = (0..<100).map { Float($0) }   // 10×10 ramp
         let source = FITSImage.fromFloat32(pixels: pixels, width: 10, height: 10)

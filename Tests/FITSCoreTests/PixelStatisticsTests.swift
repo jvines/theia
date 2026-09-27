@@ -188,6 +188,29 @@ final class PixelStatisticsTests: XCTestCase {
         XCTAssertNil(PixelStatistics.sigmaClippedOptional([.nan, .nan], sigma: 3, iterations: 3))
     }
 
+    func testCancellableSigmaClipMatchesExistingResult() throws {
+        let values = [Double](repeating: 10, count: 10_000) + [12, .nan, 1_000]
+        let expected = PixelStatistics.sigmaClippedOptional(values, sigma: 3, iterations: 5)
+        let actual = try PixelStatistics.sigmaClippedOptionalCheckingCancellation(
+            values, sigma: 3, iterations: 5
+        )
+        XCTAssertEqual(actual, expected)
+    }
+
+    func testSigmaClipChecksCancellationDuringFullImageScan() {
+        enum Stop: Error { case requested }
+        let values = [Double](repeating: 10, count: 20_000)
+        var checks = 0
+        XCTAssertThrowsError(try PixelStatistics.sigmaClippedOptionalCheckingCancellation(
+            values, sigma: 3, iterations: 5,
+            checkCancellation: {
+                checks += 1
+                if checks == 3 { throw Stop.requested }
+            }
+        )) { XCTAssertTrue($0 is Stop) }
+        XCTAssertEqual(checks, 3)
+    }
+
     func testPercentilesSwappedBoundsSwapsThem() {
         let values = (1...10).map(Double.init)
         let r = PixelStatistics.percentiles(values, lower: 99, upper: 1)

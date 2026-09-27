@@ -140,11 +140,21 @@ public struct FITSImage: Sendable {
     /// Returns the image as a row-major `Float32` buffer suitable for upload to a
     /// Metal texture or other GPU pipeline. NaN is preserved (from BLANK or float NaN).
     public func normalizedFloat32() -> [Float] {
+        try! normalizedFloat32CheckingCancellation(checkCancellation: {})
+    }
+
+    public func normalizedFloat32CheckingCancellation(
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [Float] {
+        try checkCancellation()
         var out = [Float]()
         out.reserveCapacity(width * height)
+        var index = 0
         for y in 0..<height {
             for x in 0..<width {
+                if index & 8_191 == 0 { try checkCancellation() }
                 out.append(Float(physicalValue(x: x, y: y)))
+                index += 1
             }
         }
         return out

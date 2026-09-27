@@ -40,13 +40,25 @@ public enum ImageArithmetic {
     }
 
     public static func combined(_ a: FITSImage, _ b: FITSImage, op: BinaryOp) throws -> FITSImage {
+        try combinedCheckingCancellation(a, b, op: op, checkCancellation: {})
+    }
+
+    /// Performs a binary operation, checking for cancellation during the pixel loop.
+    public static func combinedCheckingCancellation(
+        _ a: FITSImage, _ b: FITSImage, op: BinaryOp,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> FITSImage {
         guard a.width == b.width, a.height == b.height else {
             throw ArithmeticError.dimensionMismatch
         }
-        let aPx = a.normalizedFloat32()
-        let bPx = b.normalizedFloat32()
+        try checkCancellation()
+        let aPx = try a.normalizedFloat32CheckingCancellation(
+            checkCancellation: checkCancellation)
+        let bPx = try b.normalizedFloat32CheckingCancellation(
+            checkCancellation: checkCancellation)
         var out = [Float](repeating: 0, count: aPx.count)
         for i in 0..<aPx.count {
+            if i > 0 && i % 256 == 0 { try checkCancellation() }
             let av = aPx[i], bv = bPx[i]
             if av.isNaN || bv.isNaN {
                 out[i] = (op == .mask && bv.isNaN) ? av : .nan
@@ -64,9 +76,20 @@ public enum ImageArithmetic {
     }
 
     public static func unary(_ image: FITSImage, op: UnaryOp) -> FITSImage {
-        let px = image.normalizedFloat32()
+        try! unaryCheckingCancellation(image, op: op, checkCancellation: {})
+    }
+
+    /// Performs a unary operation, checking for cancellation during the pixel loop.
+    public static func unaryCheckingCancellation(
+        _ image: FITSImage, op: UnaryOp,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> FITSImage {
+        try checkCancellation()
+        let px = try image.normalizedFloat32CheckingCancellation(
+            checkCancellation: checkCancellation)
         var out = [Float](repeating: 0, count: px.count)
         for i in 0..<px.count {
+            if i > 0 && i % 256 == 0 { try checkCancellation() }
             let v = px[i]
             if v.isNaN { out[i] = .nan; continue }
             switch op {
