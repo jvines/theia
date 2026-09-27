@@ -1161,6 +1161,61 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testBinQueuedAfterUnaryUsesTheCalculatedPixels() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertNil(session.perform(.bin(2), origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.displayed?.width, 1)
+            XCTAssertEqual(session.displayed?.height, 1)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 3.5)
+            XCTAssertEqual(session.derived?.label, "Binned 2×2")
+            XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
+        }
+    }
+
+    func testStackReadsTheReferenceAfterEarlierImageJob() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            let other = FITSImage.fromFloat32(pixels: [10, 10, 10, 10],
+                                               width: 2, height: 2)
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertNil(session.stack(with: [other], mode: .sum).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.displayed?.physicalValue(x: 1, y: 1), 19)
+            XCTAssertEqual(session.derived?.label, "Stack Sum of 2 windows")
+            XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
+        }
+    }
+
+    func testCropSelectionRunsOnTheImageProducedByEarlierJob() async throws {
+        let session = try await MainActor.run { try makeReprojectionSession() }
+        await MainActor.run {
+            let region = Region(
+                shape: .box(center: .init(x: 2, y: 1.5),
+                            width: .init(value: 1, unit: .pixel),
+                            height: .init(value: 2, unit: .pixel), angle: 0),
+                frame: .image
+            )
+            session.regionList.add(region)
+            XCTAssertNil(session.perform(.reproject(2), origin: .user).failure)
+            XCTAssertNil(session.perform(.cropToSelection, origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.displayed?.width, 1)
+            XCTAssertEqual(session.displayed?.height, 2)
+            XCTAssertEqual(session.derived?.label, "Crop 1,0 → 1,1")
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0) ?? .nan,
+                           2, accuracy: 1e-3)
+        }
+    }
+
     func testBlinkPartnerSkipsDifferentShapesAndNonImages() async throws {
         try await MainActor.run {
         let session = try makeSession()

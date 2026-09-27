@@ -59,6 +59,10 @@ public enum SessionCommand: Sendable, Equatable {
     case binary(ImageArithmetic.BinaryOp, Int)
     case subtractBackground
     case reproject(Int)
+    case bin(Int)
+    case cropToSelection
+    case collapseCube(FITSImage.CollapseMode)
+    case applySlab(from: Int, to: Int)
     case detectSources
     case fetchCatalog
     case addRegion(Region)
@@ -129,6 +133,10 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case catalogFetchInProgress
     case invalidFilter
     case imageDimensionMismatch
+    case invalidBinFactor
+    case invalidSlabRange(from: Int, to: Int)
+    case noSelectedRegion
+    case insufficientStackImages
 
     public var message: String {
         switch self {
@@ -163,6 +171,10 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .catalogFetchInProgress: "A catalog fetch is already in progress"
         case .invalidFilter: "Filter size or sigma is invalid"
         case .imageDimensionMismatch: "Images must have the same dimensions"
+        case .invalidBinFactor: "Binning factor must be at least two"
+        case .invalidSlabRange(let from, let to): "Invalid slab range \(from)…\(to)"
+        case .noSelectedRegion: "Select a region to crop"
+        case .insufficientStackImages: "Stack requires at least two open images"
         }
     }
 }
@@ -326,6 +338,36 @@ extension DocumentSession {
                     return CommandOutcome(failure: .noDisplayedWCS)
                 }
                 queueImageOperation(.reproject(referenceHDU))
+            case .bin(let factor):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard factor >= 2 else { return CommandOutcome(failure: .invalidBinFactor) }
+                queueImageOperation(.bin(factor))
+            case .cropToSelection:
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard let selectedRegionIndex,
+                      regions.indices.contains(selectedRegionIndex) else {
+                    return CommandOutcome(failure: .noSelectedRegion)
+                }
+                queueImageOperation(.cropToRegion(regions[selectedRegionIndex]))
+            case .collapseCube(let mode):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard file.hdus[hdu].naxis == 3, facts[hdu].isDisplayableImage,
+                      displayed != nil else {
+                    return CommandOutcome(failure: .unavailableCube)
+                }
+                queueImageOperation(.collapseCube(hdu: hdu, mode: mode))
+            case .applySlab(let from, let to):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard file.hdus[hdu].naxis == 3, facts[hdu].isDisplayableImage,
+                      displayed != nil else {
+                    return CommandOutcome(failure: .unavailableCube)
+                }
+                guard from >= 0, from <= to, to < facts[hdu].planeCount else {
+                    return CommandOutcome(failure: .invalidSlabRange(from: from, to: to))
+                }
+                queueImageOperation(.slab(hdu: hdu, from: from, to: to))
             case .detectSources:
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
                 guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }

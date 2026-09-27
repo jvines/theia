@@ -128,6 +128,68 @@ final class ImageOperationsTests: XCTestCase {
                                                targetWidth: 0, targetHeight: 2, targetHDU: 5))
     }
 
+    func testRegionCropUsesImageFrameGeometryAndDisplayedWCS() throws {
+        let image = FITSImage.fromFloat32(pixels: (0..<25).map(Float.init),
+                                           width: 5, height: 5)
+        let wcs = try makeWCS()
+        let region = Region(
+            shape: .box(center: .init(x: 3, y: 3),
+                        width: .init(value: 3, unit: .pixel),
+                        height: .init(value: 3, unit: .pixel), angle: 0),
+            frame: .image
+        )
+        let result = try XCTUnwrap(ImageOperations.cropToRegion(image, wcs: wcs,
+                                                                region: region))
+        XCTAssertEqual(result.image.width, 3)
+        XCTAssertEqual(result.image.height, 3)
+        XCTAssertEqual(result.image.physicalValue(x: 0, y: 0), 6)
+        XCTAssertEqual(result.image.physicalValue(x: 2, y: 2), 18)
+        let originalSky = try XCTUnwrap(wcs.pixelToSky(imageX: 1, imageY: 1))
+        let croppedSky = try XCTUnwrap(result.wcs?.pixelToSky(imageX: 0, imageY: 0))
+        XCTAssertEqual(croppedSky.ra, originalSky.ra, accuracy: 1e-9)
+        XCTAssertEqual(croppedSky.dec, originalSky.dec, accuracy: 1e-9)
+    }
+
+    func testCancellableBinAndRegionCropStopInsideLargePixelLoops() {
+        enum Stop: Error { case requested }
+        let image = FITSImage.fromFloat32(
+            pixels: [Float](repeating: 1, count: 512 * 512), width: 512, height: 512
+        )
+        let region = Region(
+            shape: .circle(center: .init(x: 256, y: 256),
+                           radius: .init(value: 200, unit: .pixel)),
+            frame: .image
+        )
+        func check() -> () throws -> Void {
+            var calls = 0
+            return {
+                calls += 1
+                if calls == 3 { throw Stop.requested }
+            }
+        }
+        XCTAssertThrowsError(try ImageOperations.binCheckingCancellation(
+            image, wcs: nil, factor: 2, checkCancellation: check()
+        )) { XCTAssertTrue($0 is Stop) }
+        XCTAssertThrowsError(try ImageOperations.cropToRegionCheckingCancellation(
+            image, wcs: nil, region: region, checkCancellation: check()
+        )) { XCTAssertTrue($0 is Stop) }
+    }
+
+    func testStackCanBeCancelledInsidePixelLoop() {
+        enum Stop: Error { case requested }
+        let image = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 512 * 512),
+                                          width: 512, height: 512)
+        var checks = 0
+        XCTAssertThrowsError(try ImageOperations.stackCheckingCancellation(
+            [image, image], referenceWCS: nil, mode: .sum,
+            checkCancellation: {
+                checks += 1
+                if checks == 3 { throw Stop.requested }
+            }
+        )) { XCTAssertTrue($0 is Stop) }
+        XCTAssertGreaterThan(checks, 2)
+    }
+
     private func makeWCS() throws -> WCS {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    0",

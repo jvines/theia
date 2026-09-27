@@ -13,9 +13,8 @@ public enum FilterSpec: Sendable, Equatable {
     case gaussian(sigma: Double)
 }
 
-/// The Tools menu's image operations are still carried out by the Mac shell.
-/// This typed intent keeps the menu structure and enablement in the shared layer
-/// while those operations move into DocumentSession in migration step 8.
+/// Typed Tools menu intents used by both platform shells. Image calculations
+/// run through DocumentSession's ordered job queue.
 public enum ToolMenuAction: Sendable, Equatable {
     case collapse(FITSImage.CollapseMode)
     case extractSlab
