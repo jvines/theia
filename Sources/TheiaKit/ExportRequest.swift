@@ -273,6 +273,7 @@ extension DocumentSession {
     public func close() {
         isClosed = true
         cancelSourceDetection()
+        cancelCatalogFetch()
         pendingRequests.removeAll()
         acceptedRegionLoad = nil
     }

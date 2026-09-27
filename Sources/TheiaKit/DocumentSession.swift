@@ -57,6 +57,7 @@ public struct HDUFacts {
     public let id = UUID()
     public let url: URL
     public let file: FITSFile
+    @ObservationIgnored private let catalogClient: CatalogClient?
     public let facts: [HDUFacts]
     public let view: ImageViewState
     public let headerEditor = HeaderEditor()
@@ -117,6 +118,8 @@ public struct HDUFacts {
     public var catalogFetchInProgress = false {
         didSet { if catalogFetchInProgress != oldValue { emit(.jobStatusChanged) } }
     }
+    public private(set) var catalogNoticeID = 0
+    public private(set) var catalogErrorMessage: String?
     public private(set) var sourceDetectionNoticeID = 0
     public private(set) var sourceDetectionNoticeTitle: String?
     public private(set) var sourceDetectionNoticeMessage: String?
@@ -151,11 +154,13 @@ public struct HDUFacts {
     @ObservationIgnored var pendingRequests: [UUID: PendingRequest] = [:]
     @ObservationIgnored var isClosed = false
 
-    public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
+    public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear,
+                colorMap: ColorMap = .gray, catalogClient: CatalogClient? = nil) {
         let fileFacts = file.hdus.map(HDUFacts.init)
         let initialHDU = file.firstImageHDUIndex ?? 0
         self.url = url
         self.file = file
+        self.catalogClient = catalogClient
         self.facts = fileFacts
         self.hdu = initialHDU
         self.sourceWCSVariant = fileFacts[initialHDU].wcsVariants.first ?? ""
@@ -351,6 +356,65 @@ public struct HDUFacts {
 
     func cancelSourceDetection() { jobs.cancel(kind: .sourceDetection) }
 
+    private struct CatalogJobOutput: Sendable {
+        let regions: [Region]
+        let error: String?
+    }
+
+    func startCatalogFetch() -> CommandFailure? {
+        guard !isClosed else { return .documentClosed }
+        guard let image = displayed else { return .noDisplayedImage }
+        guard let wcs = displayedWCS,
+              let search = CatalogQuery.coneSearch(
+                wcs: wcs, imageWidth: image.width, imageHeight: image.height
+              ) else { return .noDisplayedWCS }
+        guard let catalogClient else { return .catalogUnavailable }
+        guard !catalogFetchInProgress else { return .catalogFetchInProgress }
+        catalogErrorMessage = nil
+        catalogFetchInProgress = true
+        let revision = imageRevision
+        let origin = eventOrigin
+        let echoTag = eventEchoTag
+        jobs.enqueue(
+            kind: .catalog, imageRevision: revision,
+            currentRevision: { [weak self] in
+                guard let self, !self.isClosed else { return -1 }
+                return self.imageRevision
+            },
+            work: {
+                do {
+                    let sources = try await catalogClient.fetchGaia(
+                        centerRA: search.centerRA,
+                        centerDec: search.centerDec,
+                        radiusDeg: search.radiusDeg, limit: 1000
+                    )
+                    return CatalogJobOutput(regions: CatalogRegions.fromGaia(sources), error: nil)
+                } catch {
+                    return CatalogJobOutput(regions: [], error: error.localizedDescription)
+                }
+            },
+            apply: { [weak self] (result: CatalogJobOutput) in
+                guard let self else { return }
+                self.withEventContext(origin: origin, echoTag: echoTag) {
+                    self.catalogFetchInProgress = false
+                    if let error = result.error {
+                        self.catalogErrorMessage = error
+                        self.catalogNoticeID &+= 1
+                    } else if !result.regions.isEmpty {
+                        self.regionList.replace(self.regions + result.regions,
+                                                selection: self.selectedRegionIndex)
+                    }
+                }
+            }
+        )
+        return nil
+    }
+
+    func cancelCatalogFetch() {
+        jobs.cancel(kind: .catalog)
+        catalogFetchInProgress = false
+    }
+
     public func idle() async { await jobs.idle() }
 
     /// The next image HDU of the same width and height, wrapping at the end.
@@ -416,6 +480,7 @@ public struct HDUFacts {
     public func selectHDU(_ index: Int) {
         guard facts.indices.contains(index), index != hdu else { return }
         jobs.cancel(kind: .sourceDetection)
+        cancelCatalogFetch()
         if playing {
             playing = false
             emit(.playbackChanged)
@@ -435,6 +500,7 @@ public struct HDUFacts {
               index >= 0, index < facts[hdu].planeCount,
               index != plane || derived != nil else { return }
         jobs.cancel(kind: .sourceDetection)
+        cancelCatalogFetch()
         plane = index
         derived = nil
         view.display(sourceImage(), revision: imageRevision &+ 1)
@@ -446,6 +512,7 @@ public struct HDUFacts {
     public func selectWCSVariant(_ variant: String) {
         guard derived == nil, facts[hdu].wcsVariants.contains(variant),
               variant != sourceWCSVariant else { return }
+        cancelCatalogFetch()
         sourceWCSVariant = variant
         emit(.displayParametersChanged)
     }
@@ -453,6 +520,7 @@ public struct HDUFacts {
     public func setDerived(_ image: DerivedImage?) {
         guard derived != image else { return }
         jobs.cancel(kind: .sourceDetection)
+        cancelCatalogFetch()
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
         recomputeContours()

@@ -29,7 +29,8 @@ import TheiaKit
         self.session = DocumentSession(
             url: url, file: file,
             stretch: UserPreferences.shared.defaultStretch,
-            colorMap: UserPreferences.shared.defaultColorMap
+            colorMap: UserPreferences.shared.defaultColorMap,
+            catalogClient: AppCatalog.client
         )
         let savedData = try? Data(contentsOf: SessionState.sidecarURL(for: url))
         self.restoredState = savedData.flatMap { try? SessionState.fromJSON($0) }

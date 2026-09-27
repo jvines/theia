@@ -17,8 +17,8 @@ public enum CatalogQuery {
         return 2 * atan2(h.squareRoot(), (1 - h).squareRoot()) * 180 / .pi
     }
 
-    /// Image WCS + dimensions → centre (deg) + bounding-circle radius (deg) suitable
-    /// for a TAP cone search.
+    /// Image WCS + dimensions → ICRS centre (deg) + bounding-circle radius
+    /// (deg) suitable for Gaia's ICRS TAP cone search.
     public static func coneSearch(
         wcs: WCS,
         imageWidth: Int,
@@ -26,7 +26,12 @@ public enum CatalogQuery {
     ) -> (centerRA: Double, centerDec: Double, radiusDeg: Double)? {
         let cx = imageWidth / 2
         let cy = imageHeight / 2
-        guard let centre = wcs.pixelToSky(imageX: cx, imageY: cy) else { return nil }
+        guard let nativeCentre = wcs.pixelToSky(imageX: cx, imageY: cy) else { return nil }
+        let centre = CelestialTransform.convert(
+            lon: nativeCentre.ra, lat: nativeCentre.dec,
+            from: wcs.nativeFrame, to: .icrs
+        )
+        guard centre.lon.isFinite, centre.lat.isFinite else { return nil }
         let corners: [(Int, Int)] = [
             (0, 0), (imageWidth - 1, 0),
             (0, imageHeight - 1), (imageWidth - 1, imageHeight - 1),
@@ -34,10 +39,12 @@ public enum CatalogQuery {
         var maxDist = 0.0
         for (x, y) in corners {
             guard let p = wcs.pixelToSky(imageX: x, imageY: y) else { continue }
-            let d = angularDistance(ra1: centre.ra, dec1: centre.dec, ra2: p.ra, dec2: p.dec)
+            // Angular distance is unchanged by rotating between celestial frames.
+            let d = angularDistance(ra1: nativeCentre.ra, dec1: nativeCentre.dec,
+                                    ra2: p.ra, dec2: p.dec)
             if d > maxDist { maxDist = d }
         }
-        return (centre.ra, centre.dec, maxDist)
+        return (centre.lon, centre.lat, maxDist)
     }
 
     /// Builds an ADQL query for a Gaia DR3 cone search on the ESA Gaia archive TAP.

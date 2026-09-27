@@ -45,6 +45,23 @@ final class CatalogQueryTests: XCTestCase {
         XCTAssertEqual(cs.radiusDeg, 70.7 / 3600, accuracy: 0.001)
     }
 
+    func testConeSearchConvertsGalacticCenterToICRSForGaia() throws {
+        let cards = tanHeader(
+            crpix: (2, 2), crval: (0, 0), cd: (-0.1, 0, 0, 0.1)
+        ).map {
+            $0.replacingOccurrences(of: "RA---TAN", with: "GLON-TAN")
+              .replacingOccurrences(of: "DEC--TAN", with: "GLAT-TAN")
+        }
+        let wcs = try XCTUnwrap(WCS(header: parseHeader(cards)))
+        XCTAssertEqual(wcs.nativeFrame, .galactic)
+        let cone = try XCTUnwrap(CatalogQuery.coneSearch(
+            wcs: wcs, imageWidth: 3, imageHeight: 3
+        ))
+        XCTAssertEqual(cone.centerRA, 266.405, accuracy: 0.01)
+        XCTAssertEqual(cone.centerDec, -28.936, accuracy: 0.01)
+        XCTAssertGreaterThan(cone.radiusDeg, 0.1)
+    }
+
     func testBuildGaiaConeSearchADQLContainsCircle() {
         let query = CatalogQuery.gaiaConeSearchADQL(
             centerRA: 180.0,

@@ -70,7 +70,6 @@ struct DocumentView: View {
     }
     private var isFetchingCatalog: Bool {
         get { session.catalogFetchInProgress }
-        nonmutating set { session.catalogFetchInProgress = newValue }
     }
     private var planePlaying: Bool {
         get { session.playing }
@@ -212,6 +211,14 @@ struct DocumentView: View {
                 alert.messageText = title
                 alert.informativeText = message
                 alert.alertStyle = .informational
+                alert.runModal()
+            }
+            .onChange(of: session.catalogNoticeID) { _, _ in
+                guard let message = session.catalogErrorMessage else { return }
+                let alert = NSAlert()
+                alert.messageText = "Catalog fetch failed"
+                alert.informativeText = message
+                alert.alertStyle = .warning
                 alert.runModal()
             }
     }
@@ -787,7 +794,13 @@ extension DocumentView {
         toolbarState.hasMultipleHDUs = document.file.hdus.count >= 2
         toolbarState.onEffect           = { effect in applyEffect(effect) }
         toolbarState.onReproject        = { reproject(onto: $0) }
-        toolbarState.onFetchCatalog     = { Task { await fetchCatalog() } }
+        toolbarState.onFetchCatalog     = {
+            let outcome = session.perform(.fetchCatalog, origin: .user)
+            if let failure = outcome.failure {
+                applyEffect(.alert(title: "Catalog fetch failed", message: failure.message,
+                                   style: .warning))
+            }
+        }
         toolbarState.onOpenScaleParameters = { performAndApply(.showPanel(.scaleParameters)) }
         toolbarState.onOpenPixelTable = { performAndApply(.showPanel(.pixelTable)) }
         toolbarState.onOpenContourLevels = { performAndApply(.showPanel(.contourLevels)) }
@@ -1557,42 +1570,6 @@ extension DocumentView {
             wcs: targetWCS,
             label: "Reprojected onto HDU \(referenceIdx)"
         )
-    }
-
-    fileprivate func fetchCatalog() async {
-        guard let image = session.displayed,
-              let wcs = session.displayedWCS,
-              let cs = CatalogQuery.coneSearch(
-                  wcs: wcs, imageWidth: image.width, imageHeight: image.height
-              ) else { return }
-        await MainActor.run { isFetchingCatalog = true }
-        defer { Task { @MainActor in isFetchingCatalog = false } }
-        do {
-            let sources = try await AppCatalog.client.fetchGaia(
-                centerRA: cs.centerRA,
-                centerDec: cs.centerDec,
-                radiusDeg: cs.radiusDeg,
-                limit: 1000
-            )
-            let new = sources.map { s -> Region in
-                // Brighter sources get a slightly larger marker (4–10 px).
-                let mag = s.gMag ?? 20
-                let radius = max(2, min(8, 16 - mag / 2))
-                var attrs: [String: String] = ["color": "cyan", "tag": "Gaia"]
-                if let mag = s.gMag {
-                    attrs["text"] = String(format: "G=%.1f", mag)
-                }
-                return Region(
-                    shape: .circle(center: .init(x: s.ra, y: s.dec),
-                                   radius: .init(value: radius, unit: .pixel)),
-                    frame: .fk5,
-                    attributes: attrs
-                )
-            }
-            await MainActor.run { regions.append(contentsOf: new) }
-        } catch {
-            NSLog("Catalog fetch failed: \(error.localizedDescription)")
-        }
     }
 
 }

@@ -1355,6 +1355,77 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testCatalogCommandAppendsOneUndoableBatchAndReportsFailures() async throws {
+        let csv = "ra,dec,phot_g_mean_mag\n12.5,-3.25,10.0\n14.0,2.0,\n"
+        let client = CatalogClient(transport: FixedCatalogTransport(
+            response: CatalogHTTPResponse(data: Data(csv.utf8), statusCode: 200)
+        ))
+        let session = try await MainActor.run { try makeSession(catalogClient: client) }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.fetchCatalog, origin: .user).failure)
+            XCTAssertTrue(session.catalogFetchInProgress)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertFalse(session.catalogFetchInProgress)
+            XCTAssertEqual(session.regions.count, 2)
+            XCTAssertEqual(session.regions[0].frame, .fk5)
+            XCTAssertNil(session.perform(.undoRegions, origin: .user).failure)
+            XCTAssertTrue(session.regions.isEmpty)
+        }
+
+        let failing = CatalogClient(transport: FixedCatalogTransport(
+            response: CatalogHTTPResponse(data: Data("failure".utf8), statusCode: 503)
+        ))
+        let failedSession = try await MainActor.run { try makeSession(catalogClient: failing) }
+        await MainActor.run {
+            XCTAssertNil(failedSession.perform(.fetchCatalog, origin: .user).failure)
+        }
+        await failedSession.idle()
+        await MainActor.run {
+            XCTAssertFalse(failedSession.catalogFetchInProgress)
+            XCTAssertTrue(failedSession.regions.isEmpty)
+            XCTAssertEqual(failedSession.catalogNoticeID, 1)
+            XCTAssertTrue(failedSession.catalogErrorMessage?.contains("503") ?? false)
+        }
+    }
+
+    func testCatalogJobDiscardsStaleImageAndRejectsMissingWCS() async throws {
+        let csv = "ra,dec,phot_g_mean_mag\n12.5,-3.25,10.0\n"
+        let client = CatalogClient(transport: FixedCatalogTransport(
+            response: CatalogHTTPResponse(data: Data(csv.utf8), statusCode: 200)
+        ))
+        let session = try await MainActor.run { try makeSession(catalogClient: client) }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.fetchCatalog, origin: .user).failure)
+            session.selectPlane(1)
+            XCTAssertFalse(session.catalogFetchInProgress)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertTrue(session.regions.isEmpty)
+            session.selectPlane(0)
+            XCTAssertNil(session.perform(.fetchCatalog, origin: .user).failure)
+            session.selectWCSVariant("A")
+            XCTAssertFalse(session.catalogFetchInProgress)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertTrue(session.regions.isEmpty)
+            session.selectHDU(3)
+            XCTAssertEqual(session.perform(.fetchCatalog, origin: .user).failure,
+                           .noDisplayedWCS)
+            session.selectHDU(1)
+            XCTAssertNil(session.perform(.fetchCatalog, origin: .user).failure)
+            session.close()
+            XCTAssertFalse(session.catalogFetchInProgress)
+            XCTAssertEqual(session.perform(.fetchCatalog, origin: .user).failure,
+                           .documentClosed)
+        }
+        await session.idle()
+        await MainActor.run { XCTAssertTrue(session.regions.isEmpty) }
+    }
+
     func testInspectorSelectionAndCatalogStatusStayWithDocument() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -1481,7 +1552,7 @@ final class DocumentSessionTests: XCTestCase {
     }
 
     @MainActor
-    private func makeSession() throws -> DocumentSession {
+    private func makeSession(catalogClient: CatalogClient? = nil) throws -> DocumentSession {
         var data = Data()
         appendHDU(&data, cards: ["SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    0"], pixels: [])
         appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2) + wcsCards(suffix: "", ra: 10) + wcsCards(suffix: "A", ra: 20), pixels: Array(0..<8).map(UInt8.init))
@@ -1489,7 +1560,8 @@ final class DocumentSessionTests: XCTestCase {
         appendHDU(&data, cards: imageCards(width: 3, height: 2), pixels: [1, 2, 3, 4, 5, 6])
         appendHDU(&data, cards: ["XTENSION= 'BINTABLE'", "BITPIX  =                    8", "NAXIS   =                    2", "NAXIS1  =                    0", "NAXIS2  =                    0", "PCOUNT  =                    0", "GCOUNT  =                    1", "TFIELDS =                    0"], pixels: [])
         appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2, fourthAxis: 2), pixels: Array(0..<16).map(UInt8.init))
-        return DocumentSession(url: URL(fileURLWithPath: "/tmp/session.fits"), file: try FITSFile(data: data))
+        return DocumentSession(url: URL(fileURLWithPath: "/tmp/session.fits"),
+                               file: try FITSFile(data: data), catalogClient: catalogClient)
     }
 
     @MainActor
@@ -1536,4 +1608,10 @@ final class DocumentSessionTests: XCTestCase {
 
 @MainActor private final class EventRecorder {
     var events: [SessionEvent] = []
+}
+
+private struct FixedCatalogTransport: CatalogTransport {
+    let response: CatalogHTTPResponse
+
+    func get(_ url: URL, timeout: TimeInterval) async throws -> CatalogHTTPResponse { response }
 }

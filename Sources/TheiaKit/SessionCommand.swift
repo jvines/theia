@@ -55,6 +55,7 @@ public enum SessionCommand: Sendable, Equatable {
     case setContourSpec(ContourSpec)
     case setProfileRadius(Double)
     case detectSources
+    case fetchCatalog
     case addRegion(Region)
     case updateRegion(Int, Region)
     case updateRegionDuringEdit(UUID, Int, Region)
@@ -118,6 +119,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case staleRequest
     case unavailableProfileMarker
     case invalidProfileRadius
+    case noDisplayedWCS
+    case catalogUnavailable
+    case catalogFetchInProgress
 
     public var message: String {
         switch self {
@@ -147,6 +151,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .staleRequest: "Source image changed before the request was answered"
         case .unavailableProfileMarker: "No radial or growth profile marker is active"
         case .invalidProfileRadius: "Profile radius must be finite and positive"
+        case .noDisplayedWCS: "Displayed image has no usable WCS"
+        case .catalogUnavailable: "No catalog service is configured"
+        case .catalogFetchInProgress: "A catalog fetch is already in progress"
         }
     }
 }
@@ -273,6 +280,10 @@ extension DocumentSession {
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
                 guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
                 detectSources()
+            case .fetchCatalog:
+                if let failure = startCatalogFetch() {
+                    return CommandOutcome(failure: failure)
+                }
             case .addRegion(let region):
                 regionList.add(region)
             case .updateRegion(let index, let region):
