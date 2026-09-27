@@ -858,48 +858,12 @@ extension DocumentView {
     }
 
     private func handleMeasure(from: SIMD2<Double>, to: SIMD2<Double>) {
-        let dx = to.x - from.x, dy = to.y - from.y
-        let pixelDist = (dx * dx + dy * dy).squareRoot()
-        var lines = [String(format: "Pixel distance: %.2f px", pixelDist)]
-        if let wcs = session.displayedWCS,
-           let s = wcs.pixelToSky(imageX: Int(from.x.rounded()), imageY: Int(from.y.rounded())),
-           let e = wcs.pixelToSky(imageX: Int(to.x.rounded()), imageY: Int(to.y.rounded())) {
-            let arcsec = haversineArcsec(ra1: s.ra, dec1: s.dec, ra2: e.ra, dec2: e.dec)
-            let pa = positionAngleDeg(ra1: s.ra, dec1: s.dec, ra2: e.ra, dec2: e.dec)
-            if arcsec < 60 {
-                lines.append(String(format: "Sky distance: %.3f″", arcsec))
-            } else if arcsec < 3600 {
-                lines.append(String(format: "Sky distance: %.3f′ (%.2f″)", arcsec / 60, arcsec))
-            } else {
-                lines.append(String(format: "Sky distance: %.4f° (%.2f′)", arcsec / 3600, arcsec / 60))
-            }
-            lines.append(String(format: "Position angle: %.2f° (E of N)", pa))
-        }
+        let measurement = Measurements.between(from: from, to: to, wcs: session.displayedWCS)
         let alert = NSAlert()
         alert.messageText = "Measurement"
-        alert.informativeText = lines.joined(separator: "\n")
+        alert.informativeText = measurement.lines.joined(separator: "\n")
         alert.alertStyle = .informational
         alert.runModal()
-    }
-
-    private func haversineArcsec(ra1: Double, dec1: Double, ra2: Double, dec2: Double) -> Double {
-        let r1 = ra1 * .pi / 180, d1 = dec1 * .pi / 180
-        let r2 = ra2 * .pi / 180, d2 = dec2 * .pi / 180
-        let dlon = r2 - r1, dlat = d2 - d1
-        let a = sin(dlat / 2) * sin(dlat / 2) + cos(d1) * cos(d2) * sin(dlon / 2) * sin(dlon / 2)
-        let c = 2 * atan2(a.squareRoot(), (1 - a).squareRoot())
-        return c * 180 / .pi * 3600
-    }
-
-    private func positionAngleDeg(ra1: Double, dec1: Double, ra2: Double, dec2: Double) -> Double {
-        let r1 = ra1 * .pi / 180, d1 = dec1 * .pi / 180
-        let r2 = ra2 * .pi / 180, d2 = dec2 * .pi / 180
-        let dlon = r2 - r1
-        let y = sin(dlon) * cos(d2)
-        let x = cos(d1) * sin(d2) - sin(d1) * cos(d2) * cos(dlon)
-        var pa = atan2(y, x) * 180 / .pi
-        if pa < 0 { pa += 360 }
-        return pa
     }
 
     private func handleGrowthCurve(center: SIMD2<Double>, radius: Double) {
