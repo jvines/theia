@@ -196,6 +196,28 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testFITSAndRenderedExportCaptureTheDisplayedDerivedImage() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let derived = FITSImage.fromFloat32(pixels: [41, 42, 43, 44],
+                                                width: 2, height: 2)
+            session.setDerived(DerivedImage(image: derived, wcs: session.displayedWCS,
+                                            label: "Calibrated"))
+            let saved = session.perform(.saveImageAsFITS, origin: .user)
+            let exported = session.perform(.exportImage, origin: .user)
+            guard case .ask(_, .saveImage(let fitsSnapshot))? = saved.effects.first,
+                  case .ask(_, .exportImage(let rasterSnapshot))? = exported.effects.first else {
+                return XCTFail("Both output commands must snapshot the displayed image")
+            }
+            XCTAssertEqual(fitsSnapshot.image.physicalValue(x: 0, y: 0), 41)
+            XCTAssertEqual(rasterSnapshot.image.physicalValue(x: 1, y: 1), 44)
+            XCTAssertEqual(rasterSnapshot.imageRevision, session.imageRevision)
+            session.selectPlane(1)
+            XCTAssertEqual(fitsSnapshot.image.physicalValue(x: 0, y: 0), 41)
+            XCTAssertEqual(rasterSnapshot.image.physicalValue(x: 1, y: 1), 44)
+        }
+    }
+
     func testRegionSaveRequestRetainsTheRequestTimeRegions() async throws {
         try await MainActor.run {
             let session = try makeSession()

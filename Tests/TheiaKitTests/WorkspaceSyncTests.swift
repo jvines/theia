@@ -74,6 +74,27 @@ final class WorkspaceSyncTests: XCTestCase {
         }
     }
 
+    func testCursorSyncUsesTheSelectedAlternateWCS() async throws {
+        try await MainActor.run {
+            let source = try makeSession(name: "source", alternateCrval1: 181)
+            let target = try makeSession(name: "target", crval1: 181)
+            let workspace = Workspace()
+            workspace.register(source)
+            workspace.register(target)
+            _ = workspace.perform(.setSyncFlag(.crosshair, true), origin: .user)
+
+            source.cursor = CursorInfo(imageX: 0, imageY: 0, value: 1)
+            let primaryX = try XCTUnwrap(target.remoteCrosshair?.x)
+            XCTAssertGreaterThan(abs(primaryX), 5)
+
+            source.selectWCSVariant("A")
+            source.cursor = nil
+            source.cursor = CursorInfo(imageX: 0, imageY: 0, value: 1)
+            XCTAssertEqual(target.remoteCrosshair?.x ?? .nan, 0, accuracy: 1e-4)
+            XCTAssertEqual(target.remoteCrosshair?.y ?? .nan, 0, accuracy: 1e-4)
+        }
+    }
+
     func testCursorSyncConvertsBetweenCelestialFrames() async throws {
         try await MainActor.run {
             let icrs = try makeSession(name: "icrs")
@@ -195,8 +216,9 @@ final class WorkspaceSyncTests: XCTestCase {
 
     @MainActor private func makeSession(name: String, crpix1: Int = 1,
                                         ctype1: String = "RA---TAN", ctype2: String = "DEC--TAN",
-                                        crval1: Double = 180, crval2: Double = 0) throws -> DocumentSession {
-        let cards = [
+                                        crval1: Double = 180, crval2: Double = 0,
+                                        alternateCrval1: Double? = nil) throws -> DocumentSession {
+        var cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",
             "NAXIS   =                    2", "NAXIS1  =                    2",
             "NAXIS2  =                    2", "CTYPE1  = '\(ctype1)'",
@@ -205,6 +227,14 @@ final class WorkspaceSyncTests: XCTestCase {
             "CRVAL2  = \(crval2)", "CDELT1  =                 -0.1",
             "CDELT2  =                  0.1", "END",
         ]
+        if let alternateCrval1 {
+            cards.insert(contentsOf: [
+                "CTYPE1A = 'RA---TAN'", "CTYPE2A = 'DEC--TAN'",
+                "CRPIX1A =                    1", "CRPIX2A =                    1",
+                "CRVAL1A = \(alternateCrval1)", "CRVAL2A =                  0.0",
+                "CDELT1A =                 -0.1", "CDELT2A =                  0.1",
+            ], at: cards.count - 1)
+        }
         let header = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
         let data = Data(header.padding(toLength: 2880, withPad: " ", startingAt: 0).utf8)
             + Data([1, 2, 3, 4]) + Data(repeating: 0, count: 2876)
