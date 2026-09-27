@@ -202,6 +202,9 @@ struct DocumentView: View {
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
             .onChange(of: toolbarSyncSnapshot) { _, _ in syncToolbarState() }
+            .onChange(of: imageRevision) { _, revision in
+                pixelTableBridge.imageRevision = revision
+            }
     }
 
     private func handleKey(_ key: KeyEvent.Key, modifiers: EventModifiers) -> KeyPress.Result {
