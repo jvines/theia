@@ -1,62 +1,122 @@
-import SwiftUI
+import Foundation
+import Observation
 import FITSCore
-import FITSRender
 import TheiaKit
 
-/// Invisible helper view that owns all the `.onChange` watchers used by `DocumentView`
-/// to trigger a session autosave. Kept separate so DocumentView's body stays under
-/// the SwiftUI type-checker's complexity budget.
-struct SessionAutosaveWatcher: View {
-    let regions: [Region]
-    let stretch: ImageStretch
-    let colorMap: ColorMap
-    let drawMode: DrawMode
-    let showWCSGrid: Bool
-    let showCompass: Bool
-    let showColorBar: Bool
-    let selectedHDU: Int
-    let selectedPlane: Int
-    let contourEnabled: Bool
-    let contourCount: Int
-    let save: () -> Void
+/// Observes the session's persisted-field events and saves one snapshot after
+/// 0.5 seconds of quiet. Display pulses emit no such event.
+@MainActor @Observable
+final class SessionAutosaveWatcher {
+    private let session: DocumentSession
+    private let debounceNanoseconds: UInt64
+    private let save: (SessionState) throws -> Void
+    @ObservationIgnored private var observerID: UUID?
+    @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    @ObservationIgnored private var lastFailureCause: String?
+    @ObservationIgnored private var hasUnsavedChanges = false
+    @ObservationIgnored private var userSelectedHDU: Int
+    @ObservationIgnored private var userSelectedPlane: Int
 
-    var body: some View {
-        Color.clear
-            .onChange(of: regions.count) { _, _ in save() }
-            .onChange(of: regionDigest)  { _, _ in save() }
-            .onChange(of: stretch)       { _, _ in save() }
-            .onChange(of: colorMap)      { _, _ in save() }
-            .onChange(of: drawMode)      { _, _ in save() }
-            .onChange(of: showWCSGrid)   { _, _ in save() }
-            .onChange(of: showCompass)   { _, _ in save() }
-            .onChange(of: showColorBar)  { _, _ in save() }
-            .onChange(of: selectedHDU)   { _, _ in save() }
-            .onChange(of: selectedPlane) { _, _ in save() }
-            .onChange(of: contourEnabled){ _, _ in save() }
-            .onChange(of: contourCount)  { _, _ in save() }
+    private(set) var failureNoticeID = 0
+    private(set) var failureMessage: String?
+
+    init(session: DocumentSession, debounceNanoseconds: UInt64 = 500_000_000,
+         save: @escaping (SessionState) throws -> Void) {
+        self.session = session
+        self.debounceNanoseconds = debounceNanoseconds
+        self.save = save
+        userSelectedHDU = session.blink?.primary ?? session.hdu
+        userSelectedPlane = session.plane
     }
 
-    // Cheap-ish digest of the regions list to catch edits that don't change count.
-    private var regionDigest: Int {
-        var h = Hasher()
-        for r in regions {
-            h.combine(r.frame.rawValue)
-            switch r.shape {
-            case .circle(let c, let radius):
-                h.combine("c"); h.combine(c.x); h.combine(c.y); h.combine(radius.value); h.combine(radius.unit.rawValue)
-            case .box(let c, let w, let hh, let a):
-                h.combine("b"); h.combine(c.x); h.combine(c.y); h.combine(w.value); h.combine(hh.value); h.combine(a)
-            case .ellipse(let c, let rx, let ry, let a):
-                h.combine("e"); h.combine(c.x); h.combine(c.y); h.combine(rx.value); h.combine(ry.value); h.combine(a)
-            case .annulus(let c, let rIn, let rOut):
-                h.combine("a"); h.combine(c.x); h.combine(c.y); h.combine(rIn.value); h.combine(rOut.value)
-            case .polygon(let pts):
-                h.combine("p")
-                for p in pts { h.combine(p.x); h.combine(p.y) }
-            case .point(let p):
-                h.combine("pt"); h.combine(p.x); h.combine(p.y)
+    func start() {
+        guard observerID == nil else { return }
+        userSelectedHDU = session.blink?.primary ?? session.hdu
+        if !session.playing { userSelectedPlane = session.plane }
+        observerID = session.addEventObserver { [weak self] event in
+            guard let self, event.kind == .persistedFieldChanged else { return }
+            if !self.session.playing && self.session.blink == nil {
+                self.userSelectedHDU = self.session.hdu
+                self.userSelectedPlane = self.session.plane
+            }
+            self.schedule()
+        }
+    }
+
+    func close() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        if hasUnsavedChanges { savePendingChanges() }
+        if let observerID {
+            session.removeEventObserver(observerID)
+            self.observerID = nil
+        }
+    }
+
+    func dismissFailure() {
+        failureMessage = nil
+    }
+
+    func schedule() {
+        hasUnsavedChanges = true
+        pendingSave?.cancel()
+        pendingSave = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(nanoseconds: debounceNanoseconds)
+                guard !Task.isCancelled else { return }
+                savePendingChanges()
+            } catch is CancellationError {
+                return
+            } catch {
+                reportFailure(error)
             }
         }
-        return h.finalize()
+    }
+
+    private func savePendingChanges() {
+        guard hasUnsavedChanges else { return }
+        do {
+            try save(snapshot())
+            hasUnsavedChanges = false
+            failureMessage = nil
+            lastFailureCause = nil
+        } catch {
+            reportFailure(error)
+        }
+    }
+
+    private func reportFailure(_ error: Error) {
+        let cause = error.localizedDescription
+        if cause != lastFailureCause {
+            lastFailureCause = cause
+            failureMessage = cause
+            failureNoticeID &+= 1
+        }
+    }
+
+    private func snapshot() -> SessionState {
+        let contour = session.contourSpec
+        return SessionState(
+            selectedHDU: session.blink?.primary ?? userSelectedHDU,
+            selectedPlane: userSelectedPlane,
+            stretch: session.view.stretch,
+            colorMap: session.view.colorMap,
+            drawMode: session.mode.rawValue,
+            vmin: Double(session.view.vmin),
+            vmax: Double(session.view.vmax),
+            stretchParameter: Double(session.view.stretchParameter),
+            showWCSGrid: session.showGrid,
+            showCompass: session.showCompass,
+            showColorBar: session.showColorBar,
+            regions: session.regions,
+            contour: SessionState.Contour(
+                enabled: contour.enabled,
+                count: contour.count,
+                minValue: contour.minValue,
+                maxValue: contour.maxValue,
+                spacing: contour.spacing.rawValue
+            )
+        )
     }
 }

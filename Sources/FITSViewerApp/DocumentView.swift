@@ -11,6 +11,9 @@ struct DocumentView: View {
     let toolbarController: FITSToolbarController
 
     @State private var session: DocumentSession
+    @State private var autosaveWatcher: SessionAutosaveWatcher
+    @State private var staleSession: SessionState?
+    @State private var persistenceWarning: String?
     private let viewport: ImageViewState
     private let interaction: InteractionController
     private let pixelTableBridge = PixelTableCursorBridge()
@@ -101,10 +104,6 @@ struct DocumentView: View {
         get { session.wcsVariant }
         nonmutating set { session.perform(.selectWCSVariant(newValue), origin: .user) }
     }
-    private var displayOverride: DerivedImage? {
-        get { session.derived }
-        nonmutating set { session.setDerived(newValue) }
-    }
     private var imageRevision: Int { session.imageRevision }
     private var hduBinding: Binding<Int> {
         Binding(get: { selectedHDU }, set: { selectedHDU = $0 })
@@ -123,6 +122,12 @@ struct DocumentView: View {
         self.interaction = InteractionController(view: document.session.view, mode: .full,
                                                  session: document.session)
         self._session = State(initialValue: document.session)
+        self._autosaveWatcher = State(initialValue: SessionAutosaveWatcher(session: document.session) { state in
+            guard let identity = document.fileIdentity else { throw SessionStore.StoreError.invalidFITSHeader }
+            try document.sessionStore.save(state, for: document.url, identity: identity)
+        })
+        self._staleSession = State(initialValue: document.staleState)
+        self._persistenceWarning = State(initialValue: document.persistenceErrorMessage)
         self.interaction.regionColorProvider = { UserPreferences.shared.regionColor }
     }
 
@@ -186,17 +191,13 @@ struct DocumentView: View {
             .onKeyPress("-", phases: .down) { handleKey(.character("-"), modifiers: $0.modifiers) }
             .onAppear {
                 syncToolbarState()
+                // Keep new edits even while an older stale session awaits a
+                // decision; SessionStore preserves that archive separately.
+                autosaveWatcher.start()
             }
+            .onDisappear { autosaveWatcher.close() }
             .background(DocumentKeyEventMonitor(interaction: interaction))
-            .background(
-                SessionAutosaveWatcher(
-                    regions: regions, stretch: stretch, colorMap: colorMap, drawMode: drawMode,
-                    showWCSGrid: showWCSGrid, showCompass: showCompass, showColorBar: showColorBar,
-                    selectedHDU: selectedHDU, selectedPlane: selectedPlane,
-                    contourEnabled: contourSpec.enabled, contourCount: contourSpec.count,
-                    save: scheduleSessionSave
-                )
-            )
+            .overlay(alignment: .top) { persistenceNotices }
             // Collapse 11 toolbar-trigger .onChange entries into a single
             // snapshot-driven .onChange. Cuts the SwiftUI type-checker load
             // on this body and centralises the dependency list.
@@ -221,6 +222,61 @@ struct DocumentView: View {
                 alert.alertStyle = .warning
                 alert.runModal()
             }
+            .onChange(of: session.imageOperationNoticeID) { _, _ in
+                guard let message = session.imageOperationErrorMessage else { return }
+                applyEffect(.alert(title: "Image operation failed", message: message,
+                                   style: .warning))
+            }
+    }
+
+    @ViewBuilder private var persistenceNotices: some View {
+        VStack(spacing: 8) {
+            if staleSession != nil {
+                HStack(spacing: 12) {
+                    Text("This file changed since its session was saved.")
+                    Button("Restore anyway") { restoreStaleSession() }
+                    Button("Dismiss") { dismissStaleSession() }
+                }
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let failure = autosaveWatcher.failureMessage {
+                HStack(spacing: 12) {
+                    Text("Session could not be saved: \(failure)")
+                    Button("Dismiss") { autosaveWatcher.dismissFailure() }
+                }
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let warning = persistenceWarning {
+                HStack(spacing: 12) {
+                    Text("Session could not be loaded: \(warning)")
+                    Button("Dismiss") { persistenceWarning = nil }
+                }
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func restoreStaleSession() {
+        guard let staleSession else { return }
+        autosaveWatcher.start()
+        session.restoreInitialState(staleSession)
+        self.staleSession = nil
+        autosaveWatcher.schedule()
+    }
+
+    private func dismissStaleSession() {
+        do {
+            try document.sessionStore.discardStale(for: document.url)
+            staleSession = nil
+            autosaveWatcher.start()
+            autosaveWatcher.schedule()
+        } catch {
+            persistenceWarning = error.localizedDescription
+        }
     }
 
     private func handleKey(_ key: KeyEvent.Key, modifiers: EventModifiers) -> KeyPress.Result {
@@ -246,7 +302,7 @@ struct DocumentView: View {
             fetchingCatalog: isFetchingCatalog,
             selectedHDU: selectedHDU,
             imageRevision: imageRevision,
-            hasDisplayOverride: displayOverride != nil,
+            hasDisplayOverride: session.derived != nil,
             wcsVariant: activeWCSVariant
         )
     }
@@ -305,7 +361,7 @@ struct StatusBar: View {
     let viewport: ImageViewState
 
     /// Persisted readout frame (shared across windows/sessions).
-    @AppStorage("readoutFrame") private var coordFrameRaw = CelestialFrame.icrs.rawValue
+    @AppStorage(PreferenceKeys.ReadoutFrame.name) private var coordFrameRaw = CelestialFrame.icrs.rawValue
     private var coordFrame: CelestialFrame { CelestialFrame(rawValue: coordFrameRaw) ?? .icrs }
 
     var body: some View {
@@ -772,8 +828,6 @@ extension Array {
     }
 }
 
-typealias DisplayOverride = DerivedImage
-
 extension DocumentView {
     fileprivate func syncToolbarState() {
         toolbarState.stretch = stretch
@@ -1015,137 +1069,47 @@ extension DocumentView {
         session.displayed
     }
 
-    fileprivate func snapshotSession() -> SessionState {
-        let contour: SessionState.Contour? = SessionState.Contour(
-            enabled: contourSpec.enabled,
-            count: contourSpec.count,
-            minValue: contourSpec.minValue,
-            maxValue: contourSpec.maxValue,
-            spacing: contourSpec.spacing.rawValue
-        )
-        return SessionState(
-            selectedHDU: selectedHDU,
-            selectedPlane: selectedPlane,
-            stretch: stretch,
-            colorMap: colorMap,
-            drawMode: drawMode.rawValue,
-            vmin: Double(viewport.vmin),
-            vmax: Double(viewport.vmax),
-            stretchParameter: Double(viewport.stretchParameter),
-            showWCSGrid: showWCSGrid,
-            showCompass: showCompass,
-            showColorBar: showColorBar,
-            regions: regions,
-            contour: contour
-        )
-    }
-
-    fileprivate func scheduleSessionSave() {
-        let url = SessionState.sidecarURL(for: document.url)
-        guard let data = try? snapshotSession().toJSON() else { return }
-        // Fire-and-forget — write atomically. Failures are non-fatal (user shouldn't
-        // lose work over a read-only sidecar directory).
-        DispatchQueue.global(qos: .utility).async {
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-
     fileprivate func applyFilter(_ spec: FilterSpec) {
-        guard let image = currentImage() else { return }
-        guard let result = ImageOperations.filter(image, wcs: session.displayedWCS,
-                                                  spec: spec) else {
-            applyEffect(.alert(title: "Filter failed", message: "Invalid filter size or sigma.",
-                               style: .warning))
-            return
-        }
-        displayOverride = result
+        performImageCommand(.filter(spec))
     }
 
     fileprivate func applyUnary(_ op: ImageArithmetic.UnaryOp) {
-        guard let image = currentImage() else { return }
-        displayOverride = ImageOperations.unary(image, wcs: session.displayedWCS,
-                                                op: op)
+        performImageCommand(.unary(op))
     }
 
     fileprivate func applyBinary(_ op: ImageArithmetic.BinaryOp, other otherIdx: Int) {
-        guard let a = currentImage(),
-              let otherHdu = document.file.hdus[safe: otherIdx],
-              let b = try? FITSImage(hdu: otherHdu) else { return }
-        do {
-            displayOverride = try ImageOperations.binary(
-                a, wcs: session.displayedWCS, other: b, op: op, otherHDU: otherIdx
-            )
-        } catch {
-            applyEffect(.alert(title: "Image arithmetic failed",
-                               message: "The images must have the same dimensions.",
-                               style: .warning))
-        }
+        performImageCommand(.binary(op, otherIdx))
     }
 
     fileprivate func subtractBackground() {
-        guard let image = currentImage() else { NSSound.beep(); return }
-        guard let result = ImageOperations.subtractBackground(image,
-                                                               wcs: session.displayedWCS) else {
-            applyEffect(.alert(title: "Background subtraction failed",
-                               message: "The image has no valid pixels.", style: .warning))
-            return
-        }
-        displayOverride = result
+        performImageCommand(.subtractBackground)
     }
 
     fileprivate func binImage(by n: Int) {
-        guard let image = currentImage(), n >= 2 else { NSSound.beep(); return }
-        guard let result = ImageOperations.bin(image, wcs: session.displayedWCS,
-                                               factor: n) else { return }
-        displayOverride = result
+        performImageCommand(.bin(n))
     }
 
     private func extractCubeSlab(from: Int, to: Int) {
-        guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { return }
-        let w = hdu.axes[0], h = hdu.axes[1]
-        var out = [Float](repeating: 0, count: w * h)
-        var cnt = [Int](repeating: 0, count: w * h)
-        for p in from...to {
-            guard let img = try? FITSImage(hdu: hdu, plane: p) else { continue }
-            for y in 0..<h {
-                for x in 0..<w {
-                    let v = img.physicalValue(x: x, y: y)
-                    if v.isNaN { continue }
-                    out[y * w + x] += Float(v)
-                    cnt[y * w + x] += 1
-                }
-            }
-        }
-        for i in 0..<out.count where cnt[i] == 0 { out[i] = .nan }
-        let result = FITSImage.fromFloat32(pixels: out, width: w, height: h)
-        displayOverride = DisplayOverride(image: result,
-                                          wcs: session.facts[selectedHDU].wcs(variant: session.sourceWCSVariant),
-                                          label: "Slab \(from)…\(to) (sum)")
+        performImageCommand(.applySlab(from: from, to: to))
     }
 
     fileprivate func stackOpenDocuments(mode: StackMode) {
         let allControllers = AppDelegate.shared?.allControllersForScripting() ?? []
-        let images: [FITSImage] = allControllers.compactMap { c in c.currentOverrideImage() }
-        guard images.count >= 2 else {
+        let otherImages: [FITSImage] = allControllers
+            .filter { $0.documentModel.session !== session }
+            .compactMap { $0.currentOverrideImage() }
+        guard !otherImages.isEmpty else {
             let alert = NSAlert()
             alert.messageText = "Stack requires ≥ 2 open documents"
             alert.informativeText = "Open another FITS file in a second window first."
             alert.runModal()
             return
         }
-        // Dimensions must match.
-        guard let first = images.first else { return }
-        for img in images where img.width != first.width || img.height != first.height {
-            let alert = NSAlert()
-            alert.messageText = "Dimension mismatch"
-            alert.informativeText = "All open images must be the same size to stack. Reproject first."
-            alert.runModal()
-            return
+        let outcome = session.stack(with: otherImages, mode: mode)
+        if let failure = outcome.failure {
+            applyEffect(.alert(title: "Stack failed", message: failure.message,
+                               style: .warning))
         }
-        guard let result = ImageOperations.stack(images,
-                                                 referenceWCS: session.displayedWCS,
-                                                 mode: mode) else { return }
-        displayOverride = result
     }
 
     fileprivate func generateLightCurve() {
@@ -1246,109 +1210,11 @@ extension DocumentView {
     }
 
     fileprivate func cropToSelectedRegion() {
-        guard let idx = selectedRegionIndex, regions.indices.contains(idx),
-              let image = currentImage() else { NSSound.beep(); return }
-        let region = regions[idx]
-        let wcs = session.displayedWCS
-        guard let bbox = boundingBox(of: region, wcs: wcs, in: image) else { NSSound.beep(); return }
-        let w = bbox.maxX - bbox.minX + 1
-        let h = bbox.maxY - bbox.minY + 1
-        guard let result = ImageOperations.crop(image, wcs: wcs,
-                                                originX: bbox.minX, originY: bbox.minY,
-                                                width: w, height: h) else { return }
-        displayOverride = result
-    }
-
-    private func boundingBox(of region: Region, wcs: WCS?, in image: FITSImage) -> (minX: Int, minY: Int, maxX: Int, maxY: Int)? {
-        guard let candidate = containsPredicate(for: region, wcs: wcs) else { return nil }
-        var minX = Int.max, minY = Int.max, maxX = Int.min, maxY = Int.min
-        for y in 0..<image.height {
-            for x in 0..<image.width where candidate(x, y) {
-                if x < minX { minX = x }
-                if x > maxX { maxX = x }
-                if y < minY { minY = y }
-                if y > maxY { maxY = y }
-            }
-        }
-        guard minX <= maxX else { return nil }
-        return (minX, minY, maxX, maxY)
-    }
-
-    private func containsPredicate(for region: Region, wcs: WCS?) -> ((Int, Int) -> Bool)? {
-        switch region.shape {
-        case .circle(let c, let r):
-            guard let cp = imageCenter(of: c, frame: region.frame, wcs: wcs),
-                  let rPix = pixelLength(r, frame: region.frame, wcs: wcs) else { return nil }
-            return { x, y in
-                let dx = Double(x) - cp.x, dy = Double(y) - cp.y
-                return dx * dx + dy * dy <= rPix * rPix
-            }
-        case .box(let c, let w_, let h_, let a):
-            guard let cp = imageCenter(of: c, frame: region.frame, wcs: wcs),
-                  let wPix = pixelLength(w_, frame: region.frame, wcs: wcs),
-                  let hPix = pixelLength(h_, frame: region.frame, wcs: wcs) else { return nil }
-            let theta = a * .pi / 180
-            let cosT = cos(theta), sinT = sin(theta)
-            let halfW = wPix / 2, halfH = hPix / 2
-            return { x, y in
-                let dx = Double(x) - cp.x, dy = Double(y) - cp.y
-                let lx =  dx * cosT + dy * sinT
-                let ly = -dx * sinT + dy * cosT
-                return abs(lx) <= halfW && abs(ly) <= halfH
-            }
-        case .ellipse(let c, let rx, let ry, let a):
-            guard let cp = imageCenter(of: c, frame: region.frame, wcs: wcs),
-                  let rxPix = pixelLength(rx, frame: region.frame, wcs: wcs),
-                  let ryPix = pixelLength(ry, frame: region.frame, wcs: wcs),
-                  rxPix > 0, ryPix > 0 else { return nil }
-            let theta = a * .pi / 180
-            let cosT = cos(theta), sinT = sin(theta)
-            return { x, y in
-                let dx = Double(x) - cp.x, dy = Double(y) - cp.y
-                let lx =  dx * cosT + dy * sinT
-                let ly = -dx * sinT + dy * cosT
-                let nx = lx / rxPix, ny = ly / ryPix
-                return nx * nx + ny * ny <= 1
-            }
-        case .annulus(let c, let rIn, let rOut):
-            guard let cp = imageCenter(of: c, frame: region.frame, wcs: wcs),
-                  let inPix = pixelLength(rIn, frame: region.frame, wcs: wcs),
-                  let outPix = pixelLength(rOut, frame: region.frame, wcs: wcs) else { return nil }
-            return { x, y in
-                let dx = Double(x) - cp.x, dy = Double(y) - cp.y
-                let d2 = dx * dx + dy * dy
-                return d2 >= inPix * inPix && d2 <= outPix * outPix
-            }
-        case .polygon(let pts):
-            guard region.frame == .image else { return nil }
-            return { x, y in
-                // Even-odd ray cast in image (0-based) frame.
-                var inside = false
-                var j = pts.count - 1
-                for i in 0..<pts.count {
-                    let xi = pts[i].x - 1, yi = pts[i].y - 1
-                    let xj = pts[j].x - 1, yj = pts[j].y - 1
-                    let pt = (Double(x), Double(y))
-                    let intersects = ((yi > pt.1) != (yj > pt.1)) &&
-                        (pt.0 < (xj - xi) * (pt.1 - yi) / (yj - yi + 1e-30) + xi)
-                    if intersects { inside.toggle() }
-                    j = i
-                }
-                return inside
-            }
-        case .point:
-            return nil
-        }
+        performImageCommand(.cropToSelection)
     }
 
     fileprivate func collapseCube(_ mode: FITSImage.CollapseMode) {
-        guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3,
-              let collapsed = try? FITSImage.collapsed(hdu: hdu, mode: mode) else { return }
-        displayOverride = DisplayOverride(
-            image: collapsed,
-            wcs: session.facts[selectedHDU].wcs(variant: session.sourceWCSVariant),
-            label: "\(mode.label) over plane axis"
-        )
+        performImageCommand(.collapseCube(mode))
     }
 
     fileprivate func openContourLevelsPanel() {
@@ -1368,6 +1234,16 @@ extension DocumentView {
     fileprivate func performAndApply(_ command: SessionCommand) {
         let outcome = session.perform(command, origin: .user)
         guard outcome.failure == nil else { return }
+        for effect in outcome.effects { applyEffect(effect) }
+    }
+
+    fileprivate func performImageCommand(_ command: SessionCommand) {
+        let outcome = session.perform(command, origin: .user)
+        if let failure = outcome.failure {
+            applyEffect(.alert(title: "Image operation failed", message: failure.message,
+                               style: .warning))
+            return
+        }
         for effect in outcome.effects { applyEffect(effect) }
     }
 
@@ -1546,17 +1422,7 @@ extension DocumentView {
     }
 
     fileprivate func reproject(onto referenceIdx: Int) {
-        guard let refHdu = document.file.hdus[safe: referenceIdx],
-              let activeImage = session.displayed,
-              let sourceWCS = session.displayedWCS,
-              let targetWCS = session.facts[referenceIdx].wcs(variant: ""),
-              let refImage = try? FITSImage(hdu: refHdu) else { return }
-        guard let result = ImageOperations.reproject(
-            activeImage, sourceWCS: sourceWCS, targetWCS: targetWCS,
-            targetWidth: refImage.width, targetHeight: refImage.height,
-            targetHDU: referenceIdx
-        ) else { return }
-        displayOverride = result
+        performImageCommand(.reproject(referenceIdx))
     }
 
 }

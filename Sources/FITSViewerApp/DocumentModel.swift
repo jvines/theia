@@ -10,9 +10,14 @@ import TheiaKit
     let file: FITSFile
     let session: DocumentSession
     let restoredState: SessionState?
+    let staleState: SessionState?
+    let sessionStore: SessionStore
+    let fileIdentity: SessionStore.FileIdentity?
+    let persistenceErrorMessage: String?
 
-    init(url: URL) throws {
+    init(url: URL, paths: AppPaths = AppPaths()) throws {
         self.url = url
+        self.sessionStore = SessionStore(paths: paths)
         // mmap large files (≥ 50 MB) so we don't double the file size in RAM and so
         // page cache absorbs OS-level access patterns. Small files use the regular
         // path — the dispatch_io machinery has overhead that isn't worth it for
@@ -30,10 +35,31 @@ import TheiaKit
             url: url, file: file,
             stretch: UserPreferences.shared.defaultStretch,
             colorMap: UserPreferences.shared.defaultColorMap,
+            zscaleContrast: { UserPreferences.shared.zscaleContrast },
             catalogClient: AppCatalog.client
         )
-        let savedData = try? Data(contentsOf: SessionState.sidecarURL(for: url))
-        self.restoredState = savedData.flatMap { try? SessionState.fromJSON($0) }
+        var identity: SessionStore.FileIdentity?
+        var restored: SessionState?
+        var stale: SessionState?
+        var persistenceError: String?
+        do {
+            let currentIdentity = try SessionStore.identity(for: data)
+            identity = currentIdentity
+            switch try sessionStore.load(for: url, identity: currentIdentity) {
+            case .none: break
+            case .restored(let state): restored = state
+            case .restoredWithStale(let current, let archived):
+                restored = current
+                stale = archived
+            case .stale(let state): stale = state
+            }
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+        self.fileIdentity = identity
+        self.restoredState = restored
+        self.staleState = stale
+        self.persistenceErrorMessage = persistenceError
         if let restoredState { session.restoreInitialState(restoredState) }
     }
 }
