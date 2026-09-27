@@ -11,6 +11,36 @@ public struct OverlaySegment: Sendable, Equatable {
     }
 }
 
+public enum OverlayFont: Sendable, Equatable {
+    case monospaced
+    case systemSemibold
+    case systemMedium
+}
+
+public enum OverlayTextAnchor: Sendable, Equatable {
+    case center
+    case topTrailing
+    case trailing
+    case bottomTrailing
+}
+
+public struct OverlayTextBackground: Sendable, Equatable {
+    public let color: OverlayColor
+    public let opacity: Double
+    public let cornerRadius: Double
+    public let horizontalPadding: Double
+    public let verticalPadding: Double
+
+    public init(color: OverlayColor, opacity: Double, cornerRadius: Double,
+                horizontalPadding: Double, verticalPadding: Double) {
+        self.color = color
+        self.opacity = opacity
+        self.cornerRadius = cornerRadius
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+    }
+}
+
 /// Shapes in view points, ready for a platform's drawing API.
 public enum OverlayPrimitive: Sendable, Equatable {
     case segments([OverlaySegment], stroke: OverlayColor, opacity: Double,
@@ -19,7 +49,10 @@ public enum OverlayPrimitive: Sendable, Equatable {
               opacity: Double, lineWidth: Double)
     case ellipse(center: SIMD2<Double>, radiusX: Double, radiusY: Double,
                  stroke: OverlayColor, opacity: Double, lineWidth: Double, dash: [Double] = [])
-    case text(String, at: SIMD2<Double>, color: OverlayColor, size: Double, opacity: Double)
+    case text(String, at: SIMD2<Double>, color: OverlayColor, size: Double,
+              opacity: Double, font: OverlayFont = .monospaced,
+              anchor: OverlayTextAnchor = .center,
+              background: OverlayTextBackground? = nil)
     case handle(center: SIMD2<Double>, radius: Double, color: OverlayColor)
 }
 

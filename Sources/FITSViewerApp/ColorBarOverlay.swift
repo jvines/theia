@@ -54,31 +54,13 @@ struct ColorBarOverlay: View {
     private func tickLabels(height: CGFloat) -> some View {
         let vmin = Double(viewport.vmin)
         let vmax = Double(viewport.vmax)
-        let mid  = (vmin + vmax) / 2
-        return VStack(alignment: .trailing, spacing: 0) {
-            label(formatLevel(vmax))
-            Spacer(minLength: 0)
-            label(formatLevel(mid))
-            Spacer(minLength: 0)
-            label(formatLevel(vmin))
+        return Canvas { context, size in
+            let primitives = OverlayScene.colorBarLabelPrimitives(
+                vmin: vmin, vmax: vmax,
+                labelSize: SIMD2(Double(size.width), Double(size.height))
+            )
+            OverlayCanvas.draw(primitives, in: context)
         }
         .frame(width: Self.labelWidth, height: height, alignment: .trailing)
-    }
-
-    private func label(_ s: String) -> some View {
-        Text(s)
-            .font(.system(.caption2, design: .monospaced))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 3))
-    }
-
-    private func formatLevel(_ v: Double) -> String {
-        if !v.isFinite { return "—" }
-        let abs = Swift.abs(v)
-        if abs == 0 { return "0" }
-        if abs >= 1e4 || abs < 0.01 { return String(format: "%.2e", v) }
-        return String(format: "%.3g", v)
     }
 }

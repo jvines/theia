@@ -25,22 +25,7 @@ public struct WCSGridOverlay: View {
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )
-            for line in lines {
-                var path = Path()
-                var started = false
-                for p in line.pixelPoints {
-                    let mapped = mapping.imageToView(SIMD2(p.x, p.y))
-                    let view = CGPoint(x: mapped.x, y: mapped.y)
-                    if !started {
-                        path.move(to: view)
-                        started = true
-                    } else {
-                        path.addLine(to: view)
-                    }
-                }
-                let colour: Color = line.kind == .ra ? .green : .yellow
-                context.stroke(path, with: .color(colour.opacity(0.6)), lineWidth: 0.7)
-            }
+            OverlayCanvas.draw(OverlayScene.gridPrimitives(lines, mapping: mapping), in: context)
         }
         .allowsHitTesting(false)
     }
