@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import TheiaKit
 
 /// Random per-install bearer token used to gate the localhost HTTP scripting
 /// server. Written once on first launch to
@@ -38,10 +39,8 @@ enum ScriptingAuth {
 
     /// Path to the token file — also useful for the in-app help so users can find it.
     static func tokenURL() -> URL {
-        let bundle = Bundle.main.bundleIdentifier ?? "com.athropa.theia"
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return support.appendingPathComponent(bundle).appendingPathComponent("scripting-token")
+        // This target is macOS-only, so AppPaths.tokenFile() cannot throw here.
+        try! AppPaths(platform: .macOS).tokenFile()
     }
 
     /// Check an `Authorization: Bearer <token>` header against the live token in

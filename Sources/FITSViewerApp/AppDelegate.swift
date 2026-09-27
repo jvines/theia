@@ -68,11 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (the default for files created under the user's home). Created on first
     /// write; no-op (best effort) if the filesystem refuses us.
     private static let logURL: URL = {
-        let bundle = Bundle.main.bundleIdentifier ?? "com.athropa.theia"
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-        let dir = home.appendingPathComponent("Library/Logs").appendingPathComponent(bundle)
+        let url = AppPaths().logFile
+        let dir = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("app.log")
+        return url
     }()
 
     private func log(_ msg: String) {
