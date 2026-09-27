@@ -55,6 +55,12 @@ public enum SessionCommand: Sendable, Equatable {
     case setContourSpec(ContourSpec)
     case addRegion(Region)
     case updateRegion(Int, Region)
+    case updateRegionDuringEdit(UUID, Int, Region)
+    case beginRegionEdit(Int)
+    case commitRegionEdit(UUID)
+    case cancelRegionEdit(UUID)
+    case undoRegions
+    case redoRegions
     case nudgeRegion(Int, dx: Double, dy: Double)
     case duplicateRegion(Int, dx: Double, dy: Double)
     case deleteRegion(Int)
@@ -97,7 +103,10 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidZoomFactor
     case invalidPanDelta
     case invalidRegionIndex(Int)
+    case invalidRegionEdit
     case unavailableRegionTransform
+    case noRegionUndo
+    case noRegionRedo
     case invalidPendingRequest
     case invalidAnswer
     case documentClosed
@@ -121,7 +130,10 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidZoomFactor: "Zoom factor or anchor is invalid"
         case .invalidPanDelta: "Pan delta is invalid"
         case .invalidRegionIndex(let index): "Invalid region index \(index)"
+        case .invalidRegionEdit: "Region edit is no longer active"
         case .unavailableRegionTransform: "Region cannot be moved in the displayed coordinate frame"
+        case .noRegionUndo: "There is no region edit to undo"
+        case .noRegionRedo: "There is no region edit to redo"
         case .invalidPendingRequest: "Request is no longer pending"
         case .invalidAnswer: "Answer does not match the request"
         case .documentClosed: "Document is closed"
@@ -240,13 +252,33 @@ extension DocumentSession {
                 inspectorVisible = true
             case .setContourSpec(let spec): setContourSpec(spec)
             case .addRegion(let region):
-                regions.append(region)
-                selectedRegionIndex = regions.count - 1
+                regionList.add(region)
             case .updateRegion(let index, let region):
-                guard regions.indices.contains(index) else {
+                guard regionList.update(at: index, with: region) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
                 }
-                regions[index] = region
+            case .updateRegionDuringEdit(let id, let index, let region):
+                guard regionList.updateDuringEdit(id, at: index, with: region) else {
+                    return CommandOutcome(failure: .invalidRegionEdit)
+                }
+            case .beginRegionEdit(let index):
+                guard regionList.beginEdit(at: index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+            case .commitRegionEdit(let id):
+                guard regionList.commitEdit(id) else {
+                    return CommandOutcome(failure: .invalidRegionEdit)
+                }
+            case .cancelRegionEdit(let id):
+                guard regionList.cancelEdit(id) else {
+                    return CommandOutcome(failure: .invalidRegionEdit)
+                }
+            case .undoRegions:
+                guard regionList.undo() else { return CommandOutcome(failure: .noRegionUndo) }
+                regionReplacementRevision &+= 1
+            case .redoRegions:
+                guard regionList.redo() else { return CommandOutcome(failure: .noRegionRedo) }
+                regionReplacementRevision &+= 1
             case .nudgeRegion(let index, let dx, let dy):
                 guard regions.indices.contains(index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
@@ -255,7 +287,7 @@ extension DocumentSession {
                                                         wcs: displayedWCS) else {
                     return CommandOutcome(failure: .unavailableRegionTransform)
                 }
-                regions[index] = moved
+                _ = regionList.update(at: index, with: moved)
             case .duplicateRegion(let index, let dx, let dy):
                 guard regions.indices.contains(index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
@@ -264,35 +296,21 @@ extension DocumentSession {
                                                        wcs: displayedWCS) else {
                     return CommandOutcome(failure: .unavailableRegionTransform)
                 }
-                regions.append(copy)
-                selectedRegionIndex = regions.count - 1
+                regionList.add(copy)
             case .deleteRegion(let index):
-                guard regions.indices.contains(index) else {
+                guard regionList.delete(at: index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
                 }
-                if let selectedRegionIndex {
-                    if selectedRegionIndex == index { self.selectedRegionIndex = nil }
-                    else if selectedRegionIndex > index { self.selectedRegionIndex = selectedRegionIndex - 1 }
-                }
-                regions.remove(at: index)
             case .bringRegionToFront(let index):
-                guard regions.indices.contains(index) else {
+                guard regionList.bringToFront(index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
                 }
-                let selected = selectedRegionIndex
-                var reordered = regions
-                let region = reordered.remove(at: index)
-                reordered.append(region)
-                regions = reordered
-                if selected == index { selectedRegionIndex = regions.count - 1 }
-                else if let selected, selected > index { selectedRegionIndex = selected - 1 }
             case .clearRegions:
-                selectedRegionIndex = nil
-                regions.removeAll()
+                regionList.clear()
             case .replaceRegions(let replacement):
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
-                selectedRegionIndex = nil
-                regions = replacement
+                // Scripted .reg replacement historically kept a still-valid selection.
+                regionList.replace(replacement, selection: origin == .script ? selectedRegionIndex : nil)
                 regionReplacementRevision &+= 1
             case .completeRegionLoad(let request, let replacement):
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
@@ -304,8 +322,7 @@ extension DocumentSession {
                     return CommandOutcome(failure: .supersededRegionLoad)
                 }
                 acceptedRegionLoad = nil
-                selectedRegionIndex = nil
-                regions = replacement
+                regionList.replace(replacement, selection: nil)
                 regionReplacementRevision &+= 1
             case .saveRegions:
                 guard origin == .user else {

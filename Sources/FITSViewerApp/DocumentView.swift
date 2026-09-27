@@ -459,7 +459,10 @@ struct FITSImageView: View {
     let onCursorChange: (CursorInfo?) -> Void
     let onRegionCreated: (Region) -> Void
     let onRegionPreview: (Region?) -> Void
-    let onRegionEdited: (Int, Region) -> Void
+    let onRegionEdited: (UUID, Int, Region) -> Bool
+    let onRegionEditBegan: (Int) -> UUID?
+    let onRegionEditCommitted: (UUID) -> Void
+    let onRegionEditCancelled: (UUID) -> Void
     let onRegionSelected: (Int?) -> Void
     let onLineProfile: (SIMD2<Double>, SIMD2<Double>) -> Void
     let onRadialProfile: (SIMD2<Double>, Double) -> Void
@@ -488,6 +491,9 @@ struct FITSImageView: View {
                     onRegionCreated: onRegionCreated,
                     onRegionPreview: onRegionPreview,
                     onRegionEdited: onRegionEdited,
+                    onRegionEditBegan: onRegionEditBegan,
+                    onRegionEditCommitted: onRegionEditCommitted,
+                    onRegionEditCancelled: onRegionEditCancelled,
                     onRegionSelected: onRegionSelected,
                     onLineProfile: onLineProfile,
                     onRadialProfile: onRadialProfile,
@@ -902,7 +908,13 @@ extension DocumentView {
             onCursorChange: handleCursor,
             onRegionCreated: appendRegion,
             onRegionPreview: { previewRegion = $0 },
-            onRegionEdited: updateRegion,
+            onRegionEdited: updateRegionDuringEdit,
+            onRegionEditBegan: { index in
+                let outcome = session.perform(.beginRegionEdit(index), origin: .user)
+                return outcome.failure == nil ? session.regionList.activeEditID : nil
+            },
+            onRegionEditCommitted: { session.perform(.commitRegionEdit($0), origin: .user) },
+            onRegionEditCancelled: { session.perform(.cancelRegionEdit($0), origin: .user) },
             onRegionSelected: { selectedRegionIndex = $0 },
             onLineProfile: { from, to in handleLineProfile(from: from, to: to) },
             onRadialProfile: { center, r in handleRadialProfile(center: center, radius: r) },
@@ -1059,6 +1071,10 @@ extension DocumentView {
         }
         let withColor = Region(shape: r.shape, frame: r.frame, attributes: attrs)
         session.perform(.addRegion(withColor), origin: .user)
+    }
+
+    private func updateRegionDuringEdit(id: UUID, idx: Int, region: Region) -> Bool {
+        session.perform(.updateRegionDuringEdit(id, idx, region), origin: .user).failure == nil
     }
 
     private func updateRegion(idx: Int, region: Region) {

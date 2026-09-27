@@ -238,9 +238,11 @@ public enum CommandMenuEntry: Sendable {
             .separator,
             item("region.clear", "Clear All Regions", .clearRegions, enabled: hasRegions),
             .separator,
-            item("region.undo", "Undo Region Edit", nil, enabled: false,
+            item("region.undo", "Undo Region Edit", .undoRegions,
+                 enabled: session?.regionList.canUndo ?? false,
                  shortcut: CommandShortcut(key: "z")),
-            item("region.redo", "Redo Region Edit", nil, enabled: false,
+            item("region.redo", "Redo Region Edit", .redoRegions,
+                 enabled: session?.regionList.canRedo ?? false,
                  shortcut: CommandShortcut(key: "z", shift: true)),
         ]
     }

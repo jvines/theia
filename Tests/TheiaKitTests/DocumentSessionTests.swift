@@ -5,6 +5,92 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testRegionCommandsExposeUndoAndRedoInCatalogue() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 1, y: 2)), frame: .image)
+            _ = session.perform(.addRegion(region), origin: .user)
+            let replacementRevision = session.regionReplacementRevision
+            XCTAssertTrue(CommandCatalog.regionMenu(for: session).compactMap(\.item)
+                .first { $0.identifier == "region.undo" }?.enabled ?? false)
+            XCTAssertNil(session.perform(.undoRegions, origin: .user).failure)
+            XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertEqual(session.regionReplacementRevision, replacementRevision + 1)
+            XCTAssertTrue(CommandCatalog.regionMenu(for: session).compactMap(\.item)
+                .first { $0.identifier == "region.redo" }?.enabled ?? false)
+            XCTAssertNil(session.perform(.redoRegions, origin: .user).failure)
+            XCTAssertEqual(session.regions, [region])
+            XCTAssertEqual(session.regionReplacementRevision, replacementRevision + 2)
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+        }
+    }
+
+    func testSessionGroupsCanvasRegionUpdatesAndCancelsEdit() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            func point(_ x: Double) -> Region {
+                Region(shape: .point(.init(x: x, y: 2)), frame: .image)
+            }
+            _ = session.perform(.addRegion(point(1)), origin: .user)
+            XCTAssertNil(session.perform(.beginRegionEdit(0), origin: .user).failure)
+            guard let firstDrag = session.regionList.activeEditID else {
+                return XCTFail("Expected active region edit")
+            }
+            _ = session.perform(.updateRegionDuringEdit(firstDrag, 0, point(2)), origin: .user)
+            _ = session.perform(.updateRegionDuringEdit(firstDrag, 0, point(3)), origin: .user)
+            _ = session.perform(.commitRegionEdit(firstDrag), origin: .user)
+            XCTAssertNil(session.perform(.undoRegions, origin: .user).failure)
+            XCTAssertEqual(session.regions, [point(1)])
+            XCTAssertNil(session.perform(.redoRegions, origin: .user).failure)
+            XCTAssertEqual(session.regions, [point(3)])
+
+            _ = session.perform(.beginRegionEdit(0), origin: .user)
+            guard let secondDrag = session.regionList.activeEditID else {
+                return XCTFail("Expected active region edit")
+            }
+            _ = session.perform(.updateRegionDuringEdit(secondDrag, 0, point(9)), origin: .user)
+            _ = session.perform(.cancelRegionEdit(secondDrag), origin: .user)
+            XCTAssertEqual(session.regions, [point(3)])
+            _ = session.perform(.clearRegions, origin: .user)
+            XCTAssertNil(session.perform(.undoRegions, origin: .user).failure)
+            XCTAssertEqual(session.regions, [point(3)])
+        }
+    }
+
+    func testReplacementRejectsLateCanvasDragEvents() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            func point(_ x: Double) -> Region {
+                Region(shape: .point(.init(x: x, y: 1)), frame: .image)
+            }
+            _ = session.perform(.addRegion(point(1)), origin: .user)
+            _ = session.perform(.beginRegionEdit(0), origin: .user)
+            guard let drag = session.regionList.activeEditID else {
+                return XCTFail("Expected drag token")
+            }
+            XCTAssertNil(session.perform(.updateRegionDuringEdit(drag, 0, point(2)), origin: .user).failure)
+            _ = session.perform(.replaceRegions([point(9)]), origin: .script)
+            XCTAssertEqual(session.perform(.updateRegionDuringEdit(drag, 0, point(3)),
+                                           origin: .user).failure, .invalidRegionEdit)
+            XCTAssertEqual(session.perform(.commitRegionEdit(drag), origin: .user).failure,
+                           .invalidRegionEdit)
+            XCTAssertEqual(session.regions, [point(9)])
+        }
+    }
+
+    func testScriptRegionReplacementPreservesValidSelection() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let first = Region(shape: .point(.init(x: 1, y: 1)), frame: .image)
+            let second = Region(shape: .point(.init(x: 2, y: 2)), frame: .image)
+            _ = session.perform(.replaceRegions([first, second]), origin: .user)
+            session.selectedRegionIndex = 0
+            _ = session.perform(.replaceRegions([second, first]), origin: .script)
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertEqual(session.regions, [second, first])
+        }
+    }
+
     func testNudgeAndDuplicateMoveSkyRegionsInImagePixels() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -1073,11 +1159,13 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(session.view.colorMap, .plasma)
             XCTAssertEqual(session.view.stretchParameter, 3)
             XCTAssertEqual(session.regions, [region])
+            XCTAssertFalse(session.regionList.canUndo)
             XCTAssertTrue(session.showGrid)
             XCTAssertTrue(session.contourSegments.isEmpty)
 
             session.regions = [] // an immediate script edit wins over the saved value
             XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertTrue(session.regionList.canUndo)
         }
         await session.idle()
         await MainActor.run { XCTAssertEqual(session.contourSegments.count, 1) }

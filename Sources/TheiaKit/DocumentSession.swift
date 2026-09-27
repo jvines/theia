@@ -63,29 +63,27 @@ public struct HDUFacts {
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""
     public private(set) var derived: DerivedImage?
-    public var regions: [Region] = [] {
+    public internal(set) var regionList = RegionList() {
         didSet {
-            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
-                self.selectedRegionIndex = nil
-            }
             if regions.isEmpty { previewRegion = nil }
-            if regions != oldValue {
+            if regions != oldValue.regions {
                 regionRevision &+= 1
                 emit(.regionsChanged)
                 emit(.persistedFieldChanged)
             }
+            if selectedRegionIndex != oldValue.selectedIndex { emit(.selectionChanged) }
         }
+    }
+    public var regions: [Region] {
+        get { regionList.regions }
+        set { regionList.replace(newValue, selection: selectedRegionIndex) }
     }
     public internal(set) var regionReplacementRevision = 0
     @ObservationIgnored var regionRevision = 0
     @ObservationIgnored var acceptedRegionLoad: (requestID: UUID, regionRevision: Int, replacementRevision: Int)?
     public var selectedRegionIndex: Int? {
-        didSet {
-            if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
-                self.selectedRegionIndex = nil
-            }
-            if selectedRegionIndex != oldValue { emit(.selectionChanged) }
-        }
+        get { regionList.selectedIndex }
+        set { regionList.select(newValue) }
     }
     public var previewRegion: Region? {
         didSet { if previewRegion != oldValue { emit(.overlaysChanged) } }
@@ -431,7 +429,7 @@ public struct HDUFacts {
         view.vmin = Float(saved.vmin)
         view.vmax = Float(saved.vmax)
         view.stretchParameter = Float(saved.stretchParameter)
-        regions = saved.regions
+        regionList.restore(saved.regions)
         if let savedMode = DrawMode(rawValue: saved.drawMode) { mode = savedMode }
         showGrid = saved.showWCSGrid
         showCompass = saved.showCompass
