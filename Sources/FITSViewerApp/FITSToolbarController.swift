@@ -253,114 +253,45 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     private func buildToolsMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        if state.hasCube {
-            menu.addItem(NSMenuItem.sectionHeader(title: "Collapse cube"))
-            for mode in FITSImage.CollapseMode.allCases {
-                let mi = NSMenuItem(title: mode.label, action: #selector(collapseSelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.representedObject = CollapseModeBox(mode: mode)
-                menu.addItem(mi)
+        for entry in CommandCatalog.toolsMenu(
+            for: state.session, workspaceImageCount: workspaceImageCount
+        ) {
+            switch entry {
+            case .section(let section):
+                menu.addItem(.sectionHeader(title: section.title))
+            case .separator:
+                menu.addItem(.separator())
+            case .item(let descriptor):
+                guard descriptor.visible else { continue }
+                menu.addItem(makeToolMenuItem(descriptor))
             }
-            let slab = NSMenuItem(title: "Extract slab (planes…)", action: #selector(slabAction), keyEquivalent: "")
-            slab.target = self
-            menu.addItem(slab)
-            let mp4 = NSMenuItem(title: "Export cube as MP4…", action: #selector(exportMP4Action), keyEquivalent: "")
-            mp4.target = self
-            menu.addItem(mp4)
-        }
-        // Multi-document stacking.
-        menu.addItem(NSMenuItem.sectionHeader(title: "Stack across windows"))
-        for mode in StackMode.allCases {
-            let mi = NSMenuItem(title: "Stack: \(mode.label)", action: #selector(stackAction(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = mode.rawValue as NSString
-            mi.isEnabled = workspaceImageCount >= 2
-            menu.addItem(mi)
-        }
-        let lc = NSMenuItem(title: "Light curve (selected region)", action: #selector(lightCurveAction), keyEquivalent: "")
-        lc.target = self
-        lc.isEnabled = state.session.displayed != nil
-        menu.addItem(lc)
-        if state.hasSelectedImage {
-            menu.addItem(NSMenuItem.sectionHeader(title: "Analysis"))
-            let detect = NSMenuItem(title: "Detect sources…", action: #selector(detectSourcesAction), keyEquivalent: "")
-            detect.target = self
-            menu.addItem(detect)
-            let crop = NSMenuItem(title: "Crop to selected region", action: #selector(cropAction), keyEquivalent: "")
-            crop.target = self
-            menu.addItem(crop)
-            menu.addItem(NSMenuItem.sectionHeader(title: "Filter"))
-            for (title, sigma) in [("Gaussian σ=1", 1.0), ("Gaussian σ=2", 2.0), ("Gaussian σ=4", 4.0)] {
-                let mi = NSMenuItem(title: title, action: #selector(gaussianSelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.representedObject = sigma as NSNumber
-                menu.addItem(mi)
-            }
-            for n in [3, 5, 7] {
-                let mi = NSMenuItem(title: "Boxcar \(n)×\(n)", action: #selector(boxcarSelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.tag = n
-                menu.addItem(mi)
-            }
-            for n in [3, 5] {
-                let mi = NSMenuItem(title: "Median \(n)×\(n)", action: #selector(medianSelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.tag = n
-                menu.addItem(mi)
-            }
-            menu.addItem(NSMenuItem.sectionHeader(title: "Transform"))
-            for op in ImageArithmetic.UnaryOp.allCases {
-                let mi = NSMenuItem(title: op.label, action: #selector(unarySelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.representedObject = UnaryOpBox(op: op)
-                menu.addItem(mi)
-            }
-            // Background subtraction + bin.
-            let subBg = NSMenuItem(title: "Subtract background (3σ-clipped)",
-                                   action: #selector(subtractBgAction), keyEquivalent: "")
-            subBg.target = self
-            menu.addItem(subBg)
-            for n in [2, 3, 4] {
-                let mi = NSMenuItem(title: "Bin \(n)×\(n)", action: #selector(binAction(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.tag = n
-                menu.addItem(mi)
-            }
-        }
-        if !state.reprojectCandidates.isEmpty {
-            menu.addItem(NSMenuItem.sectionHeader(title: "Reproject onto"))
-            for (idx, label, enabled) in state.reprojectCandidates {
-                let mi = NSMenuItem(title: label, action: #selector(reprojectSelected(_:)), keyEquivalent: "")
-                mi.target = self
-                mi.tag = idx
-                mi.isEnabled = enabled
-                menu.addItem(mi)
-            }
-        }
-        if !state.differenceCandidates.isEmpty {
-            menu.addItem(NSMenuItem.sectionHeader(title: "Arithmetic vs"))
-            for (idx, label, enabled) in state.differenceCandidates {
-                let parent = NSMenuItem(title: label, action: nil, keyEquivalent: "")
-                let submenu = NSMenu()
-                for op in ImageArithmetic.BinaryOp.allCases {
-                    let mi = NSMenuItem(title: op.label, action: #selector(binarySelected(_:)), keyEquivalent: "")
-                    mi.target = self
-                    mi.representedObject = BinaryOpBox(op: op, otherIndex: idx)
-                    mi.isEnabled = enabled
-                    submenu.addItem(mi)
-                }
-                parent.submenu = submenu
-                parent.isEnabled = enabled
-                menu.addItem(parent)
-            }
-        }
-        if state.hasDisplayOverride {
-            menu.addItem(NSMenuItem.separator())
-            let mi = NSMenuItem(title: "Show original", action: #selector(clearOverrideAction), keyEquivalent: "")
-            mi.target = self
-            menu.addItem(mi)
         }
         return menu
+    }
+
+    private func makeToolMenuItem(_ descriptor: ToolMenuItem) -> NSMenuItem {
+        let item = NSMenuItem(title: descriptor.title,
+                              action: descriptor.action == nil ? nil : #selector(toolMenuAction(_:)),
+                              keyEquivalent: descriptor.shortcut?.key ?? "")
+        item.identifier = NSUserInterfaceItemIdentifier(descriptor.identifier)
+        item.toolTip = descriptor.tooltip
+        item.keyEquivalentModifierMask = descriptor.shortcut?.shift == true
+            ? [.command, .shift] : [.command]
+        item.target = self
+        item.isEnabled = descriptor.enabled
+        if case .checked(let checked) = descriptor.state {
+            item.state = checked ? .on : .off
+        }
+        item.representedObject = descriptor.action.map(ToolMenuActionBox.init)
+        if !descriptor.children.isEmpty {
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            for child in descriptor.children where child.visible {
+                submenu.addItem(makeToolMenuItem(child))
+            }
+            item.submenu = submenu
+        }
+        return item
     }
 
     // MARK: - Actions
@@ -387,47 +318,25 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         AppDelegate.shared?.performWorkspaceCommand(box.command, origin: .user)
     }
     @objc private func catalogAction()       { state.onFetchCatalog() }
-    @objc private func clearOverrideAction() { state.onClearOverride() }
-
-    @objc private func reprojectSelected(_ sender: NSMenuItem) {
-        state.onReproject(sender.tag)
-    }
-    @objc private func differenceSelected(_ sender: NSMenuItem) {
-        state.onDifference(sender.tag - 10_000)
-    }
-    @objc private func detectSourcesAction() { state.onDetectSources() }
-    @objc private func cropAction()         { state.onCropToSelection() }
-    @objc private func exportMP4Action()    { state.onExportCubeMP4() }
-    @objc private func subtractBgAction()   { state.onSubtractBackground() }
-    @objc private func binAction(_ sender: NSMenuItem) { state.onBinImage(sender.tag) }
-    @objc private func slabAction()         { state.onCubeSlab(0, -1) }   // -1 = "prompt"
-    @objc private func stackAction(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let m = StackMode(rawValue: raw) else { return }
-        state.onStackOpenDocuments(m)
-    }
-    @objc private func lightCurveAction() { state.onLightCurve() }
-
-    @objc private func collapseSelected(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? CollapseModeBox else { return }
-        state.onCollapseCube(box.mode)
-    }
-    @objc private func gaussianSelected(_ sender: NSMenuItem) {
-        guard let n = sender.representedObject as? NSNumber else { return }
-        state.onApplyFilter(.gaussian(sigma: n.doubleValue))
-    }
-    @objc private func boxcarSelected(_ sender: NSMenuItem) {
-        state.onApplyFilter(.boxcar(size: sender.tag))
-    }
-    @objc private func medianSelected(_ sender: NSMenuItem) {
-        state.onApplyFilter(.median(size: sender.tag))
-    }
-    @objc private func unarySelected(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? UnaryOpBox else { return }
-        state.onApplyUnary(box.op)
-    }
-    @objc private func binarySelected(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? BinaryOpBox else { return }
-        state.onApplyBinary(box.op, box.otherIndex)
+    @objc private func toolMenuAction(_ sender: NSMenuItem) {
+        guard sender.isEnabled, let box = sender.representedObject as? ToolMenuActionBox else { return }
+        switch box.action {
+        case .collapse(let mode): state.onCollapseCube(mode)
+        case .extractSlab: state.onCubeSlab(0, -1)
+        case .exportCube: state.onExportCubeMP4()
+        case .stack(let mode): state.onStackOpenDocuments(mode)
+        case .lightCurve: state.onLightCurve()
+        case .detectSources: state.onDetectSources()
+        case .crop: state.onCropToSelection()
+        case .filter(let spec): state.onApplyFilter(spec)
+        case .unary(let op): state.onApplyUnary(op)
+        case .subtractBackground: state.onSubtractBackground()
+        case .bin(let size): state.onBinImage(size)
+        case .reproject(let index): state.onReproject(index)
+        case .binary(let op, let index): state.onApplyBinary(op, index)
+        case .clearDerivedImage:
+            _ = state.session.perform(.clearDerivedImage, origin: .user)
+        }
     }
 }
 
@@ -441,18 +350,7 @@ private final class WorkspaceCommandBox: NSObject {
     init(_ command: WorkspaceCommand) { self.command = command }
 }
 
-final class CollapseModeBox: NSObject {
-    let mode: FITSImage.CollapseMode
-    init(mode: FITSImage.CollapseMode) { self.mode = mode }
-}
-
-final class UnaryOpBox: NSObject {
-    let op: ImageArithmetic.UnaryOp
-    init(op: ImageArithmetic.UnaryOp) { self.op = op }
-}
-
-final class BinaryOpBox: NSObject {
-    let op: ImageArithmetic.BinaryOp
-    let otherIndex: Int
-    init(op: ImageArithmetic.BinaryOp, otherIndex: Int) { self.op = op; self.otherIndex = otherIndex }
+private final class ToolMenuActionBox: NSObject {
+    let action: ToolMenuAction
+    init(_ action: ToolMenuAction) { self.action = action }
 }

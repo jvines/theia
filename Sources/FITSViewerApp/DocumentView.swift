@@ -868,7 +868,6 @@ extension DocumentView {
         toolbarState.blinkActive = blinkState != nil
         toolbarState.isFetchingCatalog = isFetchingCatalog
         let selected = document.file.hdus[safe: selectedHDU]
-        toolbarState.hasSelectedImage = session.displayed != nil
         toolbarState.hasWCS = session.displayedWCS != nil
         if selected != nil {
             toolbarState.wcsVariants = session.availableWCSVariants
@@ -876,18 +875,9 @@ extension DocumentView {
             toolbarState.activeWCSVariant = activeWCSVariant
         }
         toolbarState.hasMultipleHDUs = document.file.hdus.count >= 2
-        toolbarState.hasCube = (selected?.naxis == 3)
-        toolbarState.hasDisplayOverride = displayOverride != nil
-
-        let candidates = otherImageHDUIndices()
-        toolbarState.reprojectCandidates = candidates.map { ($0, hduLabel($0), canReproject(onto: $0)) }
-        toolbarState.differenceCandidates = candidates.map { ($0, hduLabel($0), canDifference(against: $0)) }
-
         toolbarState.onEffect           = { effect in applyEffect(effect) }
         toolbarState.onExport           = { exportImage() }
         toolbarState.onReproject        = { reproject(onto: $0) }
-        toolbarState.onDifference       = { computeDifference(against: $0) }
-        toolbarState.onClearOverride    = { displayOverride = nil }
         toolbarState.onFetchCatalog     = { Task { await fetchCatalog() } }
         toolbarState.onOpenScaleParameters = { performAndApply(.showPanel(.scaleParameters)) }
         toolbarState.onOpenPixelTable = { performAndApply(.showPanel(.pixelTable)) }
@@ -1729,28 +1719,6 @@ extension DocumentView {
         session.perform(.applyScalePreset(preset), origin: .user)
     }
 
-    fileprivate func otherImageHDUIndices() -> [Int] {
-        document.file.hdus.indices.filter { idx in
-            idx != selectedHDU && document.file.hdus[idx].isImage && document.file.hdus[idx].naxis == 2
-        }
-    }
-
-    fileprivate func hduLabel(_ idx: Int) -> String {
-        DocumentText.hduLabel(index: idx, name: document.file.hdus[safe: idx]?.name)
-    }
-
-    fileprivate func canReproject(onto referenceIdx: Int) -> Bool {
-        guard document.file.hdus.indices.contains(referenceIdx) else { return false }
-        return session.displayedWCS != nil && session.facts[referenceIdx].wcs(variant: "") != nil
-    }
-
-    fileprivate func canDifference(against referenceIdx: Int) -> Bool {
-        guard let active = session.displayed,
-              document.file.hdus.indices.contains(referenceIdx),
-              let shape = session.facts[referenceIdx].shape else { return false }
-        return active.width == shape.x && active.height == shape.y
-    }
-
     fileprivate func reproject(onto referenceIdx: Int) {
         guard let refHdu = document.file.hdus[safe: referenceIdx],
               let activeImage = session.displayed,
@@ -1769,22 +1737,6 @@ extension DocumentView {
             wcs: targetWCS,
             label: "Reprojected onto HDU \(referenceIdx)"
         )
-    }
-
-    fileprivate func computeDifference(against referenceIdx: Int) {
-        guard let refHdu = document.file.hdus[safe: referenceIdx],
-              let activeImage = session.displayed,
-              let refImage = try? FITSImage(hdu: refHdu) else { return }
-        do {
-            let diff = try ImageArithmetic.difference(activeImage, minus: refImage)
-            displayOverride = DisplayOverride(
-                image: diff,
-                wcs: session.displayedWCS,
-                label: "Difference vs HDU \(referenceIdx)"
-            )
-        } catch {
-            NSLog("difference failed: \(error)")
-        }
     }
 
     fileprivate func fetchCatalog() async {

@@ -5,6 +5,57 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testToolsMenuUsesSharedSectionsAndTypedActions() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let entries = CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1)
+            XCTAssertEqual(entries.compactMap(\.section), [
+                .collapseCube, .stackAcrossWindows, .analysis, .filter,
+                .transform, .reprojectOnto, .arithmeticVs,
+            ])
+            XCTAssertEqual(entries.compactMap(\.item).first?.identifier, "tools.collapse.sum")
+            XCTAssertEqual(entries.compactMap(\.item).first?.action, .collapse(.sum))
+            let stack = entries.compactMap(\.item).first { $0.identifier == "tools.stack.sum" }
+            XCTAssertEqual(stack?.enabled, false)
+            XCTAssertEqual(stack?.action, .stack(.sum))
+            let reproject = entries.compactMap(\.item).first { $0.identifier == "tools.reproject.2" }
+            XCTAssertEqual(reproject?.enabled, false)
+            let sameShape = entries.compactMap(\.item).first { $0.identifier == "tools.arithmetic.2" }
+            XCTAssertEqual(sameShape?.enabled, true)
+            XCTAssertEqual(sameShape?.children.first?.action, .binary(.sum, 2))
+            let differentShape = entries.compactMap(\.item).first { $0.identifier == "tools.arithmetic.3" }
+            XCTAssertEqual(differentShape?.enabled, false)
+            XCTAssertTrue(entries.compactMap(\.item).allSatisfy { !$0.tooltip.isEmpty && $0.visible })
+
+            let displayed = try XCTUnwrap(session.displayed)
+            session.setDerived(DerivedImage(image: displayed, wcs: nil, label: "Test"))
+            let derivedEntries = CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1)
+            XCTAssertEqual(derivedEntries.last?.item?.identifier, "tools.showOriginal")
+            XCTAssertEqual(derivedEntries.last?.item?.action, .clearDerivedImage)
+            XCTAssertTrue(derivedEntries.contains { if case .separator = $0 { return true }; return false })
+        }
+    }
+
+    func testToolsMenuHidesUnavailableSectionsButKeepsWorkspaceStacking() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.selectHDU(4)
+            let entries = CommandCatalog.toolsMenu(for: session, workspaceImageCount: 2)
+            XCTAssertEqual(entries.compactMap(\.section), [
+                .stackAcrossWindows, .reprojectOnto, .arithmeticVs,
+            ])
+            XCTAssertEqual(entries.compactMap(\.item).first { $0.identifier == "tools.stack.sum" }?.enabled, true)
+            XCTAssertEqual(entries.compactMap(\.item).first { $0.identifier == "tools.lightCurve" }?.enabled, false)
+            XCTAssertEqual(CommandCatalog.toolbarItem("tools", for: session, workspaceImageCount: 2)?.enabled, true)
+
+            session.selectHDU(2)
+            let imageEntries = CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1)
+            XCTAssertFalse(imageEntries.compactMap(\.section).contains(.collapseCube))
+            XCTAssertTrue(imageEntries.compactMap(\.section).contains(.reprojectOnto))
+            XCTAssertTrue(imageEntries.compactMap(\.section).contains(.arithmeticVs))
+        }
+    }
+
     func testRegionCommandsKeepSelectionAndRejectStaleIndices() async throws {
         try await MainActor.run {
             let session = try makeSession()

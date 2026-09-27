@@ -20,22 +20,15 @@ final class ToolbarState: ObservableObject {
     @Published var blinkActive: Bool = false
     @Published var isFetchingCatalog: Bool = false
 
-    @Published var hasSelectedImage: Bool = false
     @Published var hasWCS: Bool = false
     @Published var hasMultipleHDUs: Bool = false
-    @Published var hasCube: Bool = false
-    @Published var hasDisplayOverride: Bool = false
     @Published var wcsVariants: [String] = []     // "" + ["A","B",…]
     @Published var activeWCSVariant: String = ""
     @Published var wcsVariantLabels: [String: String] = [:]  // variant → display label
-    @Published var reprojectCandidates: [(Int, String, Bool)] = []
-    @Published var differenceCandidates: [(Int, String, Bool)] = []
 
     var onEffect: (Effect) -> Void = { _ in }
     var onExport: () -> Void = {}
     var onReproject: (Int) -> Void = { _ in }
-    var onDifference: (Int) -> Void = { _ in }
-    var onClearOverride: () -> Void = {}
     var onFetchCatalog: () -> Void = {}
     var onOpenScaleParameters: () -> Void = {}
     var onOpenPixelTable: () -> Void = {}
@@ -54,15 +47,4 @@ final class ToolbarState: ObservableObject {
     var onLightCurve: () -> Void = {}
 
     init(session: DocumentSession) { self.session = session }
-}
-
-enum StackMode: String, CaseIterable, Sendable {
-    case sum, mean, median
-    var label: String { rawValue.capitalized }
-}
-
-enum FilterSpec {
-    case boxcar(size: Int)
-    case median(size: Int)
-    case gaussian(sigma: Double)
 }
