@@ -1,12 +1,24 @@
 import Foundation
 import FITSCore
 
+public struct OverlaySegment: Sendable, Equatable {
+    public let from: SIMD2<Double>
+    public let to: SIMD2<Double>
+
+    public init(from: SIMD2<Double>, to: SIMD2<Double>) {
+        self.from = from
+        self.to = to
+    }
+}
+
 /// Shapes in view points, ready for a platform's drawing API.
 public enum OverlayPrimitive: Sendable, Equatable {
+    case segments([OverlaySegment], stroke: OverlayColor, opacity: Double,
+                  lineWidth: Double, dash: [Double])
     case path(points: [SIMD2<Double>], closed: Bool, stroke: OverlayColor,
               opacity: Double, lineWidth: Double)
     case ellipse(center: SIMD2<Double>, radiusX: Double, radiusY: Double,
-                 stroke: OverlayColor, opacity: Double, lineWidth: Double)
+                 stroke: OverlayColor, opacity: Double, lineWidth: Double, dash: [Double] = [])
     case text(String, at: SIMD2<Double>, color: OverlayColor, size: Double, opacity: Double)
     case handle(center: SIMD2<Double>, radius: Double, color: OverlayColor)
 }

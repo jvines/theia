@@ -20,27 +20,11 @@ struct ContourOverlay: View {
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
                 backingScale: 1
             )
-            // Match WCS grid colour family: faint cyan, denser per level.
-            for (idx, lvl) in leveled.enumerated() {
-                let alpha = 0.45 + 0.55 * Double(idx + 1) / Double(max(leveled.count, 1))
-                let colour = Color.cyan.opacity(alpha)
-                var path = Path()
-                for s in lvl.segments {
-                    let a = canvasPoint(s.a, mapping: mapping)
-                    let b = canvasPoint(s.b, mapping: mapping)
-                    path.move(to: a)
-                    path.addLine(to: b)
-                }
-                context.stroke(path, with: .color(colour), lineWidth: 1.0)
-            }
+            OverlayCanvas.draw(OverlayScene.contours(leveled, mapping: mapping), in: context)
         }
         .allowsHitTesting(false)
     }
 
-    private func canvasPoint(_ image: SIMD2<Double>, mapping: ViewMapping) -> CGPoint {
-        let point = mapping.imageToView(image)
-        return CGPoint(x: point.x, y: point.y)
-    }
 }
 
 struct ContourLevelsPanel: View {
