@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import AppKit
 import FITSCore
 import FITSRender
@@ -9,7 +8,7 @@ import TheiaKit
 /// shell pipelines) drive an already-open Theia. Bound to 127.0.0.1 only — never
 /// reachable from the network.
 ///
-/// Routes (all JSON):
+/// Routes (JSON except for .reg region text):
 ///   GET  /status                            → {version, beta, open: [{path, id}]}
 ///   POST /open  {path, stretch?, …}         → {id}
 ///   GET  /document/<id>/info                → {path, stretch, colormap, vmin, vmax, ...}
@@ -17,231 +16,127 @@ import TheiaKit
 ///   POST /document/<id>/colormap {name}     → {ok}
 ///   POST /document/<id>/scale   {vmin,vmax} → {ok}
 ///   POST /document/<id>/zscale              → {ok}
-///   GET  /document/<id>/regions             → {regions: [...]}
+///   GET  /document/<id>/regions             → .reg text
 ///   POST /document/<id>/regions  {dsl}      → {ok}     (replaces regions, body is .reg text)
 ///   POST /document/<id>/regions/clear       → {ok}
 ///   POST /quit                              → {ok}
 ///
-/// `id` is a 0-based index into the active controllers list.
+/// `id` is a stable, monotonic workspace document identifier.
 @MainActor
 final class ScriptingServer {
     static let shared = ScriptingServer()
 
-    private var listener: NWListener?
+    private var transport: ScriptingSocketServer?
     private(set) var port: UInt16 = 0
     private(set) var isRunning: Bool = false
 
-    /// Hard cap on the accumulated body size of a single request. 16 MB is well
-    /// above any plausible legitimate region-text or open-document JSON payload
-    /// and protects against a malicious local process exhausting RAM.
-    private static let maxBodyBytes: Int = 16 * 1024 * 1024
-    /// Hard cap on the accumulated header size — any well-behaved client fits
-    /// within 16 kB.
-    private static let maxHeaderBytes: Int = 16 * 1024
-
-    /// Starts listening on the first free port in [4321, 4399]. Idempotent — a
-    /// second call is a no-op. Binding is confirmed asynchronously via the
-    /// listener's state handler (the actual port is announced in the log once the
-    /// listener reaches `.ready`), so this returns the current `port` (0 until
-    /// ready) rather than a bind result.
+    /// Starts listening on the first free port in [4321, 4399]. Idempotent.
     @discardableResult
     func start() -> UInt16 {
         if isRunning { return port }
-        bind(startingAt: 4321)
-        return port
-    }
-
-    /// Attempts to bind `tryPort`, installing a state handler so that a port that
-    /// is already in use (NWListener surfaces that as an async `.failed` state, not
-    /// a synchronous throw) actually falls through to the next port instead of
-    /// silently pretending to listen.
-    private func bind(startingAt tryPort: Int) {
-        guard tryPort <= 4399 else {
-            NSLog("[ScriptingServer] failed to bind any port in 4321-4399")
-            return
+        guard !ScriptingAuth.tokenHex().isEmpty else {
+            NSLog("[ScriptingServer] cannot start without a persisted auth token")
+            return 0
         }
-        let params = NWParameters.tcp
-        // 127.0.0.1 only — restrict to the loopback interface.
-        (params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options)?.version = .v4
-        params.requiredInterfaceType = .loopback
-        let l: NWListener
         do {
-            l = try NWListener(using: params, on: NWEndpoint.Port(integerLiteral: UInt16(tryPort)))
-        } catch {
-            NSLog("[ScriptingServer] bind \(tryPort) failed: \(error)")
-            bind(startingAt: tryPort + 1)
-            return
-        }
-        l.newConnectionHandler = { [weak self] conn in
-            Task { @MainActor in self?.handle(connection: conn) }
-        }
-        l.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                guard let self else { return }
-                switch state {
-                case .ready:
-                    self.listener = l
-                    self.port = UInt16(tryPort)
-                    self.isRunning = true
-                    NSLog("[ScriptingServer] listening on 127.0.0.1:\(tryPort)")
-                    // Eagerly materialise the auth token so the file exists before
-                    // any client tries to read it.
-                    _ = ScriptingAuth.tokenHex()
-                    NSLog("[ScriptingServer] token file: \(ScriptingAuth.tokenURL().path)")
-                case .failed(let error):
-                    NSLog("[ScriptingServer] bind \(tryPort) failed: \(error)")
-                    l.cancel()
-                    if !self.isRunning { self.bind(startingAt: tryPort + 1) }
-                default:
-                    break
-                }
+            let portFile = try AppPaths(platform: .macOS).portFile()
+            let server = ScriptingSocketServer(portFileURL: portFile) { [weak self] bytes in
+                self?.response(for: bytes)
             }
+            let boundPort = try server.start()
+            transport = server
+            port = boundPort
+            isRunning = true
+            NSLog("[ScriptingServer] listening on 127.0.0.1:\(boundPort)")
+            NSLog("[ScriptingServer] token file: \(ScriptingAuth.tokenURL().path)")
+            return boundPort
+        } catch {
+            NSLog("[ScriptingServer] failed to start HTTP transport: \(error)")
+            return 0
         }
-        l.start(queue: .main)
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        transport?.stop()
+        transport = nil
         isRunning = false
+        port = 0
     }
 
-    // MARK: - Connection / request handling
+    // MARK: - Request handling
 
-    private func handle(connection conn: NWConnection) {
-        conn.start(queue: .main)
-        receive(connection: conn, buffer: Data())
-    }
-
-    private func receive(connection conn: NWConnection, buffer: Data) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
-            Task { @MainActor in
-                guard let self else { return }
-                var buf = buffer
-                if let d = data { buf.append(d) }
-                // Hard cap on accumulated bytes — a malicious local client can't
-                // make us buffer indefinitely.
-                if buf.count > Self.maxHeaderBytes + Self.maxBodyBytes {
-                    let resp = self.httpResponse(413, json: ["error": "request too large"])
-                    conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                    return
-                }
-                guard let headerEnd = buf.range(of: Data("\r\n\r\n".utf8)) else {
-                    if buf.count > Self.maxHeaderBytes {
-                        let resp = self.httpResponse(431, json: ["error": "header too large"])
-                        conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                        return
-                    }
-                    if isComplete || error != nil { conn.cancel(); return }
-                    self.receive(connection: conn, buffer: buf)
-                    return
-                }
-                // Enforce the header cap here too: a complete header that arrives in
-                // one burst reaches this path without ever hitting the incomplete-read
-                // check above, so an oversized header would otherwise slip through.
-                if headerEnd.lowerBound > Self.maxHeaderBytes {
-                    let resp = self.httpResponse(431, json: ["error": "header too large"])
-                    conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                    return
-                }
-                let headerData = buf.subdata(in: 0..<headerEnd.lowerBound)
-                let headerStr = String(data: headerData, encoding: .utf8) ?? ""
-                let rawCL = parseContentLength(headerStr) ?? 0
-                guard rawCL >= 0 else {
-                    let resp = self.httpResponse(400, json: ["error": "invalid content-length"])
-                    conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                    return
-                }
-                guard rawCL <= Self.maxBodyBytes else {
-                    let resp = self.httpResponse(413, json: ["error": "request body too large"])
-                    conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                    return
-                }
-                let contentLength = rawCL
-                let bodyStart = headerEnd.upperBound
-                let bodyHave = buf.count - bodyStart
-                if bodyHave < contentLength {
-                    if isComplete || error != nil { conn.cancel(); return }
-                    self.receive(connection: conn, buffer: buf)
-                    return
-                }
-                let body = contentLength > 0 ? buf.subdata(in: bodyStart..<(bodyStart + contentLength)) : Data()
-                // Auth gate — every request must carry the bearer token.
-                let authHeader = parseHeaderValue(headerStr, name: "Authorization")
-                guard ScriptingAuth.authorise(headerValue: authHeader) else {
-                    let resp = self.httpResponse(401, json: ["error": "missing or invalid Authorization: Bearer <token>"])
-                    conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
-                    return
-                }
-                let response = self.route(headerStr: headerStr, body: body)
-                conn.send(content: response, completion: .contentProcessed { _ in conn.cancel() })
+    private func response(for bytes: Data) -> ScriptingSocketReply? {
+        switch ScriptingHTTPRequestParser.parse(bytes) {
+        case .incomplete:
+            return nil
+        case .failure(let failure):
+            return ScriptingSocketReply(data: httpResponse(failure.status,
+                                                           json: ["error": failure.message]))
+        case .request(let request):
+            // Authentication follows framing checks, before route resolution.
+            guard ScriptingAuth.authorise(headerValue: request.headerValue("Authorization")) else {
+                return ScriptingSocketReply(data: httpResponse(
+                    401, json: ["error": "missing or invalid Authorization: Bearer <token>"]))
             }
+            let destination = ScriptingHTTPRouter.resolve(request)
+            if case .quit = destination {
+                guard let app = AppDelegate.shared else {
+                    return ScriptingSocketReply(data: httpResponse(503,
+                                                                  json: ["error": "app unavailable"]))
+                }
+                return ScriptingSocketReply(
+                    data: httpResponse(200, json: ["ok": true]),
+                    didSend: { [weak app] in
+                        _ = app?.performWorkspaceCommand(.quit, origin: .script)
+                    }
+                )
+            }
+            return ScriptingSocketReply(data: route(request, destination: destination))
         }
     }
 
     // MARK: - Routes
 
-    private func route(headerStr: String, body: Data) -> Data {
-        let lines = headerStr.split(separator: "\r\n", omittingEmptySubsequences: false)
-        guard let requestLine = lines.first else { return httpResponse(400, json: ["error": "bad request"]) }
-        let parts = requestLine.split(separator: " ")
-        guard parts.count >= 2 else { return httpResponse(400, json: ["error": "bad request line"]) }
-        let method = String(parts[0])
-        let path = String(parts[1])
-
-        switch (method, path) {
-        case ("GET", "/status"):
+    private func route(_ request: ScriptingHTTPRequest,
+                       destination: ScriptingHTTPRoute) -> Data {
+        switch destination {
+        case .status:
             return statusResponse()
-        case ("POST", "/open"):
-            return openResponse(body: body)
-        case ("POST", "/quit"):
-            guard let app = AppDelegate.shared,
-                  app.performWorkspaceCommand(.quit, origin: .script).failure == nil else {
-                return httpResponse(503, json: ["error": "app unavailable"])
-            }
-            return httpResponse(200, json: ["ok": true])
-        default: break
-        }
-
-        // /document/<id>/...
-        if path.hasPrefix("/document/") {
-            let stripped = String(path.dropFirst("/document/".count))
-            let segments = stripped.split(separator: "/", maxSplits: 2, omittingEmptySubsequences: false)
-            guard let id = Int(segments[0]) else { return httpResponse(404, json: ["error": "bad id"]) }
-            // Reconstruct the whole sub-path so an unexpected extra segment (e.g.
-            // /document/0/info/junk) falls through to 404 instead of matching just
-            // the second segment, and multi-segment routes like regions/clear match.
-            let sub = segments.dropFirst().joined(separator: "/")
+        case .open:
+            return openResponse(body: request.body)
+        case .quit:
+            return httpResponse(500, json: ["error": "quit must be deferred until send completion"])
+        case .document(let id, let route):
             guard let controller = controllerByIndex(id) else {
                 return httpResponse(404, json: ["error": "no document with id \(id)"])
             }
             let response: Data? = controller.documentModel.session.withEventContext(origin: .script) {
-                switch (method, sub) {
-                case ("GET", "info"):
+                switch route {
+                case .info:
                     return infoResponse(controller: controller)
-                case ("POST", "stretch"):
-                    return setStretchResponse(controller: controller, body: body)
-                case ("POST", "colormap"):
-                    return setColormapResponse(controller: controller, body: body)
-                case ("POST", "scale"):
-                    return setScaleResponse(controller: controller, body: body)
-                case ("POST", "zscale"):
-                    return commandResponse(controller.documentModel.session.perform(
-                        .applyScalePreset(.zscale), origin: .script
-                    ))
-                case ("GET", "regions"):
+                case .stretch, .colormap, .scale, .zscale:
+                    guard let route else { return nil }
+                    switch ScriptingHTTPRouter.command(for: route, body: request.body) {
+                    case .success(let command):
+                        return commandResponse(controller.documentModel.session.perform(command, origin: .script))
+                    case .failure(let failure):
+                        return httpResponse(failure.status, json: ["error": failure.message])
+                    }
+                case .regionsGet:
                     return regionsGetResponse(controller: controller)
-                case ("POST", "regions"):
-                    return regionsPostResponse(controller: controller, body: body)
-                case ("POST", "regions/clear"):
+                case .regionsPost:
+                    return regionsPostResponse(controller: controller, body: request.body)
+                case .regionsClear:
                     controller.setRegionsForScripting([])
                     return httpResponse(200, json: ["ok": true])
-                default: return nil
+                case nil: return nil
                 }
             }
             if let response { return response }
+            return httpResponse(404, json: ["error": "no route"])
+        case .failure(let failure):
+            return httpResponse(failure.status, json: ["error": failure.message])
         }
-        return httpResponse(404, json: ["error": "no route"])
     }
 
     // MARK: - Handlers
@@ -286,11 +181,13 @@ final class ScriptingServer {
             if let s = obj["colormap"] as? String, let cm = ColorMap(rawValue: s) {
                 session.perform(.setColormap(cm), origin: .script)
             }
-            if let vmin = obj["vmin"] as? Double {
-                session.perform(.setLevels(min: Float(vmin), max: session.view.vmax), origin: .script)
+            if let vmin = obj["vmin"] as? Double,
+               let minimum = ScriptingHTTPRouter.finiteLevel(vmin) {
+                session.perform(.setLevels(min: minimum, max: session.view.vmax), origin: .script)
             }
-            if let vmax = obj["vmax"] as? Double {
-                session.perform(.setLevels(min: session.view.vmin, max: Float(vmax)), origin: .script)
+            if let vmax = obj["vmax"] as? Double,
+               let maximum = ScriptingHTTPRouter.finiteLevel(vmax) {
+                session.perform(.setLevels(min: session.view.vmin, max: maximum), origin: .script)
             }
             if obj["zscale"] as? Bool == true {
                 session.perform(.applyScalePreset(.zscale), origin: .script)
@@ -311,35 +208,6 @@ final class ScriptingServer {
             "stretchParameter": Double(viewport.stretchParameter)
         ]
         return httpResponse(200, json: json)
-    }
-
-    private func setStretchResponse(controller: DocumentWindowController, body: Data) -> Data {
-        guard let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let name = obj["name"] as? String,
-              let s = ImageStretch(rawValue: name) else {
-            return httpResponse(400, json: ["error": "expected {name: <stretch>}"])
-        }
-        return commandResponse(controller.documentModel.session.perform(.setStretch(s), origin: .script))
-    }
-
-    private func setColormapResponse(controller: DocumentWindowController, body: Data) -> Data {
-        guard let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let name = obj["name"] as? String,
-              let cm = ColorMap(rawValue: name) else {
-            return httpResponse(400, json: ["error": "expected {name: <colormap>}"])
-        }
-        return commandResponse(controller.documentModel.session.perform(.setColormap(cm), origin: .script))
-    }
-
-    private func setScaleResponse(controller: DocumentWindowController, body: Data) -> Data {
-        guard let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let vmin = obj["vmin"] as? Double,
-              let vmax = obj["vmax"] as? Double else {
-            return httpResponse(400, json: ["error": "expected {vmin, vmax}"])
-        }
-        return commandResponse(controller.documentModel.session.perform(
-            .setLevels(min: Float(vmin), max: Float(vmax)), origin: .script
-        ))
     }
 
     private func regionsGetResponse(controller: DocumentWindowController) -> Data {
@@ -392,38 +260,4 @@ final class ScriptingServer {
         out.append(body)
         return out
     }
-}
-
-/// Returns the parsed Content-Length, or:
-///   - `nil` if no header is present (caller may treat as 0)
-///   - `Int.min` to signal a malformed value (negative, `+` sign, leading zero,
-///     non-digits, multiple Content-Length headers — all of which are smuggling
-///     shapes the caller must reject with 400).
-private func parseContentLength(_ header: String) -> Int? {
-    var found: String? = nil
-    let target = "content-length"
-    for line in header.split(separator: "\r\n") {
-        let parts = line.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2,
-              parts[0].lowercased().trimmingCharacters(in: .whitespaces) == target else { continue }
-        if found != nil { return Int.min }  // multiple Content-Length headers
-        found = parts[1].trimmingCharacters(in: .whitespaces)
-    }
-    guard let raw = found else { return nil }
-    // Only accept pure decimal digits. Reject `+N`, `-N`, leading zeros (except
-    // exactly "0"), whitespace, hex, etc.
-    guard !raw.isEmpty, raw.allSatisfy({ $0.isASCII && $0.isNumber }) else { return Int.min }
-    if raw.count > 1 && raw.first == "0" { return Int.min }
-    return Int(raw) ?? Int.min
-}
-
-private func parseHeaderValue(_ header: String, name: String) -> String? {
-    let target = name.lowercased()
-    for line in header.split(separator: "\r\n") {
-        let parts = line.split(separator: ":", maxSplits: 1)
-        if parts.count == 2, parts[0].lowercased().trimmingCharacters(in: .whitespaces) == target {
-            return parts[1].trimmingCharacters(in: .whitespaces)
-        }
-    }
-    return nil
 }

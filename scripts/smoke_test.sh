@@ -48,22 +48,26 @@ echo "smoke: launching $BIN"
 "$BIN" >"$LOG" 2>&1 &
 APP_PID=$!
 
-# --- wait for the scripting server to announce its port (max ~20s) ---
+# --- read the per-process port file (max ~20s) ---
+TOKEN_FILE="$HOME/Library/Application Support/com.athropa.theia/scripting-token"
+PORT_FILE="$(dirname "$TOKEN_FILE")/scripting-port"
 PORT=""
 for _ in $(seq 1 40); do
     kill -0 "$APP_PID" 2>/dev/null || fail "app exited during startup (pid $APP_PID)"
-    PORT="$(grep -oE 'listening on 127\.0\.0\.1:[0-9]+' "$LOG" | grep -oE '[0-9]+$' | tail -1)"
-    [[ -n "$PORT" ]] && break
+    if [[ -f "$PORT_FILE" ]]; then
+        CANDIDATE_PORT="$(sed -n '1p' "$PORT_FILE")"
+        SERVER_PID="$(sed -n '2p' "$PORT_FILE")"
+        if [[ "$SERVER_PID" == "$APP_PID" && "$CANDIDATE_PORT" =~ ^[0-9]+$ ]]; then
+            PORT="$CANDIDATE_PORT"
+            break
+        fi
+    fi
     sleep 0.5
 done
-[[ -n "$PORT" ]] || fail "scripting server never reported a port"
+[[ -n "$PORT" ]] || fail "scripting server never wrote its port file: $PORT_FILE"
 echo "smoke: server on port $PORT"
 
-# --- find the auth token (logged path, with a computed fallback) ---
-TOKEN_FILE="$(grep -oE 'token file: .*' "$LOG" | tail -1 | sed 's/^token file: //')"
-if [[ -z "$TOKEN_FILE" || ! -f "$TOKEN_FILE" ]]; then
-    TOKEN_FILE="$HOME/Library/Application Support/com.athropa.theia/scripting-token"
-fi
+# --- read the auth token from the same directory ---
 [[ -f "$TOKEN_FILE" ]] || fail "token file not found (looked at: $TOKEN_FILE)"
 TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
 [[ -n "$TOKEN" ]] || fail "token file empty: $TOKEN_FILE"
