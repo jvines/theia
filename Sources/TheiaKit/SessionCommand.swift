@@ -201,6 +201,8 @@ public enum AlertStyle: Sendable, Equatable {
 }
 
 public enum Effect: Sendable, Equatable {
+    case documentOpened(Int)
+    case noteRecent(URL)
     case alert(title: String, message: String, style: AlertStyle)
     case ask(Question, PendingRequest)
     case exportImage(RenderSnapshot, URL)

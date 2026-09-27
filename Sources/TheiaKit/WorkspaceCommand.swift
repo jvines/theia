@@ -30,6 +30,15 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
     case crosshair
 }
 
+/// A synchronous open decision; the platform creates or raises its window from
+/// the returned effects after the shared session has been registered.
+@MainActor public struct WorkspaceOpenResult {
+    public let session: DocumentSession
+    public let documentID: Int
+    public let wasAlreadyOpen: Bool
+    public let effects: [Effect]
+}
+
 /// App-level commands and shared state for all open documents.
 @MainActor @Observable public final class Workspace {
     private var enabledSyncFlags: Set<SyncFlag> = []
@@ -87,6 +96,25 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
     public func focus(_ session: DocumentSession) {
         guard let id = documents[session.id]?.documentID else { return }
         focusedDocumentID = id
+    }
+
+    public func open(
+        path: String, load: (URL) throws -> DocumentSession
+    ) throws -> WorkspaceOpenResult {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        if let existing = documents.values.compactMap(\.session).first(where: {
+            $0.url.standardizedFileURL == url
+        }), let id = id(of: existing) {
+            focus(existing)
+            return WorkspaceOpenResult(session: existing, documentID: id,
+                                       wasAlreadyOpen: true, effects: [.documentOpened(id)])
+        }
+        let session = try load(url)
+        register(session)
+        let id = self.id(of: session)!
+        return WorkspaceOpenResult(session: session, documentID: id,
+                                   wasAlreadyOpen: false,
+                                   effects: [.documentOpened(id), .noteRecent(url)])
     }
 
     private func propagate(_ event: SessionEvent, from source: DocumentSession) {

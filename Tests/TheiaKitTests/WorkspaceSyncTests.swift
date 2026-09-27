@@ -117,6 +117,48 @@ final class WorkspaceSyncTests: XCTestCase {
         }
     }
 
+    func testOpenRegistersOnceAndReturnsWindowAndRecentEffects() async throws {
+        try await MainActor.run {
+            let workspace = Workspace()
+            var loads = 0
+            let path = "/tmp/workspace-first.fits"
+            let first = try workspace.open(path: path) { _ in
+                loads += 1
+                return try makeSession(name: "first")
+            }
+            XCTAssertEqual(first.documentID, 0)
+            XCTAssertFalse(first.wasAlreadyOpen)
+            XCTAssertEqual(first.effects, [.documentOpened(0),
+                                           .noteRecent(URL(fileURLWithPath: path))])
+
+            let again = try workspace.open(path: path) { _ in
+                loads += 1
+                return try makeSession(name: "unexpected")
+            }
+            XCTAssertEqual(loads, 1)
+            XCTAssertEqual(again.documentID, 0)
+            XCTAssertTrue(again.wasAlreadyOpen)
+            XCTAssertEqual(again.effects, [.documentOpened(0)])
+            XCTAssertTrue(again.session === first.session)
+        }
+    }
+
+    func testFailedOpenDoesNotReserveAnIDOrFocus() async throws {
+        enum LoadFailure: Error { case unreadable }
+        try await MainActor.run {
+            let workspace = Workspace()
+            XCTAssertThrowsError(try workspace.open(path: "/tmp/missing.fits") { _ in
+                throw LoadFailure.unreadable
+            })
+            XCTAssertNil(workspace.focusedDocumentID)
+
+            let opened = try workspace.open(path: "/tmp/workspace-first.fits") { _ in
+                try makeSession(name: "first")
+            }
+            XCTAssertEqual(opened.documentID, 0)
+        }
+    }
+
     @MainActor private func makeSession(name: String, crpix1: Int = 1) throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",

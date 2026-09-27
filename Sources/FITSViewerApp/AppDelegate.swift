@@ -48,11 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openDocument(at: url)
             }
         }
-        if !UserPreferences.shared.hasSeenOnboarding {
-            UserPreferences.shared.hasSeenOnboarding = true
-            OnboardingWindowController.show()
-        } else if controllers.isEmpty {
-            WelcomeWindowController.show()
+        if let window = LaunchPolicy.initialWindow(
+            hasSeenOnboarding: UserPreferences.shared.hasSeenOnboarding,
+            openDocumentCount: controllers.count
+        ) {
+            if window == .onboarding { UserPreferences.shared.hasSeenOnboarding = true }
+            _ = performWorkspaceCommand(.showAppWindow(window), origin: .user)
         }
     }
 
@@ -166,8 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Re-open Welcome when the last document window closes (mirrors Pages / Xcode UX).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag && controllers.isEmpty {
-            WelcomeWindowController.show()
+        if let window = LaunchPolicy.reopenWindow(hasVisibleWindows: flag,
+                                                  openDocumentCount: controllers.count) {
+            _ = performWorkspaceCommand(.showAppWindow(window), origin: .user)
         }
         return true
     }
@@ -194,15 +196,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     func openDocumentThrowing(at url: URL) throws -> DocumentWindowController {
         log("openDocument at \(url.path)")
-        if let existing = controllers.first(where: { $0.documentModel.url == url }) {
+        var loadedDocument: DocumentModel?
+        let result = try workspace.open(path: url.path) { resolvedURL in
+            let document = try DocumentModel(url: resolvedURL)
+            loadedDocument = document
+            return document.session
+        }
+        if result.wasAlreadyOpen {
+            guard let existing = controllers.first(where: {
+                $0.documentModel.session === result.session
+            }) else { throw OpenWindowError.missingController(result.documentID) }
             log("already open, raising")
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            currentController = existing
-            workspace.focus(existing.documentModel.session)
+            for effect in result.effects { applyEffect(effect) }
             return existing
         }
-        let document = try DocumentModel(url: url)
+        guard let document = loadedDocument else {
+            throw OpenWindowError.missingController(result.documentID)
+        }
         log("loaded \(document.file.hdus.count) HDUs")
         let controller = DocumentWindowController(document: document)
         controllers.append(controller)
@@ -215,14 +225,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.imageAvailability[controllerID] = available
             self?.refreshDocumentToolbars()
         }
-        currentController = controller
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+        for effect in result.effects { applyEffect(effect) }
         refreshDocumentToolbars()
-        NSDocumentController.shared.noteNewRecentDocumentURL(url)
-        WelcomeWindowController.closeIfOpen()
         log("window shown, toolbar items=\(controller.window?.toolbar?.items.count ?? -1)")
         return controller
+    }
+
+    private enum OpenWindowError: Error {
+        case missingController(Int)
     }
 
     /// GUI open wrapper: opens `url`, surfacing failures as a **non-blocking**
@@ -308,6 +318,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applyEffect(_ effect: Effect) {
         switch effect {
+        case .documentOpened(let id):
+            guard let controller = controllerForScripting(at: id) else { return }
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+            controllerDidFocus(controller)
+            WelcomeWindowController.closeIfOpen()
+        case .noteRecent(let url):
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
         case .alert(let title, let message, let style):
             let alert = NSAlert()
             alert.messageText = title

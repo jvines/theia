@@ -1112,90 +1112,28 @@ extension DocumentView {
             a.informativeText = "Select an aperture region (a circle is typical) before generating a light curve. The region's sky position is reprojected into each open file via WCS."
             a.runModal(); return
         }
-        let reference = regions[idx]
         guard let refWCS = session.displayedWCS else {
             let a = NSAlert()
             a.messageText = "Reference image has no WCS"
             a.informativeText = "Light curves need WCS to project the aperture onto each open document."
             a.runModal(); return
         }
-        // Project the region's centre into sky once.
-        guard let centre = imageCenter(of: regionCentre(of: reference), frame: reference.frame, wcs: refWCS) else { return }
-        guard let sky = refWCS.pixelToSky(imageX: Int(centre.x.rounded()), imageY: Int(centre.y.rounded())) else { return }
-
-        // Sample every open document.
         let controllers = AppDelegate.shared?.allControllersForScripting() ?? []
-        var points: [(time: Double, flux: Double, err: Double, label: String)] = []
-        var timeLabel = "MJD"
-        for c in controllers {
-            let model = c.documentModel
-            guard let hdu = model.file.hdus[safe: model.session.hdu],
-                  let img = model.session.displayed,
-                  let wcs = model.session.displayedWCS,
-                  let p = wcs.skyToPixel(ra: sky.ra, dec: sky.dec) else { continue }
-            // Reproject the region to this image's pixel frame as an image-frame copy.
-            let projected = reprojectRegion(reference, toImagePixel: (p.x, p.y))
-            guard let m = Photometry.measure(region: projected, image: img, wcs: nil) else { continue }
-            let flux = m.skySubtractedFlux ?? m.sum
-            let err = m.skySubtractedFluxError ?? m.sumError
-            if let t = FITSTime.observationMJD(header: hdu.header) {
-                points.append((t.mjd, flux, err, model.url.lastPathComponent))
-                timeLabel = t.label
-            } else {
-                // Use index as fake time if no header time.
-                points.append((Double(points.count), flux, err, model.url.lastPathComponent))
-                timeLabel = "file index"
-            }
+        let frames = controllers.compactMap { controller -> LightCurveFrame? in
+            let session = controller.documentModel.session
+            guard let hdu = controller.documentModel.file.hdus[safe: session.hdu],
+                  let image = session.displayed,
+                  let wcs = session.displayedWCS else { return nil }
+            return LightCurveFrame(image: image, wcs: wcs, header: hdu.header)
         }
-        if points.count < 2 {
+        guard let curve = LightCurveBuilder.build(region: regions[idx], referenceWCS: refWCS,
+                                                  frames: frames) else {
             let a = NSAlert()
             a.messageText = "Need ≥ 2 open documents"
             a.informativeText = "Open more files of the same field, then run Light curve again."
             a.runModal(); return
         }
-        points.sort { $0.time < $1.time }
-        LightCurveWindowController.show(
-            model: LightCurveModel(
-                points: points.map { LightCurvePoint(time: $0.time, flux: $0.flux, err: $0.err) },
-                timeLabel: timeLabel
-            ),
-            attachedTo: NSApp.keyWindow
-        )
-    }
-
-    private func regionCentre(of region: Region) -> Region.Point {
-        switch region.shape {
-        case .circle(let c, _), .box(let c, _, _, _),
-             .ellipse(let c, _, _, _), .annulus(let c, _, _): return c
-        case .point(let p): return p
-        case .polygon(let pts): return pts.first ?? .init(x: 0, y: 0)
-        }
-    }
-
-    private func reprojectRegion(_ source: Region, toImagePixel p: (Double, Double)) -> Region {
-        // Build a new image-frame region with the same shape parameters but a re-cast
-        // centre. Radii in arcsec get converted to pixels using the source WCS local
-        // scale (already handled when measuring); for simplicity here, if the source
-        // was image-frame we just translate; if WCS-frame, we recast as image with the
-        // converted centre and a fallback pixel-radius.
-        let cx = p.0 + 1, cy = p.1 + 1   // FITS 1-based
-        switch source.shape {
-        case .circle(_, let r):
-            return Region(shape: .circle(center: .init(x: cx, y: cy), radius: r),
-                             frame: source.frame == .image ? .image : .image,
-                             attributes: source.attributes)
-        case .box(_, let w, let h, let a):
-            return Region(shape: .box(center: .init(x: cx, y: cy), width: w, height: h, angle: a),
-                             frame: .image, attributes: source.attributes)
-        case .ellipse(_, let rx, let ry, let a):
-            return Region(shape: .ellipse(center: .init(x: cx, y: cy), rx: rx, ry: ry, angle: a),
-                             frame: .image, attributes: source.attributes)
-        case .annulus(_, let i, let o):
-            return Region(shape: .annulus(center: .init(x: cx, y: cy), innerRadius: i, outerRadius: o),
-                             frame: .image, attributes: source.attributes)
-        default:
-            return source
-        }
+        LightCurveWindowController.show(model: curve, attachedTo: NSApp.keyWindow)
     }
 
     fileprivate func detectSourcesAndAddRegions() {
@@ -1395,7 +1333,8 @@ extension DocumentView {
                 attachedTo: NSApp.keyWindow
             )
         case .showPanel(.contourLevels): openContourLevelsPanel()
-        case .alert, .showAppWindow, .openURL, .copyToClipboard, .tileWindows, .quit:
+        case .documentOpened, .noteRecent, .alert, .showAppWindow, .openURL,
+             .copyToClipboard, .tileWindows, .quit:
             AppDelegate.shared?.applyEffect(effect)
         }
     }
