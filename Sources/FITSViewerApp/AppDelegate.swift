@@ -334,6 +334,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .saveImage(let snapshot, _):
             controllers.first { $0.documentModel.session.id == snapshot.documentID }?
                 .toolbarState.onEffect(effect)
+        case .extractSlab(let request, _, _):
+            controllers.first { $0.documentModel.session.id == request.documentID }?
+                .toolbarState.onEffect(effect)
         case .saveRegions(let snapshot, _):
             controllers.first { $0.documentModel.session.id == snapshot.documentID }?
                 .toolbarState.onEffect(effect)

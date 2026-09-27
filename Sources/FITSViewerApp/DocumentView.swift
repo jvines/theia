@@ -874,7 +874,6 @@ extension DocumentView {
         toolbarState.onCropToSelection = { cropToSelectedRegion() }
         toolbarState.onSubtractBackground = { subtractBackground() }
         toolbarState.onBinImage = { n in binImage(by: n) }
-        toolbarState.onCubeSlab = { _, _ in promptForSlab() }
         toolbarState.onStackOpenDocuments = { mode in stackOpenDocuments(mode: mode) }
         toolbarState.onLightCurve = { generateLightCurve() }
         toolbarState.onApplyFilter = { spec in applyFilter(spec) }
@@ -1274,33 +1273,6 @@ extension DocumentView {
         displayOverride = DisplayOverride(image: result, wcs: nil, label: "Binned \(n)×\(n)")
     }
 
-    fileprivate func promptForSlab() {
-        guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { NSSound.beep(); return }
-        let alert = NSAlert()
-        alert.messageText = "Extract Cube Slab"
-        alert.informativeText = "Sum planes (inclusive) of a \(hdu.planeCount)-plane cube. Enter range:"
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 8
-        let fromField = NSTextField(string: "0")
-        fromField.frame = NSRect(x: 0, y: 0, width: 60, height: 22)
-        let toField = NSTextField(string: "\(hdu.planeCount - 1)")
-        toField.frame = NSRect(x: 0, y: 0, width: 60, height: 22)
-        stack.addArrangedSubview(NSTextField(labelWithString: "From"))
-        stack.addArrangedSubview(fromField)
-        stack.addArrangedSubview(NSTextField(labelWithString: "To"))
-        stack.addArrangedSubview(toField)
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-        alert.accessoryView = stack
-        alert.addButton(withTitle: "Extract")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            let from = max(0, min(hdu.planeCount - 1, Int(fromField.stringValue) ?? 0))
-            let to   = max(0, min(hdu.planeCount - 1, Int(toField.stringValue) ?? hdu.planeCount - 1))
-            extractCubeSlab(from: min(from, to), to: max(from, to))
-        }
-    }
-
     private func extractCubeSlab(from: Int, to: Int) {
         guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { return }
         let w = hdu.axes[0], h = hdu.axes[1]
@@ -1682,6 +1654,34 @@ extension DocumentView {
             } else {
                 panel.begin(completionHandler: handleResponse)
             }
+        case .ask(.numbers(let prompt, let fields), let request):
+            let alert = NSAlert()
+            alert.messageText = "Extract Cube Slab"
+            alert.informativeText = prompt
+            let stack = NSStackView()
+            stack.orientation = .horizontal
+            stack.spacing = 8
+            let defaults: [String]
+            if case .slab(let slab) = request {
+                defaults = ["0", "\(slab.planeCount - 1)"]
+            } else {
+                defaults = Array(repeating: "0", count: fields.count)
+            }
+            let inputs = fields.enumerated().map { index, label -> NSTextField in
+                let input = NSTextField(string: defaults[index])
+                input.frame = NSRect(x: 0, y: 0, width: 60, height: 22)
+                stack.addArrangedSubview(NSTextField(labelWithString: label))
+                stack.addArrangedSubview(input)
+                return input
+            }
+            stack.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+            alert.accessoryView = stack
+            alert.addButton(withTitle: "Extract")
+            alert.addButton(withTitle: "Cancel")
+            let answer: Answer = alert.runModal() == .alertFirstButtonReturn
+                ? .numbers(inputs.map { Double($0.stringValue) ?? .nan }) : .cancelled
+            let outcome = session.perform(.answer(request, answer), origin: .user)
+            for next in outcome.effects { applyEffect(next) }
         case .ask:
             break
         case .exportImage(let snapshot, let url):
@@ -1719,6 +1719,11 @@ extension DocumentView {
                     }
                 }
             }
+        case .extractSlab(let request, let from, let to):
+            guard request.documentID == session.id,
+                  request.hduIndex == session.hdu,
+                  request.imageRevision == session.imageRevision else { return }
+            extractCubeSlab(from: from, to: to)
         case .saveRegions(let snapshot, let url):
             DispatchQueue.global(qos: .userInitiated).async {
                 do {

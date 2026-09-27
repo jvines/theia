@@ -94,6 +94,7 @@ public enum PendingRequest: Sendable, Equatable {
     case exportImage(RenderSnapshot)
     case exportCube(CubeRenderSnapshot)
     case saveImage(RenderSnapshot)
+    case slab(SlabRequest)
     case saveRegions(RegionSaveSnapshot)
     case loadRegions(RegionLoadRequest)
 
@@ -102,6 +103,7 @@ public enum PendingRequest: Sendable, Equatable {
         case .exportImage(let snapshot): snapshot.id
         case .exportCube(let snapshot): snapshot.id
         case .saveImage(let snapshot): snapshot.id
+        case .slab(let request): request.id
         case .saveRegions(let snapshot): snapshot.id
         case .loadRegions(let request): request.id
         }
@@ -112,6 +114,7 @@ public enum PendingRequest: Sendable, Equatable {
         case .exportImage(let snapshot): snapshot.documentID
         case .exportCube(let snapshot): snapshot.documentID
         case .saveImage(let snapshot): snapshot.documentID
+        case .slab(let request): request.documentID
         case .saveRegions(let snapshot): snapshot.documentID
         case .loadRegions(let request): request.documentID
         }
@@ -131,6 +134,7 @@ extension DocumentSession {
         switch request {
         case .exportImage, .exportCube: title = "Export not saved"
         case .saveImage: title = "FITS image not saved"
+        case .slab: title = "Slab not extracted"
         case .saveRegions: title = "Regions not saved"
         case .loadRegions: title = "Regions not loaded"
         }
@@ -176,6 +180,19 @@ extension DocumentSession {
         ])
     }
 
+    func requestSlab() -> CommandOutcome {
+        guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+        let cube = file.hdus[hdu]
+        guard cube.naxis == 3 else { return CommandOutcome(failure: .unavailableCube) }
+        let slab = SlabRequest(session: self)
+        let request = PendingRequest.slab(slab)
+        pendingRequests[slab.id] = request
+        let prompt = "Sum planes (inclusive) of a \(slab.planeCount)-plane cube. Enter range:"
+        return CommandOutcome(effects: [
+            .ask(.numbers(prompt: prompt, fields: ["From", "To"]), request)
+        ])
+    }
+
     func requestRegionSave() -> CommandOutcome {
         guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
         guard !regions.isEmpty else { return CommandOutcome(failure: .noRegions) }
@@ -208,6 +225,7 @@ extension DocumentSession {
             return CommandOutcome()
         case .path(let url):
             guard url.isFileURL else { return rejectedAnswer(.invalidAnswer, for: stored) }
+            if case .slab = stored { return rejectedAnswer(.invalidAnswer, for: stored) }
             pendingRequests[request.id] = nil
             switch stored {
             case .exportImage(let snapshot):
@@ -221,6 +239,8 @@ extension DocumentSession {
             case .loadRegions(let load):
                 acceptRegionLoad(load)
                 return CommandOutcome(effects: [.loadRegions(load, url)])
+            case .slab:
+                return rejectedAnswer(.invalidAnswer, for: stored)
             }
         case .paths(let urls):
             guard case .loadRegions(let load) = stored,
@@ -230,8 +250,19 @@ extension DocumentSession {
             pendingRequests[request.id] = nil
             acceptRegionLoad(load)
             return CommandOutcome(effects: [.loadRegions(load, url)])
-        case .numbers:
-            return rejectedAnswer(.invalidAnswer, for: stored)
+        case .numbers(let values):
+            guard case .slab(let slab) = stored,
+                  values.count == 2, values.allSatisfy(\.isFinite) else {
+                return rejectedAnswer(.invalidAnswer, for: stored)
+            }
+            pendingRequests[request.id] = nil
+            guard slab.hduIndex == hdu, slab.imageRevision == imageRevision else {
+                return rejectedAnswer(.staleRequest, for: stored)
+            }
+            let maximum = Double(slab.planeCount - 1)
+            let a = Int(min(max(values[0], 0), maximum))
+            let b = Int(min(max(values[1], 0), maximum))
+            return CommandOutcome(effects: [.extractSlab(slab, from: min(a, b), to: max(a, b))])
         }
     }
 

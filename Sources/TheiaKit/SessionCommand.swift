@@ -70,6 +70,7 @@ public enum SessionCommand: Sendable, Equatable {
     case exportImage
     case exportCube
     case saveImageAsFITS
+    case extractSlab
     case answer(PendingRequest, Answer)
     case showPanel(PanelKind)
     case fitView
@@ -100,6 +101,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case unavailableCube
     case noRegions
     case supersededRegionLoad
+    case staleRequest
 
     public var message: String {
         switch self {
@@ -122,6 +124,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .unavailableCube: "Current HDU is not a three-dimensional cube"
         case .noRegions: "There are no regions to save"
         case .supersededRegionLoad: "A newer region load or edit has replaced this load"
+        case .staleRequest: "Source image changed before the request was answered"
         }
     }
 }
@@ -151,6 +154,7 @@ public enum Effect: Sendable, Equatable {
     case exportImage(RenderSnapshot, URL)
     case exportCube(CubeRenderSnapshot, URL)
     case saveImage(RenderSnapshot, URL)
+    case extractSlab(SlabRequest, from: Int, to: Int)
     case saveRegions(RegionSaveSnapshot, URL)
     case loadRegions(RegionLoadRequest, URL)
     case showPanel(PanelKind)
@@ -325,6 +329,11 @@ extension DocumentSession {
                     return CommandOutcome(failure: .requiresUserInterface)
                 }
                 return requestImageSave()
+            case .extractSlab:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestSlab()
             case .answer(let request, let answer):
                 guard origin == .user else {
                     return CommandOutcome(failure: .requiresUserInterface)

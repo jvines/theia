@@ -40,7 +40,6 @@ final class ToolbarState: ObservableObject {
     var onCropToSelection: () -> Void = {}
     var onSubtractBackground: () -> Void = {}
     var onBinImage: (Int) -> Void = { _ in }
-    var onCubeSlab: (Int, Int) -> Void = { _, _ in }
     var onStackOpenDocuments: (StackMode) -> Void = { _ in }
     var onLightCurve: () -> Void = {}
 

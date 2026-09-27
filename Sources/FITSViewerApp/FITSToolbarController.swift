@@ -321,7 +321,11 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         guard sender.isEnabled, let box = sender.representedObject as? ToolMenuActionBox else { return }
         switch box.action {
         case .collapse(let mode): state.onCollapseCube(mode)
-        case .extractSlab: state.onCubeSlab(0, -1)
+        case .extractSlab:
+            let outcome = state.session.perform(.extractSlab, origin: .user)
+            if outcome.failure == nil {
+                for effect in outcome.effects { state.onEffect(effect) }
+            }
         case .exportCube:
             let outcome = state.session.perform(.exportCube, origin: .user)
             if outcome.failure == nil {

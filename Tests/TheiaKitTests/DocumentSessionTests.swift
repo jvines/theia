@@ -5,6 +5,39 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testSlabQuestionClampsRangeAndRejectsChangedCube() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.extractSlab, origin: .script).failure,
+                           .requiresUserInterface)
+            let asked = session.perform(.extractSlab, origin: .user)
+            guard case .ask(let question, let request) = asked.effects.first,
+                  case .slab(let slab) = request else {
+                return XCTFail("Cube slab should ask for a range")
+            }
+            XCTAssertEqual(question, .numbers(prompt: "Sum planes (inclusive) of a 2-plane cube. Enter range:",
+                                              fields: ["From", "To"]))
+            let answered = session.perform(.answer(request, .numbers([99, -2])), origin: .user)
+            XCTAssertEqual(answered.effects, [.extractSlab(slab, from: 0, to: 1)])
+            XCTAssertEqual(session.perform(.answer(request, .numbers([0, 1])), origin: .user).failure,
+                           .invalidPendingRequest)
+
+            let pending = session.perform(.extractSlab, origin: .user)
+            guard case .ask(_, let changedRequest) = pending.effects.first else {
+                return XCTFail("Second slab should ask for a range")
+            }
+            _ = session.perform(.selectPlane(1), origin: .user)
+            let stale = session.perform(.answer(changedRequest, .numbers([0, 1])), origin: .user)
+            XCTAssertEqual(stale.failure, .staleRequest)
+            XCTAssertEqual(stale.effects, [.alert(title: "Slab not extracted",
+                                                 message: "Source image changed before the request was answered",
+                                                 style: .warning)])
+
+            _ = session.perform(.selectHDU(4), origin: .user)
+            XCTAssertEqual(session.perform(.extractSlab, origin: .user).failure, .unavailableCube)
+        }
+    }
+
     func testSaveImageAsFITSRetainsTheRequestTimePlane() async throws {
         try await MainActor.run {
             let session = try makeSession()
