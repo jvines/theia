@@ -1052,52 +1052,45 @@ extension DocumentView {
 
     fileprivate func applyFilter(_ spec: FilterSpec) {
         guard let image = currentImage() else { return }
-        let filtered: FITSImage
-        switch spec {
-        case .boxcar(let n):    filtered = ImageFilters.boxcar(image, size: n)
-        case .median(let n):    filtered = ImageFilters.median(image, size: n)
-        case .gaussian(let s):  filtered = ImageFilters.gaussian(image, sigma: s)
+        guard let result = ImageOperations.filter(image, wcs: session.displayedWCS,
+                                                  spec: spec) else {
+            applyEffect(.alert(title: "Filter failed", message: "Invalid filter size or sigma.",
+                               style: .warning))
+            return
         }
-        let label: String
-        switch spec {
-        case .boxcar(let n):    label = "Boxcar \(n)×\(n)"
-        case .median(let n):    label = "Median \(n)×\(n)"
-        case .gaussian(let s):  label = String(format: "Gaussian σ=%.1f", s)
-        }
-        displayOverride = DisplayOverride(image: filtered,
-                                          wcs: session.displayedWCS,
-                                          label: label)
+        displayOverride = result
     }
 
     fileprivate func applyUnary(_ op: ImageArithmetic.UnaryOp) {
         guard let image = currentImage() else { return }
-        let transformed = ImageArithmetic.unary(image, op: op)
-        displayOverride = DisplayOverride(image: transformed,
-                                          wcs: session.displayedWCS,
-                                          label: op.label)
+        displayOverride = ImageOperations.unary(image, wcs: session.displayedWCS,
+                                                op: op)
     }
 
     fileprivate func applyBinary(_ op: ImageArithmetic.BinaryOp, other otherIdx: Int) {
         guard let a = currentImage(),
               let otherHdu = document.file.hdus[safe: otherIdx],
-              let b = try? FITSImage(hdu: otherHdu),
-              let result = try? ImageArithmetic.combined(a, b, op: op) else { return }
-        displayOverride = DisplayOverride(image: result,
-                                          wcs: session.displayedWCS,
-                                          label: "\(op.label) vs HDU \(otherIdx)")
+              let b = try? FITSImage(hdu: otherHdu) else { return }
+        do {
+            displayOverride = try ImageOperations.binary(
+                a, wcs: session.displayedWCS, other: b, op: op, otherHDU: otherIdx
+            )
+        } catch {
+            applyEffect(.alert(title: "Image arithmetic failed",
+                               message: "The images must have the same dimensions.",
+                               style: .warning))
+        }
     }
 
     fileprivate func subtractBackground() {
         guard let image = currentImage() else { NSSound.beep(); return }
-        let bg = PixelStatistics.sigmaClipped(image.physicalValues(), sigma: 3, iterations: 5)
-        // Build a constant-image of the background and subtract.
-        let bgImg = FITSImage.fromFloat32(pixels: [Float](repeating: Float(bg.mean),
-                                                          count: image.width * image.height),
-                                          width: image.width, height: image.height)
-        guard let result = try? ImageArithmetic.combined(image, bgImg, op: .difference) else { return }
-        displayOverride = DisplayOverride(image: result,
-                                          wcs: session.displayedWCS,
-                                          label: String(format: "BG sub (μ=%.3g, σ=%.3g, n=%d)", bg.mean, bg.stddev, bg.count))
+        guard let result = ImageOperations.subtractBackground(image,
+                                                               wcs: session.displayedWCS) else {
+            applyEffect(.alert(title: "Background subtraction failed",
+                               message: "The image has no valid pixels.", style: .warning))
+            return
+        }
+        displayOverride = result
     }
 
     fileprivate func binImage(by n: Int) {
@@ -1558,18 +1551,12 @@ extension DocumentView {
               let sourceWCS = session.displayedWCS,
               let targetWCS = session.facts[referenceIdx].wcs(variant: ""),
               let refImage = try? FITSImage(hdu: refHdu) else { return }
-        let reprojected = WCSReproject.reproject(
-            source: activeImage,
-            sourceWCS: sourceWCS,
-            targetWCS: targetWCS,
-            targetWidth: refImage.width,
-            targetHeight: refImage.height
-        )
-        displayOverride = DisplayOverride(
-            image: reprojected,
-            wcs: targetWCS,
-            label: "Reprojected onto HDU \(referenceIdx)"
-        )
+        guard let result = ImageOperations.reproject(
+            activeImage, sourceWCS: sourceWCS, targetWCS: targetWCS,
+            targetWidth: refImage.width, targetHeight: refImage.height,
+            targetHDU: referenceIdx
+        ) else { return }
+        displayOverride = result
     }
 
 }

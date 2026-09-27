@@ -69,6 +69,65 @@ final class ImageOperationsTests: XCTestCase {
         XCTAssertNil(ImageOperations.bin(image, wcs: wcs, factor: 2))
     }
 
+    func testFilterAndUnaryPreserveDisplayedWCSAndChainPixels() throws {
+        let wcs = try makeWCS()
+        let image = FITSImage.fromFloat32(pixels: [1, 3, 5, 7], width: 2, height: 2)
+        let filtered = try XCTUnwrap(ImageOperations.filter(image, wcs: wcs,
+                                                             spec: .boxcar(size: 3)))
+        XCTAssertEqual(filtered.image.physicalValue(x: 0, y: 0), 3)
+        XCTAssertEqual(filtered.wcs?.crpix.x, wcs.crpix.x)
+        XCTAssertEqual(filtered.label, "Boxcar 3×3")
+
+        let squared = ImageOperations.unary(filtered.image, wcs: filtered.wcs, op: .square)
+        XCTAssertEqual(squared.image.physicalValue(x: 0, y: 0), 9)
+        XCTAssertEqual(squared.wcs?.crval.ra, wcs.crval.ra)
+        XCTAssertEqual(squared.label, "Square")
+        XCTAssertNil(ImageOperations.filter(image, wcs: wcs, spec: .gaussian(sigma: -.infinity)))
+        XCTAssertNil(ImageOperations.filter(image, wcs: wcs, spec: .median(size: Int.max)))
+        XCTAssertNil(ImageOperations.filter(image, wcs: wcs, spec: .boxcar(size: Int.max)))
+        XCTAssertNil(ImageOperations.filter(image, wcs: wcs,
+                                            spec: .gaussian(sigma: Double(Int.max) / 4)))
+    }
+
+    func testBinaryRejectsShapeMismatchAndKeepsTheActiveWCS() throws {
+        let wcs = try makeWCS()
+        let active = FITSImage.fromFloat32(pixels: [2, 4, .nan, 8], width: 2, height: 2)
+        let other = FITSImage.fromFloat32(pixels: [1, 2, 3, 4], width: 2, height: 2)
+        let result = try ImageOperations.binary(active, wcs: wcs, other: other,
+                                                op: .difference, otherHDU: 3)
+        XCTAssertEqual(result.image.physicalValue(x: 0, y: 0), 1)
+        XCTAssertTrue(result.image.physicalValue(x: 0, y: 1).isNaN)
+        XCTAssertEqual(result.wcs?.crpix.x, wcs.crpix.x)
+        XCTAssertEqual(result.label, "Difference vs HDU 3")
+        let mismatched = FITSImage.fromFloat32(pixels: [1], width: 1, height: 1)
+        XCTAssertThrowsError(try ImageOperations.binary(active, wcs: wcs,
+                                                         other: mismatched, op: .sum, otherHDU: 4))
+    }
+
+    func testBackgroundSubtractionPreservesWCSAndNaNs() throws {
+        let wcs = try makeWCS()
+        let image = FITSImage.fromFloat32(pixels: [10, 10, 12, .nan], width: 2, height: 2)
+        let result = try XCTUnwrap(ImageOperations.subtractBackground(image, wcs: wcs))
+        XCTAssertEqual(result.image.physicalValue(x: 0, y: 0), -2.0 / 3, accuracy: 1e-5)
+        XCTAssertTrue(result.image.physicalValue(x: 1, y: 1).isNaN)
+        XCTAssertEqual(result.wcs?.crpix.y, wcs.crpix.y)
+        XCTAssertTrue(result.label.hasPrefix("BG sub ("))
+    }
+
+    func testReprojectUsesDisplayedWCSAndTargetGridWCS() throws {
+        let wcs = try makeWCS()
+        let image = FITSImage.fromFloat32(pixels: [1, 2, 3, 4], width: 2, height: 2)
+        let result = try XCTUnwrap(ImageOperations.reproject(
+            image, sourceWCS: wcs, targetWCS: wcs,
+            targetWidth: 2, targetHeight: 2, targetHDU: 5
+        ))
+        XCTAssertEqual(result.image.physicalValue(x: 1, y: 1), 4, accuracy: 1e-5)
+        XCTAssertEqual(result.wcs?.crval.ra, wcs.crval.ra)
+        XCTAssertEqual(result.label, "Reprojected onto HDU 5")
+        XCTAssertNil(ImageOperations.reproject(image, sourceWCS: wcs, targetWCS: wcs,
+                                               targetWidth: 0, targetHeight: 2, targetHDU: 5))
+    }
+
     private func makeWCS() throws -> WCS {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    0",

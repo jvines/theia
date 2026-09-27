@@ -17,10 +17,16 @@ public enum WCSReproject {
         var out = [Float](repeating: .nan, count: targetWidth * targetHeight)
         for ty in 0..<targetHeight {
             for tx in 0..<targetWidth {
-                guard let sky = targetWCS.pixelToSky(imageX: tx, imageY: ty),
-                      let src = sourceWCS.skyToPixel(ra: sky.ra, dec: sky.dec) else {
+                guard let sky = targetWCS.pixelToSky(imageX: tx, imageY: ty) else {
                     continue
                 }
+                let sourceSky = CelestialTransform.convert(
+                    lon: sky.ra, lat: sky.dec,
+                    from: targetWCS.nativeFrame, to: sourceWCS.nativeFrame
+                )
+                guard let src = sourceWCS.skyToPixel(
+                    ra: sourceSky.lon, dec: sourceSky.lat
+                ) else { continue }
                 out[ty * targetWidth + tx] = bilinear(
                     pixels: sourcePixels, width: sw, height: sh,
                     x: src.x, y: src.y

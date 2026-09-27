@@ -1,6 +1,79 @@
+import Foundation
 import FITSCore
 
 public enum ImageOperations {
+    private static let maximumFilterSize = 101
+    private static let maximumGaussianSigma = 32.0
+
+    /// Apply a filter to the displayed pixels without changing their sky grid.
+    public static func filter(_ image: FITSImage, wcs: WCS?,
+                              spec: FilterSpec) -> DerivedImage? {
+        let filtered: FITSImage
+        let label: String
+        switch spec {
+        case .boxcar(let size):
+            guard size > 0, size <= maximumFilterSize, size % 2 == 1 else { return nil }
+            filtered = ImageFilters.boxcar(image, size: size)
+            label = "Boxcar \(size)×\(size)"
+        case .median(let size):
+            guard size > 0, size <= maximumFilterSize, size % 2 == 1 else { return nil }
+            filtered = ImageFilters.median(image, size: size)
+            label = "Median \(size)×\(size)"
+        case .gaussian(let sigma):
+            guard sigma.isFinite, sigma > 0,
+                  sigma <= maximumGaussianSigma else { return nil }
+            filtered = ImageFilters.gaussian(image, sigma: sigma)
+            label = String(format: "Gaussian σ=%.1f", sigma)
+        }
+        return DerivedImage(image: filtered, wcs: wcs, label: label)
+    }
+
+    public static func unary(_ image: FITSImage, wcs: WCS?,
+                             op: ImageArithmetic.UnaryOp) -> DerivedImage {
+        DerivedImage(image: ImageArithmetic.unary(image, op: op), wcs: wcs,
+                     label: op.label)
+    }
+
+    public static func binary(_ image: FITSImage, wcs: WCS?, other: FITSImage,
+                              op: ImageArithmetic.BinaryOp, otherHDU: Int) throws -> DerivedImage {
+        let combined = try ImageArithmetic.combined(image, other, op: op)
+        return DerivedImage(image: combined, wcs: wcs,
+                            label: "\(op.label) vs HDU \(otherHDU)")
+    }
+
+    public static func subtractBackground(_ image: FITSImage,
+                                          wcs: WCS?) -> DerivedImage? {
+        let background = PixelStatistics.sigmaClipped(
+            image.physicalValues(), sigma: 3, iterations: 5
+        )
+        guard background.count > 0 else { return nil }
+        let backgroundImage = FITSImage.fromFloat32(
+            pixels: [Float](repeating: Float(background.mean),
+                            count: image.width * image.height),
+            width: image.width, height: image.height
+        )
+        guard let subtracted = try? ImageArithmetic.combined(
+            image, backgroundImage, op: .difference
+        ) else { return nil }
+        let label = String(format: "BG sub (μ=%.3g, σ=%.3g, n=%d)",
+                           background.mean, background.stddev, background.count)
+        return DerivedImage(image: subtracted, wcs: wcs, label: label)
+    }
+
+    public static func reproject(_ image: FITSImage, sourceWCS: WCS,
+                                 targetWCS: WCS, targetWidth: Int,
+                                 targetHeight: Int, targetHDU: Int) -> DerivedImage? {
+        guard targetWidth > 0, targetHeight > 0,
+              targetWidth <= Int.max / targetHeight else { return nil }
+        let projected = WCSReproject.reproject(
+            source: image, sourceWCS: sourceWCS,
+            targetWCS: targetWCS, targetWidth: targetWidth,
+            targetHeight: targetHeight
+        )
+        return DerivedImage(image: projected, wcs: targetWCS,
+                            label: "Reprojected onto HDU \(targetHDU)")
+    }
+
     /// Combine same-size displayed images on the reference document's pixel grid.
     public static func stack(_ images: [FITSImage], referenceWCS: WCS?,
                              mode: StackMode) -> DerivedImage? {

@@ -75,6 +75,32 @@ final class WCSReprojectTests: XCTestCase {
         }
     }
 
+    func testReprojectConvertsGalacticTargetSkyIntoEquatorialSourceFrame() throws {
+        let source = FITSImage.fromFloat32(pixels: (0..<100).map(Float.init),
+                                           width: 10, height: 10)
+        let sourceWCS = try XCTUnwrap(WCS(header: parseHeader(tanHeader(
+            crpix: (5, 5), crval: (180, 0),
+            cd: (-1.0 / 3600, 0, 0, 1.0 / 3600)
+        ))))
+        let galacticCenter = CelestialTransform.convert(lon: 180, lat: 0,
+                                                        from: .icrs, to: .galactic)
+        let galacticCards = tanHeader(
+            crpix: (5, 5), crval: (galacticCenter.lon, galacticCenter.lat),
+            cd: (-1.0 / 3600, 0, 0, 1.0 / 3600)
+        ).map {
+            $0.replacingOccurrences(of: "RA---TAN", with: "GLON-TAN")
+              .replacingOccurrences(of: "DEC--TAN", with: "GLAT-TAN")
+        }
+        let targetWCS = try XCTUnwrap(WCS(header: parseHeader(galacticCards)))
+        XCTAssertEqual(targetWCS.nativeFrame, .galactic)
+
+        let projected = WCSReproject.reproject(
+            source: source, sourceWCS: sourceWCS, targetWCS: targetWCS,
+            targetWidth: 10, targetHeight: 10
+        )
+        XCTAssertEqual(projected.physicalValue(x: 4, y: 4), 44, accuracy: 1e-2)
+    }
+
     // MARK: - Helpers
 
     private func parseHeader(_ cards: [String]) throws -> FITSHeader {
