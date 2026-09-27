@@ -880,17 +880,11 @@ extension DocumentView {
         toolbarState.differenceCandidates = candidates.map { ($0, hduLabel($0), canDifference(against: $0)) }
 
         toolbarState.onEffect           = { effect in applyEffect(effect) }
-        toolbarState.onZScale           = { resetLevels() }
         toolbarState.onExport           = { exportImage() }
-        toolbarState.onToggleGrid       = { showWCSGrid.toggle() }
-        toolbarState.onToggleCompass    = { showCompass.toggle() }
-        toolbarState.onToggleColorBar   = { showColorBar.toggle() }
-        toolbarState.onToggleBlink      = { toggleBlink() }
         toolbarState.onReproject        = { reproject(onto: $0) }
         toolbarState.onDifference       = { computeDifference(against: $0) }
         toolbarState.onClearOverride    = { displayOverride = nil }
         toolbarState.onFetchCatalog     = { Task { await fetchCatalog() } }
-        toolbarState.onToggleInspector  = { showInspector.toggle() }
         toolbarState.onOpenScaleParameters = { performAndApply(.showPanel(.scaleParameters)) }
         toolbarState.onOpenPixelTable = { performAndApply(.showPanel(.pixelTable)) }
         toolbarState.onOpenContourLevels = { performAndApply(.showPanel(.contourLevels)) }
@@ -1197,10 +1191,6 @@ extension DocumentView {
 
     fileprivate func currentImage() -> FITSImage? {
         session.displayed
-    }
-
-    private func resetLevels() {
-        session.perform(.applyScalePreset(.zscale), origin: .user)
     }
 
     fileprivate func snapshotSession() -> SessionState {
@@ -1797,10 +1787,6 @@ extension DocumentView {
         } catch {
             NSLog("difference failed: \(error)")
         }
-    }
-
-    fileprivate func toggleBlink() {
-        session.perform(.toggleBlink, origin: .user)
     }
 
     fileprivate func fetchCatalog() async {

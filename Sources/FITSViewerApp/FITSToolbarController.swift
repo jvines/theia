@@ -146,7 +146,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                             menu: buildSessionMenu("mode"))
         case ID.zscale:
             return makeButton(id: id, symbol: "wand.and.stars",
-                              action: #selector(zscaleAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.scale:
             return makeMenu(id: id, symbol: "slider.vertical.3",
                             menu: buildSessionMenu("scale"))
@@ -155,19 +155,19 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                               action: #selector(exportAction))
         case ID.grid:
             return makeButton(id: id, symbol: "grid.circle",
-                              action: #selector(gridAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.compass:
             return makeButton(id: id, symbol: "location.north",
-                              action: #selector(compassAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.colorbar:
             return makeButton(id: id, symbol: "barometer",
-                              action: #selector(colorBarAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.pixeltable:
             return makeButton(id: id, symbol: "tablecells",
-                              action: #selector(pixelTableAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.contour:
             return makeButton(id: id, symbol: "circle.hexagonpath",
-                              action: #selector(contourAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.sync:
             return makeMenu(id: id, symbol: "rectangle.split.2x1",
                             menu: buildSyncMenu())
@@ -176,7 +176,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                             menu: buildSessionMenu("wcsVariant"))
         case ID.blink:
             return makeButton(id: id, symbol: "rectangle.on.rectangle",
-                              action: #selector(blinkAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.tools:
             return makeMenu(id: id, symbol: "wrench.and.screwdriver",
                             menu: buildToolsMenu())
@@ -185,7 +185,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                               action: #selector(catalogAction))
         case ID.header:
             return makeButton(id: id, symbol: "sidebar.right",
-                              action: #selector(headerAction))
+                              action: #selector(sessionToolbarAction(_:)))
         default:
             return nil
         }
@@ -365,7 +365,15 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
 
     // MARK: - Actions
 
-    @objc private func zscaleAction()        { state.onZScale() }
+    @objc private func sessionToolbarAction(_ sender: NSToolbarItem) {
+        guard let descriptor = CommandCatalog.toolbarItem(
+            sender.itemIdentifier.rawValue, for: state.session
+        ), descriptor.enabled, let command = descriptor.command else { return }
+        let outcome = state.session.perform(command, origin: .user)
+        if outcome.failure == nil {
+            for effect in outcome.effects { state.onEffect(effect) }
+        }
+    }
     @objc private func sessionMenuAction(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? SessionCommandBox else { return }
         let outcome = state.session.perform(box.command, origin: .user)
@@ -374,18 +382,11 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
         }
     }
     @objc private func exportAction()        { state.onExport() }
-    @objc private func gridAction()          { state.onToggleGrid() }
-    @objc private func compassAction()       { state.onToggleCompass() }
-    @objc private func colorBarAction()      { state.onToggleColorBar() }
-    @objc private func pixelTableAction()    { state.onOpenPixelTable() }
-    @objc private func contourAction()       { state.onOpenContourLevels() }
     @objc private func workspaceMenuAction(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? WorkspaceCommandBox else { return }
         AppDelegate.shared?.performWorkspaceCommand(box.command, origin: .user)
     }
-    @objc private func blinkAction()         { state.onToggleBlink() }
     @objc private func catalogAction()       { state.onFetchCatalog() }
-    @objc private func headerAction()        { state.onToggleInspector() }
     @objc private func clearOverrideAction() { state.onClearOverride() }
 
     @objc private func reprojectSelected(_ sender: NSMenuItem) {

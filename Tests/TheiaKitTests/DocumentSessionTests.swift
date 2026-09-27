@@ -187,6 +187,27 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testToolbarToggleCommandsUseCurrentSessionState() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let grid = try XCTUnwrap(CommandCatalog.toolbarItem("grid", for: session))
+            XCTAssertEqual(grid, CommandCatalog.toolbarItem("grid", for: session))
+            XCTAssertEqual(grid.state, .checked(false))
+            guard case .setGridVisible(true) = grid.command else {
+                return XCTFail("Grid action should turn the overlay on")
+            }
+            _ = session.perform(grid.command!, origin: .user)
+            let updated = try XCTUnwrap(CommandCatalog.toolbarItem("grid", for: session))
+            XCTAssertEqual(updated.state, .checked(true))
+            guard case .setGridVisible(false) = updated.command else {
+                return XCTFail("Grid action should turn the overlay off")
+            }
+            let pixelTable = try XCTUnwrap(CommandCatalog.toolbarItem("pixeltable", for: session))
+            let panel = try XCTUnwrap(pixelTable.command)
+            XCTAssertEqual(session.perform(panel, origin: .user).effects, [.showPanel(.pixelTable)])
+        }
+    }
+
     func testToolbarCatalogueDisablesImageActionsOnTablesAndAllowsSingleImageTools() async throws {
         try await MainActor.run {
             let session = try makeSession()

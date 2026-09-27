@@ -32,17 +32,11 @@ final class ToolbarState: ObservableObject {
     @Published var differenceCandidates: [(Int, String, Bool)] = []
 
     var onEffect: (Effect) -> Void = { _ in }
-    var onZScale: () -> Void = {}
     var onExport: () -> Void = {}
-    var onToggleGrid: () -> Void = {}
-    var onToggleCompass: () -> Void = {}
-    var onToggleColorBar: () -> Void = {}
-    var onToggleBlink: () -> Void = {}
     var onReproject: (Int) -> Void = { _ in }
     var onDifference: (Int) -> Void = { _ in }
     var onClearOverride: () -> Void = {}
     var onFetchCatalog: () -> Void = {}
-    var onToggleInspector: () -> Void = {}
     var onOpenScaleParameters: () -> Void = {}
     var onOpenPixelTable: () -> Void = {}
     var onOpenContourLevels: () -> Void = {}

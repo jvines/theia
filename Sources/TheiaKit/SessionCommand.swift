@@ -37,7 +37,7 @@ public enum ScalePreset: Hashable, Sendable {
 }
 
 /// State-changing document commands currently handled synchronously.
-public enum SessionCommand: Sendable {
+public enum SessionCommand: Sendable, Equatable {
     case setStretch(ImageStretch)
     case setColormap(ColorMap)
     case setLevels(min: Float, max: Float)
@@ -50,6 +50,7 @@ public enum SessionCommand: Sendable {
     case setGridVisible(Bool)
     case setCompassVisible(Bool)
     case setColorBarVisible(Bool)
+    case setInspectorVisible(Bool)
     case setContourSpec(ContourSpec)
     case setPlaying(Bool)
     case setFPS(Double)
@@ -168,6 +169,7 @@ extension DocumentSession {
             case .setGridVisible(let value): showGrid = value
             case .setCompassVisible(let value): showCompass = value
             case .setColorBarVisible(let value): showColorBar = value
+            case .setInspectorVisible(let value): inspectorVisible = value
             case .setContourSpec(let spec): setContourSpec(spec)
             case .setPlaying(let value):
                 guard !value || facts[hdu].planeCount > 1 else {

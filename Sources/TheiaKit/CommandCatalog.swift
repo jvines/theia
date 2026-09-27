@@ -13,6 +13,7 @@ public struct CommandDescriptor: Sendable, Equatable {
     public let tooltip: String
     public let enabled: Bool
     public let state: CommandSelectionState
+    public let command: SessionCommand?
 }
 
 public struct CommandMenuItem: Sendable {
@@ -253,10 +254,11 @@ public enum CommandMenuEntry: Sendable {
         let wcs = session.displayedWCS != nil
         func item(
             _ title: String, _ tooltip: String,
-            enabled: Bool = true, state: CommandSelectionState = .none
+            enabled: Bool = true, state: CommandSelectionState = .none,
+            command: SessionCommand? = nil
         ) -> CommandDescriptor {
             CommandDescriptor(identifier: identifier, title: title, tooltip: tooltip,
-                              enabled: enabled, state: state)
+                              enabled: enabled, state: state, command: command)
         }
         switch identifier {
         case "stretch":
@@ -269,24 +271,30 @@ public enum CommandMenuEntry: Sendable {
             return item("Mode", "What the mouse does on the image", enabled: image,
                         state: .selected(session.mode.rawValue))
         case "zscale":
-            return item("ZScale", "Reset brightness limits to zscale defaults", enabled: image)
+            return item("ZScale", "Reset brightness limits to zscale defaults", enabled: image,
+                        command: .applyScalePreset(.zscale))
         case "scale":
             return item("Scale", "Choose vmin/vmax preset or open Scale Parameters…", enabled: image)
         case "export":
             return item("Export…", "Export current view as PNG or TIFF", enabled: image)
         case "grid":
             return item("Grid", "Toggle WCS gridlines", enabled: wcs,
-                        state: .checked(session.showGrid))
+                        state: .checked(session.showGrid),
+                        command: .setGridVisible(!session.showGrid))
         case "compass":
             return item("Compass", "Toggle compass + scale bar", enabled: wcs,
-                        state: .checked(session.showCompass))
+                        state: .checked(session.showCompass),
+                        command: .setCompassVisible(!session.showCompass))
         case "colorbar":
             return item("Color Bar", "Toggle the color bar overlay", enabled: image,
-                        state: .checked(session.showColorBar))
+                        state: .checked(session.showColorBar),
+                        command: .setColorBarVisible(!session.showColorBar))
         case "pixeltable":
-            return item("Pixel Table", "Open the pixel-value table at the cursor", enabled: image)
+            return item("Pixel Table", "Open the pixel-value table at the cursor", enabled: image,
+                        command: .showPanel(.pixelTable))
         case "contour":
-            return item("Contours", "Open contour levels panel", enabled: image)
+            return item("Contours", "Open contour levels panel", enabled: image,
+                        command: .showPanel(.contourLevels))
         case "sync":
             return item("Sync", "Synchronise zoom / scale / colormap across open windows")
         case "wcsVariant":
@@ -295,7 +303,7 @@ public enum CommandMenuEntry: Sendable {
                         state: .selected(session.wcsVariant))
         case "blink":
             return item("Blink", "Cycle between current HDU and next", enabled: session.blinkPartner != nil,
-                        state: .checked(session.blink != nil))
+                        state: .checked(session.blink != nil), command: .toggleBlink)
         case "tools":
             return item("Tools", "Image analysis and stacking",
                         enabled: image || workspaceImageCount >= 2)
@@ -304,7 +312,8 @@ public enum CommandMenuEntry: Sendable {
                         enabled: wcs && !session.catalogFetchInProgress)
         case "header":
             return item("Header", "Toggle header / regions inspector",
-                        state: .checked(session.inspectorVisible))
+                        state: .checked(session.inspectorVisible),
+                        command: .setInspectorVisible(!session.inspectorVisible))
         default: return nil
         }
     }
