@@ -543,7 +543,8 @@ struct InspectorPanel: View {
             .pickerStyle(.segmented)
             .padding(8)
             switch tab {
-            case .header: HeaderPanel(header: header, imageProvider: imageProvider)
+            case .header: HeaderPanel(header: header, hduIndex: session.hdu,
+                                      editor: session.headerEditor, imageProvider: imageProvider)
             case .regions: RegionListPanel(regions: $regions, session: session, onEffect: onEffect)
             case .photometry: PhotometryPanel(regions: regions,
                                               imageProvider: imageProvider,
@@ -653,42 +654,25 @@ struct RegionListPanel: View {
 
 struct HeaderPanel: View {
     let header: FITSHeader
+    let hduIndex: Int
+    @Bindable var editor: HeaderEditor
     let imageProvider: () -> FITSImage?
-    @State private var search: String = ""
-    @State private var edits: [Int: (value: String, comment: String)] = [:]
-    @State private var editing: Bool = false
 
-    struct Row: Identifiable {
-        let id: Int
-        let card: FITSHeader.Card
-    }
-
-    var rows: [Row] {
-        let all = header.cards.enumerated().map { Row(id: $0.offset, card: $0.element) }
-        guard !search.isEmpty else { return all }
-        let q = search.lowercased()
-        return all.filter { row in
-            let c = row.card
-            if c.keyword.lowercased().contains(q) { return true }
-            if let v = c.value?.displayString.lowercased(), v.contains(q) { return true }
-            if let cmt = c.comment?.lowercased(), cmt.contains(q) { return true }
-            return false
-        }
-    }
+    var rows: [HeaderRow] { editor.filteredRows(in: header) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                TextField("Filter…", text: $search).textFieldStyle(.roundedBorder)
-                Toggle("Edit", isOn: $editing).toggleStyle(.button).controlSize(.small)
+                TextField("Filter…", text: $editor.search).textFieldStyle(.roundedBorder)
+                Toggle("Edit", isOn: $editor.editing).toggleStyle(.button).controlSize(.small)
                 Button {
                     saveEditedFITS()
                 } label: { Label("Save modified…", systemImage: "tray.and.arrow.up") }
                 .controlSize(.small)
-                .disabled(edits.isEmpty)
+                .disabled(editor.editCount(for: hduIndex) == 0)
             }
             .padding(8)
-            if editing {
+            if editor.editing {
                 List(rows) { row in
                     HStack(spacing: 8) {
                         Text(row.card.keyword)
@@ -701,7 +685,7 @@ struct HeaderPanel: View {
                         TextField("comment", text: commentBinding(for: row))
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(edits[row.id] != nil ? .primary : .secondary)
+                            .foregroundStyle(editor.hasEdit(at: row.id, hdu: hduIndex) ? .primary : .secondary)
                     }
                 }
             } else {
@@ -722,8 +706,9 @@ struct HeaderPanel: View {
                     }
                 }
             }
-            if !edits.isEmpty {
-                Text("\(edits.count) edited card\(edits.count == 1 ? "" : "s")")
+            let editCount = editor.editCount(for: hduIndex)
+            if editCount > 0 {
+                Text("\(editCount) edited card\(editCount == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -732,43 +717,23 @@ struct HeaderPanel: View {
         }
     }
 
-    private func valueBinding(for row: Row) -> Binding<String> {
+    private func valueBinding(for row: HeaderRow) -> Binding<String> {
         Binding(
-            get: { edits[row.id]?.value ?? row.card.value?.displayString ?? "" },
-            set: { v in
-                let c = edits[row.id]?.comment ?? row.card.comment ?? ""
-                edits[row.id] = (v, c)
-            }
+            get: { editor.valueText(for: row.card, at: row.id, hdu: hduIndex) },
+            set: { editor.setValue($0, for: row.card, at: row.id, hdu: hduIndex) }
         )
     }
 
-    private func commentBinding(for row: Row) -> Binding<String> {
+    private func commentBinding(for row: HeaderRow) -> Binding<String> {
         Binding(
-            get: { edits[row.id]?.comment ?? row.card.comment ?? "" },
-            set: { c in
-                let v = edits[row.id]?.value ?? row.card.value?.displayString ?? ""
-                edits[row.id] = (v, c)
-            }
+            get: { editor.commentText(for: row.card, at: row.id, hdu: hduIndex) },
+            set: { editor.setComment($0, for: row.card, at: row.id, hdu: hduIndex) }
         )
     }
 
     private func saveEditedFITS() {
         guard let image = imageProvider() else { NSSound.beep(); return }
-        // Build extraCards from all cards (with edits applied), skipping the structural
-        // ones FITSWriter writes itself.
-        let skip: Set<String> = ["SIMPLE", "BITPIX", "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "END"]
-        var extra: [String] = []
-        for (idx, card) in header.cards.enumerated() {
-            if skip.contains(card.keyword) { continue }
-            let edited = edits[idx]
-            let valueText = edited?.value ?? card.value?.displayString ?? ""
-            let commentText = edited?.comment ?? card.comment ?? ""
-            if let serialized = FITSHeader.serializeCard(
-                keyword: card.keyword, valueText: valueText, commentText: commentText
-            ) {
-                extra.append(serialized)
-            }
-        }
+        let extra = editor.serializedExtraCards(from: header, hdu: hduIndex)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "fits") ?? .data]
         panel.nameFieldStringValue = "modified.fits"
@@ -777,7 +742,7 @@ struct HeaderPanel: View {
             guard resp == .OK, let url = panel.url else { return }
             do {
                 try FITSWriter.write(image, to: url, extraCards: extra)
-                edits.removeAll()
+                editor.clearEdits(for: hduIndex)
             } catch {
                 let a = NSAlert(error: error)
                 a.runModal()

@@ -59,6 +59,7 @@ public struct HDUFacts {
     public let file: FITSFile
     public let facts: [HDUFacts]
     public let view: ImageViewState
+    public let headerEditor = HeaderEditor()
     public private(set) var hdu: Int
     public private(set) var plane: Int = 0
     public private(set) var sourceWCSVariant: String = ""
