@@ -91,6 +91,37 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: SessionState.sidecarURL(for: source).path))
     }
 
+    func testSaveAndLoadPreservesDisplayAndRegionMetadata() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("annotated.fits")
+        let data = primary()
+        try data.write(to: source)
+        let persistence = store(root)
+        var state = session()
+        state.stretch = .power
+        state.vmin = -3.5
+        state.vmax = 48.25
+        state.stretchParameter = 2.75
+        state.contour = .init(enabled: true, count: 7, minValue: 2,
+                              maxValue: 42, spacing: "log")
+        state.regions = [Region(
+            shape: .circle(center: .init(x: 12.5, y: 9.5),
+                           radius: .init(value: 4, unit: .pixel)),
+            frame: .image,
+            attributes: ["color": "#ff3300", "text": "target", "tag": "science"]
+        )]
+
+        try persistence.save(state, for: source, fileData: data)
+        guard case .restored(let loaded) = try persistence.load(for: source, fileData: data) else {
+            return XCTFail("Expected saved annotated session")
+        }
+        XCTAssertEqual(loaded, state)
+        XCTAssertEqual(loaded.regions.first?.attributes["color"], "#ff3300")
+        XCTAssertEqual(loaded.regions.first?.attributes["text"], "target")
+        XCTAssertEqual(loaded.regions.first?.attributes["tag"], "science")
+    }
+
     func testCachedIdentityCanBeUsedForRepeatedSaves() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

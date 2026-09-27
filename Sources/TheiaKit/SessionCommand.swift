@@ -138,6 +138,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidSlabRange(from: Int, to: Int)
     case noSelectedRegion
     case insufficientStackImages
+    case insufficientLightCurveFrames
 
     public var message: String {
         switch self {
@@ -175,8 +176,10 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .imageDimensionMismatch: "Images must have the same dimensions"
         case .invalidBinFactor: "Binning factor must be at least two and fit the image"
         case .invalidSlabRange(let from, let to): "Invalid slab range \(from)…\(to)"
-        case .noSelectedRegion: "Select a region to crop"
+        case .noSelectedRegion: "Select a region"
         case .insufficientStackImages: "Stack requires at least two open images"
+        case .insufficientLightCurveFrames:
+            "Light curve requires at least two measurable frames with usable WCS"
         }
     }
 }
@@ -213,6 +216,7 @@ public enum Effect: Sendable, Equatable {
     case loadRegions(RegionLoadRequest, URL)
     case showPanel(PanelKind)
     case showAppWindow(AppWindowKind)
+    case openLightCurve(LightCurveModel)
     case openURL(URL)
     case copyToClipboard(String)
     case tileWindows

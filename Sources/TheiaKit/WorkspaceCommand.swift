@@ -20,6 +20,8 @@ public enum WorkspaceCommand: Sendable {
     case showAppWindow(AppWindowKind)
     case openHelp(HelpDestination)
     case setSyncFlag(SyncFlag, Bool)
+    case stack(documentID: Int, mode: StackMode)
+    case lightCurve(documentID: Int)
     case tileWindows
     case quit
 }
@@ -204,6 +206,40 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
                 if flag == .crosshair { clearCrosshairs(origin: origin) }
             }
             return CommandOutcome()
+        case .stack(let documentID, let mode):
+            guard let reference = document(at: documentID) else {
+                return CommandOutcome(failure: .documentClosed)
+            }
+            let otherImages = documentOrder.compactMap { documents[$0]?.session }
+                .filter { $0 !== reference }
+                .compactMap(\.displayed)
+            return reference.stack(with: otherImages, mode: mode, origin: origin)
+        case .lightCurve(let documentID):
+            guard let reference = document(at: documentID) else {
+                return CommandOutcome(failure: .documentClosed)
+            }
+            guard let selected = reference.selectedRegionIndex,
+                  reference.regions.indices.contains(selected) else {
+                return CommandOutcome(failure: .noSelectedRegion)
+            }
+            guard let referenceWCS = reference.displayedWCS else {
+                return CommandOutcome(failure: .noDisplayedWCS)
+            }
+            let frames = documentOrder.compactMap { documents[$0]?.session }
+                .compactMap { session -> LightCurveFrame? in
+                    guard session.file.hdus.indices.contains(session.hdu),
+                          let image = session.displayed,
+                          let wcs = session.displayedWCS else { return nil }
+                    return LightCurveFrame(image: image, wcs: wcs,
+                                           header: session.file.hdus[session.hdu].header)
+                }
+            guard let curve = LightCurveBuilder.build(
+                region: reference.regions[selected], referenceWCS: referenceWCS,
+                frames: frames
+            ) else {
+                return CommandOutcome(failure: .insufficientLightCurveFrames)
+            }
+            return CommandOutcome(effects: [.openLightCurve(curve)])
         case .tileWindows:
             return CommandOutcome(effects: [.tileWindows])
         case .quit:

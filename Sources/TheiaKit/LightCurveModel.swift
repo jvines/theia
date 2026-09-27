@@ -13,7 +13,7 @@ public struct LightCurvePoint: Sendable, Equatable {
 }
 
 /// Display and export values for a cross-frame light curve.
-public struct LightCurveModel: Sendable {
+public struct LightCurveModel: Sendable, Equatable {
     public let points: [LightCurvePoint]
     public let timeLabel: String
     public var normalized: Bool

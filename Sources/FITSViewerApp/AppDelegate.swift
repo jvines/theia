@@ -353,6 +353,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .welcome: WelcomeWindowController.show()
             case .onboarding: OnboardingWindowController.show()
             }
+        case .openLightCurve(let curve):
+            LightCurveWindowController.show(model: curve, attachedTo: NSApp.keyWindow)
         case .openURL(let url):
             NSWorkspace.shared.open(url)
         case .copyToClipboard(let value):

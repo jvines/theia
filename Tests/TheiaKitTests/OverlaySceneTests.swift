@@ -54,6 +54,41 @@ final class OverlaySceneTests: XCTestCase {
         }
     }
 
+    func testGalacticRegionDrawsOnICRSImage() async throws {
+        let cards = [
+            "SIMPLE  =                    T", "BITPIX  =                    8",
+            "NAXIS   =                    0", "CTYPE1  = 'RA---TAN'",
+            "CTYPE2  = 'DEC--TAN'", "CRPIX1  =                   11",
+            "CRPIX2  =                   11", "CRVAL1  =                180.0",
+            "CRVAL2  =                  0.0", "CDELT1  =                 -0.1",
+            "CDELT2  =                  0.1", "END",
+        ]
+        let header = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+        let file = try FITSFile(data: Data(header.padding(toLength: 2880, withPad: " ",
+                                                  startingAt: 0).utf8))
+        let wcs = try XCTUnwrap(WCS(header: file.hdus[0].header))
+        let galactic = CelestialTransform.convert(lon: 180, lat: 0,
+                                                  from: .icrs, to: .galactic)
+
+        await MainActor.run {
+            let scene = OverlayScene()
+            let region = Region(shape: .point(.init(x: galactic.lon, y: galactic.lat)),
+                                frame: .galactic)
+            let mapping = ViewMapping(transform: ViewTransform(scale: 1,
+                                                               centre: SIMD2(10, 10)),
+                                      viewSize: SIMD2(100, 100), backingScale: 1)
+            let primitives = scene.regionPrimitives([region], selectedIndex: nil,
+                                                     wcs: wcs, mapping: mapping)
+            let centers = primitives.compactMap { primitive -> SIMD2<Double>? in
+                if case .ellipse(let center, _, _, _, _, _, _) = primitive { return center }
+                return nil
+            }
+            XCTAssertEqual(centers.count, 1)
+            XCTAssertEqual(centers.first?.x ?? .nan, 50, accuracy: 1e-5)
+            XCTAssertEqual(centers.first?.y ?? .nan, 50, accuracy: 1e-5)
+        }
+    }
+
     func testRegionMutationInvalidatesGeometryButSelectionDoesNot() async {
         await MainActor.run {
             let scene = OverlayScene()
