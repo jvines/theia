@@ -264,7 +264,7 @@ final class SessionStoreTests: XCTestCase {
 
     private func session() -> SessionState {
         SessionState(selectedHDU: 0, selectedPlane: 0, stretch: .linear, colorMap: .gray,
-                     drawMode: "pan", vmin: 0, vmax: 1, stretchParameter: 1,
+                     drawMode: .pan, vmin: 0, vmax: 1, stretchParameter: 1,
                      showWCSGrid: false, showCompass: false, showColorBar: false, regions: [])
     }
 

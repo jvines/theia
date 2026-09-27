@@ -102,7 +102,7 @@ final class SessionAutosaveWatcher {
             selectedPlane: userSelectedPlane,
             stretch: session.view.stretch,
             colorMap: session.view.colorMap,
-            drawMode: session.mode.rawValue,
+            drawMode: session.mode,
             vmin: Double(session.view.vmin),
             vmax: Double(session.view.vmax),
             stretchParameter: Double(session.view.stretchParameter),

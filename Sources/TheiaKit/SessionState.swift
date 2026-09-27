@@ -1,9 +1,9 @@
 import Foundation
+import FITSCore
 
-/// Per-document persisted state. Stored next to the FITS file as a JSON sidecar
-/// (`<file>.fits.session.json`) and auto-loaded on reopen.
-///
-/// Forward-compat: optional fields may be absent in older session files.
+/// Per-document persisted state. New saves live in SessionStore; legacy
+/// `<file>.session.json` sidecars remain readable during migration.
+/// Optional fields may be absent from older session files.
 public struct SessionState: Codable, Equatable {
     public struct Contour: Codable, Equatable {
         public var enabled: Bool
@@ -11,6 +11,7 @@ public struct SessionState: Codable, Equatable {
         public var minValue: Double
         public var maxValue: Double
         public var spacing: String   // "linear" or "log"
+
         public init(enabled: Bool, count: Int, minValue: Double, maxValue: Double, spacing: String) {
             self.enabled = enabled; self.count = count
             self.minValue = minValue; self.maxValue = maxValue; self.spacing = spacing
@@ -21,7 +22,7 @@ public struct SessionState: Codable, Equatable {
     public var selectedPlane: Int
     public var stretch: ImageStretch
     public var colorMap: ColorMap
-    public var drawMode: String     // DrawMode.rawValue, stringly typed to keep FITSCore independent of TheiaKit
+    public var drawMode: DrawMode
     public var vmin: Double
     public var vmax: Double
     public var stretchParameter: Double
@@ -32,7 +33,7 @@ public struct SessionState: Codable, Equatable {
     public var contour: Contour?
 
     public init(selectedHDU: Int, selectedPlane: Int, stretch: ImageStretch, colorMap: ColorMap,
-                drawMode: String, vmin: Double, vmax: Double, stretchParameter: Double,
+                drawMode: DrawMode, vmin: Double, vmax: Double, stretchParameter: Double,
                 showWCSGrid: Bool, showCompass: Bool, showColorBar: Bool,
                 regions: [Region], contour: Contour? = nil) {
         self.selectedHDU = selectedHDU; self.selectedPlane = selectedPlane
@@ -58,5 +59,16 @@ public struct SessionState: Codable, Equatable {
     }
 }
 
-extension ImageStretch: Codable {}
-extension ColorMap: Codable {}
+extension DrawMode: Codable {
+    public init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        // Older SessionState stored arbitrary strings and ignored unknown modes
+        // when restoring a new session, whose initial mode is pan.
+        self = DrawMode(rawValue: value) ?? .pan
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}

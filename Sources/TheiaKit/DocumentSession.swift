@@ -587,7 +587,7 @@ public struct HDUFacts {
         view.vmax = Float(saved.vmax)
         view.stretchParameter = Float(saved.stretchParameter)
         regionList.restore(saved.regions)
-        if let savedMode = DrawMode(rawValue: saved.drawMode) { mode = savedMode }
+        mode = saved.drawMode
         showGrid = saved.showWCSGrid
         showCompass = saved.showCompass
         showColorBar = saved.showColorBar

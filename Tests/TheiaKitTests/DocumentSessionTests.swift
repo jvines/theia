@@ -1303,7 +1303,7 @@ final class DocumentSessionTests: XCTestCase {
             let region = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
             let saved = SessionState(
                 selectedHDU: 2, selectedPlane: 0, stretch: .log, colorMap: .plasma,
-                drawMode: "pan", vmin: 12, vmax: 45, stretchParameter: 3,
+                drawMode: .pan, vmin: 12, vmax: 45, stretchParameter: 3,
                 showWCSGrid: true, showCompass: false, showColorBar: false,
                 regions: [region],
                 contour: .init(enabled: true, count: 1, minValue: 12, maxValue: 16, spacing: "linear")
@@ -1446,7 +1446,7 @@ final class DocumentSessionTests: XCTestCase {
 
             let saved = SessionState(
                 selectedHDU: session.hdu, selectedPlane: session.plane,
-                stretch: .linear, colorMap: .gray, drawMode: "lineProfile",
+                stretch: .linear, colorMap: .gray, drawMode: .lineProfile,
                 vmin: 0, vmax: 1, stretchParameter: 1,
                 showWCSGrid: false, showCompass: false, showColorBar: false,
                 regions: []
