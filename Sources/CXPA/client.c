@@ -191,8 +191,12 @@ int XPAProxyAccept(xpa, method, xclass, name, ifd, rip, rport, rname)
     memset((char *)&sock_un, 0, sizeof(sock_un));
     sock_un.sun_family = AF_UNIX;
     strcpy(sock_un.sun_path, amethod);
-    /* unset umask so that everyone can read and write */
+    /* Linux Unix sockets are same-user IPC. Restrict them at bind time. */
+#if defined(__linux__)
+    oum = umask(077);
+#else
     oum = umask(0);
+#endif
     /* bind to the file */
     got = xbind(sock, (struct sockaddr *)&sock_un, sizeof(sock_un));
     /* reset umask to previous */

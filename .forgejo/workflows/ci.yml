@@ -70,6 +70,7 @@ jobs:
               scripts/check_shared_api.sh
               swift build -j 2
               swift test -j 2
+              scripts/test_xpa_local_security.sh "$(swift build --show-bin-path)"
             '
 
   smoke:

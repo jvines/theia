@@ -2791,9 +2791,21 @@ void XPAInitEnv()
       else
 	tmpdir = xstrdup(XPA_TMPDIR);
     }
-    /* create directory, if necessary */
+    /* Preserve a caller-created private Unix namespace on Linux. Theia puts
+     * each instance in its own mode-0700 runtime directory; chmod(0777) here
+     * otherwise exposes every socket in it to other users on a login node. */
+#if defined(__linux__)
+    if( (mtype == XPA_UNIX) && (getenv("XPA_TMPDIR") != NULL) ){
+      xmkdir(tmpdir, 0700);
+    }
+    else{
+      xmkdir(tmpdir, 0777);
+      xchmod(tmpdir, 0777);
+    }
+#else
     xmkdir(tmpdir, 0777);
     xchmod(tmpdir, 0777);
+#endif
 #if HAVE_MINGW32==0
     /* Disable SIGPIPE so we do not die if the client dies.
      * Rather, we will get an EOF on reading or writing.
@@ -4150,8 +4162,12 @@ XPA XPANew(xclass, name, help,
     /* delete old copy */
     unlink (tbuf);
     strcpy(sock_un.sun_path, tbuf);
-    /* unset umask so that everyone can read and write */
+    /* Linux Unix sockets are same-user IPC. Restrict them at bind time. */
+#if defined(__linux__)
+    oum = umask(077);
+#else
     oum = umask(0);
+#endif
     /* bind to the file */
     got = xbind(xpa->fd, (struct sockaddr *)&sock_un, sizeof(sock_un));
     /* reset umask */
@@ -4375,8 +4391,12 @@ XPA XPAInfoNew(xclass, name, info_callback, info_data, info_mode)
     memset((char *)&sock_in, 0, sizeof(sock_in));
     sock_un.sun_family = AF_UNIX;
     strcpy(sock_un.sun_path, tbuf);
-    /* unset umask so that everyone can read and write */
+    /* Linux Unix sockets are same-user IPC. Restrict them at bind time. */
+#if defined(__linux__)
+    oum = umask(077);
+#else
     oum = umask(0);
+#endif
     /* bind to the file */
     got = xbind(xpa->fd, (struct sockaddr *)&sock_un, sizeof(sock_un));
     /* reset umask */
