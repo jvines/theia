@@ -51,6 +51,7 @@ public enum SessionCommand: Sendable, Equatable {
     case setCompassVisible(Bool)
     case setColorBarVisible(Bool)
     case setInspectorVisible(Bool)
+    case showInspectorTab(InspectorTab)
     case setContourSpec(ContourSpec)
     case addRegion(Region)
     case updateRegion(Int, Region)
@@ -77,6 +78,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidHDU(Int)
     case invalidPlane(Int)
     case unavailableWCSVariant(String)
+    case unavailableDrawMode(DrawMode)
     case unavailableBlinkPartner
     case invalidPercentileBounds
     case requiresUserInterface
@@ -92,6 +94,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidHDU(let index): "Invalid HDU \(index)"
         case .invalidPlane(let index): "Invalid plane \(index)"
         case .unavailableWCSVariant(let variant): "Unavailable WCS variant \(variant)"
+        case .unavailableDrawMode(let mode): "Unavailable draw mode \(mode.rawValue)"
         case .unavailableBlinkPartner: "No matching image HDU for blink"
         case .invalidPercentileBounds: "Percentile bounds must be finite"
         case .requiresUserInterface: "Command requires a user interface"
@@ -175,11 +178,26 @@ extension DocumentSession {
                     return CommandOutcome(failure: .unavailableWCSVariant(variant))
                 }
                 selectWCSVariant(variant)
-            case .setDrawMode(let value): mode = value
+            case .setDrawMode(let value):
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard value != .cubeSpectrum || file.hdus[hdu].naxis == 3 else {
+                    return CommandOutcome(failure: .unavailableDrawMode(value))
+                }
+                mode = value
             case .setGridVisible(let value): showGrid = value
             case .setCompassVisible(let value): showCompass = value
             case .setColorBarVisible(let value): showColorBar = value
-            case .setInspectorVisible(let value): inspectorVisible = value
+            case .setInspectorVisible(let value):
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                inspectorVisible = value
+            case .showInspectorTab(let tab):
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                inspectorTab = tab
+                inspectorVisible = true
             case .setContourSpec(let spec): setContourSpec(spec)
             case .addRegion(let region):
                 regions.append(region)

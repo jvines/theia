@@ -242,6 +242,36 @@ public enum CommandMenuEntry: Sendable {
         ]
     }
 
+    public static func analysisMenu(for session: DocumentSession?) -> [CommandMenuEntry] {
+        let image = session?.displayed != nil
+        let cube = session.map { $0.file.hdus[$0.hdu].naxis == 3 } ?? false
+        func item(
+            _ identifier: String, _ title: String, _ command: SessionCommand,
+            enabled: Bool, checked: Bool
+        ) -> CommandMenuEntry {
+            .item(CommandMenuItem(identifier: identifier, title: title, enabled: enabled,
+                                  state: .checked(checked), command: command, shortcut: nil))
+        }
+        func mode(_ value: DrawMode, _ title: String, enabled: Bool = true) -> CommandMenuEntry {
+            item("analysis.\(value.rawValue)", title, .setDrawMode(value),
+                 enabled: image && enabled, checked: session?.mode == value)
+        }
+        func panel(_ tab: InspectorTab, _ identifier: String, _ title: String) -> CommandMenuEntry {
+            item(identifier, title, .showInspectorTab(tab), enabled: image,
+                 checked: session?.inspectorVisible == true && session?.inspectorTab == tab)
+        }
+        return [
+            mode(.lineProfile, "Line Profile"),
+            mode(.radialProfile, "Radial Profile"),
+            mode(.growthCurve, "Growth Curve"),
+            mode(.measure, "Measure"),
+            mode(.cubeSpectrum, "Cube Spectrum", enabled: cube),
+            .separator,
+            panel(.photometry, "analysis.photometry", "Photometry"),
+            panel(.stats, "analysis.statistics", "Image Statistics"),
+        ]
+    }
+
     public static func sessionMenu(
         _ identifier: String, for session: DocumentSession
     ) -> [CommandMenuEntry]? {
@@ -268,7 +298,9 @@ public enum CommandMenuEntry: Sendable {
         case "mode":
             return DrawMode.allCases.map { value in
                 item("mode.\(value.rawValue)", value.label, .setDrawMode(value),
-                     enabled: image, selected: session.mode == value)
+                     enabled: image && (value != .cubeSpectrum
+                         || session.file.hdus[session.hdu].naxis == 3),
+                     selected: session.mode == value)
             }
         case "scale":
             let presets = ScalePreset.toolbarPresets.map { preset in

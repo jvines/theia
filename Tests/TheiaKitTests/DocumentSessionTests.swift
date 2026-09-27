@@ -76,6 +76,58 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testAnalysisMenuSelectsModesAndInspectorPanels() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let entries = CommandCatalog.analysisMenu(for: session)
+            XCTAssertEqual(entries.map { $0.item?.identifier ?? "separator" }, [
+                "analysis.lineProfile", "analysis.radialProfile", "analysis.growthCurve",
+                "analysis.measure", "analysis.cubeSpectrum", "separator",
+                "analysis.photometry", "analysis.statistics",
+            ])
+            XCTAssertEqual(entries[1].item?.state, .checked(false))
+            let radial = try XCTUnwrap(entries[1].item?.command)
+            XCTAssertNil(session.perform(radial, origin: .user).failure)
+            XCTAssertEqual(session.mode, .radialProfile)
+            XCTAssertEqual(CommandCatalog.analysisMenu(for: session)[1].item?.state, .checked(true))
+
+            session.inspectorVisible = false
+            let stats = try XCTUnwrap(entries.last?.item?.command)
+            let scripted = session.perform(stats, origin: .script)
+            XCTAssertEqual(scripted.failure, .requiresUserInterface)
+            XCTAssertFalse(session.inspectorVisible)
+            XCTAssertEqual(session.inspectorTab, .header)
+            XCTAssertEqual(session.perform(.setInspectorVisible(true), origin: .script).failure,
+                           .requiresUserInterface)
+            XCTAssertFalse(session.inspectorVisible)
+            XCTAssertNil(session.perform(stats, origin: .user).failure)
+            XCTAssertTrue(session.inspectorVisible)
+            XCTAssertEqual(session.inspectorTab, .stats)
+            XCTAssertEqual(CommandCatalog.analysisMenu(for: session).last?.item?.state,
+                           .checked(true))
+            XCTAssertTrue(CommandCatalog.analysisMenu(for: nil)
+                .compactMap(\.item).allSatisfy { !$0.enabled })
+        }
+    }
+
+    func testCubeSpectrumModeIsDisabledForA2DImage() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.selectHDU(2)
+            XCTAssertNotNil(session.displayed)
+            XCTAssertEqual(session.file.hdus[session.hdu].naxis, 2)
+            XCTAssertFalse(CommandCatalog.analysisMenu(for: session)[4].item?.enabled ?? true)
+            let toolbarMode = CommandCatalog.sessionMenu("mode", for: session)?
+                .compactMap(\.item).first { $0.identifier == "mode.cubeSpectrum" }
+            XCTAssertEqual(toolbarMode?.enabled, false)
+            let attempted = session.perform(.setDrawMode(.cubeSpectrum), origin: .script)
+            XCTAssertEqual(attempted.failure, .unavailableDrawMode(.cubeSpectrum))
+            XCTAssertEqual(session.mode, .pan)
+        }
+    }
+
+
+
 
     func testWorkspaceCommandsReturnPlatformEffectsAndSuppressScriptedWindows() async throws {
         await MainActor.run {

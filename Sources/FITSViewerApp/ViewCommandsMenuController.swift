@@ -60,6 +60,7 @@ final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
         }
         installDocumentMenu("Image", entries: CommandCatalog.imageMenu(for: nil), in: mainMenu)
         installDocumentMenu("Region", entries: CommandCatalog.regionMenu(for: nil), in: mainMenu)
+        installDocumentMenu("Analysis", entries: CommandCatalog.analysisMenu(for: nil), in: mainMenu)
         installed = true
     }
 
@@ -97,7 +98,8 @@ final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let identifier = menuItem.identifier?.rawValue else { return false }
-        if identifier.hasPrefix("image.") || identifier.hasPrefix("region.") {
+        if identifier.hasPrefix("image.") || identifier.hasPrefix("region.")
+            || identifier.hasPrefix("analysis.") {
             guard let descriptor = documentMenuItem(
                 identifier, for: AppDelegate.shared?.activeSessionForMenu()
             ) else { return false }
@@ -120,9 +122,14 @@ final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
     private func documentMenuItem(
         _ identifier: String, for session: DocumentSession?
     ) -> CommandMenuItem? {
-        let entries = identifier.hasPrefix("image.")
-            ? CommandCatalog.imageMenu(for: session)
-            : CommandCatalog.regionMenu(for: session)
+        let entries: [CommandMenuEntry]
+        if identifier.hasPrefix("image.") {
+            entries = CommandCatalog.imageMenu(for: session)
+        } else if identifier.hasPrefix("region.") {
+            entries = CommandCatalog.regionMenu(for: session)
+        } else {
+            entries = CommandCatalog.analysisMenu(for: session)
+        }
         return entries.compactMap(\.item).first { $0.identifier == identifier }
     }
 
