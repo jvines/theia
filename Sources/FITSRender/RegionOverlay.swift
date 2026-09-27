@@ -3,7 +3,7 @@ import FITSCore
 import TheiaKit
 
 /// SwiftUI overlay that draws `Region` annotations on top of a `FITSMetalView`.
-/// Image-frame regions render directly; fk5/ICRS/J2000 regions resolve via the
+/// Image-frame regions render directly; sky-frame regions resolve via the
 /// supplied WCS (if any).
 public struct RegionOverlay: View {
     public let regions: [Region]
@@ -174,16 +174,8 @@ public struct RegionOverlay: View {
     }
 
     private func imagePixel(from point: Region.Point, frame: Region.Frame) -> (Double, Double)? {
-        switch frame {
-        case .image:
-            // FITS files use 1-based FITS pixel coords; convert to 0-based image coords.
-            return (point.x - 1, point.y - 1)
-        case .fk5, .icrs, .j2000:
-            guard let wcs, let p = wcs.skyToPixel(ra: point.x, dec: point.y) else { return nil }
-            return (p.x, p.y)
-        case .galactic:
-            return nil
-        }
+        guard let pixel = imageCenter(of: point, frame: frame, wcs: wcs) else { return nil }
+        return (pixel.x, pixel.y)
     }
 
     private func pixelRadius(_ d: Region.Distance) -> Double? {

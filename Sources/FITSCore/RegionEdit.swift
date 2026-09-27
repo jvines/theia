@@ -144,32 +144,55 @@ func movedCenter(_ center: Region.Point, frame: Region.Frame, wcs: WCS?,
         let dx = currentImage.x - dragStartImage.x
         let dy = currentImage.y - dragStartImage.y
         return .init(x: center.x + dx, y: center.y + dy)
-    case .fk5, .icrs, .j2000:
-        guard let wcs,
+    case .fk5, .icrs, .j2000, .galactic:
+        guard let wcs, let regionFrame = celestialFrame(for: frame),
               let start = wcs.pixelToSky(imageX: Int(dragStartImage.x.rounded()),
                                          imageY: Int(dragStartImage.y.rounded())),
               let curr  = wcs.pixelToSky(imageX: Int(currentImage.x.rounded()),
                                          imageY: Int(currentImage.y.rounded())) else { return center }
-        let dRA  = curr.ra  - start.ra
-        let dDec = curr.dec - start.dec
-        return .init(x: center.x + dRA, y: center.y + dDec)
-    case .galactic:
-        return center
+        let startInFrame = CelestialTransform.convert(lon: start.ra, lat: start.dec,
+                                                       from: wcs.nativeFrame, to: regionFrame)
+        let currentInFrame = CelestialTransform.convert(lon: curr.ra, lat: curr.dec,
+                                                         from: wcs.nativeFrame, to: regionFrame)
+        var dLon = currentInFrame.lon - startInFrame.lon
+        if dLon > 180 { dLon -= 360 }
+        if dLon < -180 { dLon += 360 }
+        return .init(x: center.x + dLon, y: center.y + currentInFrame.lat - startInFrame.lat)
     }
 }
 
 /// Centre of a region.Point in 0-based image pixels. Returns nil if the frame
-/// requires WCS and `wcs` is absent or galactic (not supported).
+/// requires WCS and `wcs` is absent.
 public func imageCenter(of point: Region.Point, frame: Region.Frame, wcs: WCS?) -> SIMD2<Double>? {
     switch frame {
     case .image:
         return SIMD2(point.x - 1, point.y - 1)
-    case .fk5, .icrs, .j2000:
-        guard let wcs, let p = wcs.skyToPixel(ra: point.x, dec: point.y) else { return nil }
+    case .fk5, .icrs, .j2000, .galactic:
+        guard let wcs, let regionFrame = celestialFrame(for: frame) else { return nil }
+        let native = CelestialTransform.convert(lon: point.x, lat: point.y,
+                                                 from: regionFrame, to: wcs.nativeFrame)
+        guard let p = wcs.skyToPixel(ra: native.lon, dec: native.lat) else { return nil }
         return SIMD2(p.x, p.y)
-    case .galactic:
-        return nil
     }
+}
+
+private func celestialFrame(for frame: Region.Frame) -> CelestialFrame? {
+    switch frame {
+    case .image: nil
+    case .fk5, .j2000: .fk5
+    case .icrs: .icrs
+    case .galactic: .galactic
+    }
+}
+
+private func regionPoint(at image: SIMD2<Double>, frame: Region.Frame, wcs: WCS?) -> Region.Point? {
+    if frame == .image { return .init(x: image.x + 1, y: image.y + 1) }
+    guard let wcs, let regionFrame = celestialFrame(for: frame),
+          let native = wcs.pixelToSky(imageX: Int(image.x.rounded()),
+                                      imageY: Int(image.y.rounded())) else { return nil }
+    let converted = CelestialTransform.convert(lon: native.ra, lat: native.dec,
+                                                from: wcs.nativeFrame, to: regionFrame)
+    return .init(x: converted.lon, y: converted.lat)
 }
 
 /// Distance expressed in image pixels. Pixel-unit distances pass through; angular
@@ -314,15 +337,8 @@ public enum RegionEdit {
                 let midDX =  midLX * cosT - midLY * sinT
                 let midDY =  midLX * sinT + midLY * cosT
                 let newCx = cp.x + midDX, newCy = cp.y + midDY
-                let newCenter: Region.Point
-                if region.frame == .image {
-                    newCenter = .init(x: newCx + 1, y: newCy + 1)
-                } else if let wcs, let sky = wcs.pixelToSky(imageX: Int(newCx.rounded()),
-                                                            imageY: Int(newCy.rounded())) {
-                    newCenter = .init(x: sky.ra, y: sky.dec)
-                } else {
-                    newCenter = center
-                }
+                let newCenter = regionPoint(at: SIMD2(newCx, newCy),
+                                             frame: region.frame, wcs: wcs) ?? center
                 let newW = distance(fromPixels: max(newHalfW * 2, 1), like: w, wcs: wcs)
                 let newH = distance(fromPixels: max(newHalfH * 2, 1), like: h, wcs: wcs)
                 return with(region, shape: .box(center: newCenter, width: newW, height: newH, angle: angle))

@@ -77,6 +77,50 @@ final class RegionEditWCSTests: XCTestCase {
         XCTAssertNil(hit)
     }
 
+    func testGalacticRegionCenterHitAndDragThroughEquatorialWCS() throws {
+        let wcs = try wcs()
+        let galactic = CelestialTransform.convert(lon: 180, lat: 0,
+                                                   from: .icrs, to: .galactic)
+        let center = Region.Point(x: galactic.lon, y: galactic.lat)
+        let region = Region(shape: .circle(center: center,
+                                           radius: .init(value: 5, unit: .arcsecond)),
+                            frame: .galactic)
+        let pixel = try XCTUnwrap(imageCenter(of: center, frame: .galactic, wcs: wcs))
+        XCTAssertEqual(pixel.x, 49, accuracy: 1e-5)
+        XCTAssertEqual(pixel.y, 49, accuracy: 1e-5)
+        XCTAssertEqual(RegionHitTest.hit(in: [region], atImagePoint: SIMD2(49, 49),
+                                          toleranceImagePixels: 3, wcs: wcs)?.handle, .move)
+        let moved = RegionEdit.apply(to: region, handle: .move,
+                                     dragStartImage: SIMD2(49, 49),
+                                     currentImage: SIMD2(59, 49), wcs: wcs)
+        guard case .circle(let movedCenter, _) = moved.shape else {
+            return XCTFail("expected circle")
+        }
+        XCTAssertNotEqual(movedCenter, center)
+        let mapped = try XCTUnwrap(imageCenter(of: movedCenter, frame: .galactic, wcs: wcs))
+        XCTAssertEqual(mapped.x, 59, accuracy: 0.2)
+        XCTAssertEqual(mapped.y, 49, accuracy: 0.2)
+    }
+
+    func testGalacticBoxCornerResizeKeepsCenterInGalacticFrame() throws {
+        let wcs = try wcs()
+        let galactic = CelestialTransform.convert(lon: 180, lat: 0,
+                                                   from: .icrs, to: .galactic)
+        let region = Region(shape: .box(center: .init(x: galactic.lon, y: galactic.lat),
+                                        width: .init(value: 10, unit: .pixel),
+                                        height: .init(value: 10, unit: .pixel), angle: 0),
+                            frame: .galactic)
+        let resized = RegionEdit.apply(to: region, handle: .boxCorner(0),
+                                       dragStartImage: SIMD2(44, 44),
+                                       currentImage: SIMD2(34, 34), wcs: wcs)
+        guard case .box(let center, _, _, _) = resized.shape else {
+            return XCTFail("expected box")
+        }
+        let mapped = try XCTUnwrap(imageCenter(of: center, frame: .galactic, wcs: wcs))
+        XCTAssertEqual(mapped.x, 44, accuracy: 0.2)
+        XCTAssertEqual(mapped.y, 44, accuracy: 0.2)
+    }
+
     func testApplyDragMovesWCSCircleCenter() throws {
         // Drag from (49, 49) to (59, 49): cursor moved +10 pixels in x → +10″ in sky.
         // At RA=180, +10″ in xi means RA shifts by -10″/cos(0) = -10″ ≈ -0.00277778°.
