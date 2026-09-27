@@ -331,6 +331,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .exportCube(let snapshot, _):
             controllers.first { $0.documentModel.session.id == snapshot.documentID }?
                 .toolbarState.onEffect(effect)
+        case .saveImage(let snapshot, _):
+            controllers.first { $0.documentModel.session.id == snapshot.documentID }?
+                .toolbarState.onEffect(effect)
         case .saveRegions(let snapshot, _):
             controllers.first { $0.documentModel.session.id == snapshot.documentID }?
                 .toolbarState.onEffect(effect)
@@ -382,21 +385,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func saveCurrentImageAsFITS() {
         let controller = controllers.first { $0.window?.isKeyWindow == true } ?? controllers.first
         guard let controller else { NSSound.beep(); return }
-        let model = controller.documentModel
-        guard let image = model.session.displayed else { NSSound.beep(); return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "fits") ?? .data]
-        panel.nameFieldStringValue = model.url.deletingPathExtension().lastPathComponent + "-modified.fits"
-        guard let parent = controller.window else { return }
-        panel.beginSheetModal(for: parent) { resp in
-            guard resp == .OK, let url = panel.url else { return }
-            do {
-                try FITSWriter.write(image, to: url)
-            } catch {
-                let a = NSAlert(error: error)
-                a.runModal()
-            }
-        }
+        let outcome = controller.documentModel.session.perform(.saveImageAsFITS, origin: .user)
+        guard outcome.failure == nil else { NSSound.beep(); return }
+        for effect in outcome.effects { applyEffect(effect) }
     }
 
     @objc func printFrontDocument() {

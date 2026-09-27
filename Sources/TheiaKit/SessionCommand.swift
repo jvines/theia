@@ -69,6 +69,7 @@ public enum SessionCommand: Sendable, Equatable {
     case clearDerivedImage
     case exportImage
     case exportCube
+    case saveImageAsFITS
     case answer(PendingRequest, Answer)
     case showPanel(PanelKind)
     case fitView
@@ -149,6 +150,7 @@ public enum Effect: Sendable, Equatable {
     case ask(Question, PendingRequest)
     case exportImage(RenderSnapshot, URL)
     case exportCube(CubeRenderSnapshot, URL)
+    case saveImage(RenderSnapshot, URL)
     case saveRegions(RegionSaveSnapshot, URL)
     case loadRegions(RegionLoadRequest, URL)
     case showPanel(PanelKind)
@@ -318,6 +320,11 @@ extension DocumentSession {
                     return CommandOutcome(failure: .requiresUserInterface)
                 }
                 return requestCubeExport()
+            case .saveImageAsFITS:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestImageSave()
             case .answer(let request, let answer):
                 guard origin == .user else {
                     return CommandOutcome(failure: .requiresUserInterface)

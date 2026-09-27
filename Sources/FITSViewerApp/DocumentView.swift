@@ -1654,7 +1654,12 @@ extension DocumentView {
                 let outcome = session.perform(.answer(request, answer), origin: .user)
                 for next in outcome.effects { applyEffect(next) }
             }
-            if case .exportCube = request, let parent = NSApp.keyWindow {
+            let usesSheet: Bool
+            switch request {
+            case .exportCube, .saveImage, .saveRegions: usesSheet = true
+            default: usesSheet = false
+            }
+            if usesSheet, let parent = NSApp.keyWindow {
                 panel.beginSheetModal(for: parent, completionHandler: handleResponse)
             } else {
                 panel.begin(completionHandler: handleResponse)
@@ -1701,6 +1706,17 @@ extension DocumentView {
                     }
                 } catch {
                     DispatchQueue.main.async { NSAlert(error: error).runModal() }
+                }
+            }
+        case .saveImage(let snapshot, let url):
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try snapshot.writeFITS(to: url)
+                } catch {
+                    DispatchQueue.main.async {
+                        applyEffect(.alert(title: "FITS image not saved",
+                                           message: error.localizedDescription, style: .warning))
+                    }
                 }
             }
         case .saveRegions(let snapshot, let url):

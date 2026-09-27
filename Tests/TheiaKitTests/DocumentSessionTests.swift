@@ -5,6 +5,40 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testSaveImageAsFITSRetainsTheRequestTimePlane() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.saveImageAsFITS, origin: .script).failure,
+                           .requiresUserInterface)
+            let asked = session.perform(.saveImageAsFITS, origin: .user)
+            guard case .ask(let question, let request) = asked.effects.first,
+                  case .saveImage(let snapshot) = request else {
+                return XCTFail("Saving FITS should ask for a path")
+            }
+            XCTAssertEqual(question, .savePath(suggestedName: "session-modified.fits", types: ["fits"]))
+            XCTAssertEqual(snapshot.plane, 0)
+            _ = session.perform(.selectPlane(1), origin: .user)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("theia-image-\(UUID().uuidString).fits")
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let answered = session.perform(.answer(request, .path(destination)), origin: .user)
+            guard case .saveImage(let saved, let url) = answered.effects.first else {
+                return XCTFail("Answer should carry the original image")
+            }
+            XCTAssertEqual(url, destination)
+            XCTAssertEqual(saved.image.physicalValue(x: 0, y: 0), 0)
+            try saved.writeFITS(to: destination)
+            let file = try FITSFile(data: Data(contentsOf: destination))
+            XCTAssertEqual(try FITSImage(hdu: file.hdus[0]).physicalValue(x: 0, y: 0), 0)
+            XCTAssertEqual(try FITSImage(hdu: file.hdus[0]).physicalValue(x: 1, y: 1), 3)
+            XCTAssertEqual(session.perform(.answer(request, .path(destination)), origin: .user).failure,
+                           .invalidPendingRequest)
+            _ = session.perform(.selectHDU(4), origin: .user)
+            XCTAssertEqual(session.perform(.saveImageAsFITS, origin: .user).failure,
+                           .noDisplayedImage)
+        }
+    }
+
     func testRegionSaveRequestRetainsTheRequestTimeRegions() async throws {
         try await MainActor.run {
             let session = try makeSession()

@@ -45,6 +45,11 @@ public struct RenderSnapshot: Sendable, Equatable {
             ? RasterEncoder.tiff(raster) : RasterEncoder.png(raster)
         try data.write(to: url, options: .atomic)
     }
+
+    /// Preserve the request-time source pixels when the save sheet stays open.
+    public func writeFITS(to url: URL) throws {
+        try FITSWriter.write(image, to: url)
+    }
 }
 
 /// A cube and render settings captured before the Mac asks for an MP4 path.
@@ -88,6 +93,7 @@ public enum Question: Sendable, Equatable {
 public enum PendingRequest: Sendable, Equatable {
     case exportImage(RenderSnapshot)
     case exportCube(CubeRenderSnapshot)
+    case saveImage(RenderSnapshot)
     case saveRegions(RegionSaveSnapshot)
     case loadRegions(RegionLoadRequest)
 
@@ -95,6 +101,7 @@ public enum PendingRequest: Sendable, Equatable {
         switch self {
         case .exportImage(let snapshot): snapshot.id
         case .exportCube(let snapshot): snapshot.id
+        case .saveImage(let snapshot): snapshot.id
         case .saveRegions(let snapshot): snapshot.id
         case .loadRegions(let request): request.id
         }
@@ -104,6 +111,7 @@ public enum PendingRequest: Sendable, Equatable {
         switch self {
         case .exportImage(let snapshot): snapshot.documentID
         case .exportCube(let snapshot): snapshot.documentID
+        case .saveImage(let snapshot): snapshot.documentID
         case .saveRegions(let snapshot): snapshot.documentID
         case .loadRegions(let request): request.documentID
         }
@@ -122,6 +130,7 @@ extension DocumentSession {
         let title: String
         switch request {
         case .exportImage, .exportCube: title = "Export not saved"
+        case .saveImage: title = "FITS image not saved"
         case .saveRegions: title = "Regions not saved"
         case .loadRegions: title = "Regions not loaded"
         }
@@ -152,6 +161,18 @@ extension DocumentSession {
         let name = url.deletingPathExtension().lastPathComponent + ".mp4"
         return CommandOutcome(effects: [
             .ask(.savePath(suggestedName: name, types: ["mp4"]), request)
+        ])
+    }
+
+    func requestImageSave() -> CommandOutcome {
+        guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+        guard let image = displayed else { return CommandOutcome(failure: .noDisplayedImage) }
+        let snapshot = RenderSnapshot(session: self, image: image)
+        let request = PendingRequest.saveImage(snapshot)
+        pendingRequests[snapshot.id] = request
+        let name = url.deletingPathExtension().lastPathComponent + "-modified.fits"
+        return CommandOutcome(effects: [
+            .ask(.savePath(suggestedName: name, types: ["fits"]), request)
         ])
     }
 
@@ -193,6 +214,8 @@ extension DocumentSession {
                 return CommandOutcome(effects: [.exportImage(snapshot, url)])
             case .exportCube(let snapshot):
                 return CommandOutcome(effects: [.exportCube(snapshot, url)])
+            case .saveImage(let snapshot):
+                return CommandOutcome(effects: [.saveImage(snapshot, url)])
             case .saveRegions(let snapshot):
                 return CommandOutcome(effects: [.saveRegions(snapshot, url)])
             case .loadRegions(let load):
