@@ -548,7 +548,7 @@ struct InspectorPanel: View {
                                       editor: session.headerEditor, imageProvider: imageProvider)
             case .regions: RegionListPanel(regions: $regions, session: session, onEffect: onEffect)
             case .photometry: PhotometryPanel(session: session)
-            case .stats: ImageStatsPanel(imageProvider: imageProvider)
+            case .stats: ImageStatsPanel(session: session)
             }
         }
     }
