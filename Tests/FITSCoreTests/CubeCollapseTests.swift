@@ -120,6 +120,130 @@ final class CubeCollapseTests: XCTestCase {
         XCTAssertThrowsError(try FITSImage.collapsed(hdu: hdu, mode: .sum))
     }
 
+    func testCancellableCollapsePreservesAllModesAndNaNRules() throws {
+        // Four planes exercise even median, skipped NaNs, and all-NaN output.
+        let hdu = try floatCube(width: 3, height: 1, planes: [
+            [1, .nan, .nan], [3, 2, .nan], [5, .nan, .nan], [9, 6, .nan],
+        ])
+        let expectations: [(FITSImage.CollapseMode, Double, Double)] = [
+            (.sum, 18, 8), (.mean, 4.5, 4), (.median, 4, 4), (.max, 9, 6),
+        ]
+        for (mode, first, second) in expectations {
+            let result = try FITSImage.collapsedCheckingCancellation(hdu: hdu, mode: mode)
+            XCTAssertEqual(result.physicalValue(x: 0, y: 0), first, "\(mode)")
+            XCTAssertEqual(result.physicalValue(x: 1, y: 0), second, "\(mode)")
+            XCTAssertTrue(result.physicalValue(x: 2, y: 0).isNaN, "\(mode)")
+        }
+    }
+
+    func testCollapseChecksCancellationDuringDecodeAndAccumulation() throws {
+        let hdu = try floatCube(width: 16_384, height: 1, planes: [
+            [Float](repeating: 1, count: 16_384),
+        ])
+        // The fifth callback occurs in decoding; the seventh in accumulation.
+        for stopAt in [5, 7] {
+            var checks = 0
+            XCTAssertThrowsError(try FITSImage.collapsedCheckingCancellation(
+                hdu: hdu, mode: .sum, checkCancellation: {
+                    checks += 1
+                    if checks == stopAt { throw CancellationError() }
+                }
+            )) { XCTAssertTrue($0 is CancellationError) }
+            XCTAssertEqual(checks, stopAt)
+        }
+    }
+
+    func testMedianCollapseCanCancelDuringLargeTileProcessing() throws {
+        let hdu = try floatCube(width: 66_000, height: 1, planes: [
+            [Float](repeating: 2, count: 66_000),
+        ])
+        var checks = 0
+        XCTAssertThrowsError(try FITSImage.collapsedCheckingCancellation(
+            hdu: hdu, mode: .median, checkCancellation: {
+                checks += 1
+                if checks == 20 { throw CancellationError() }
+            }
+        )) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(checks, 20)
+    }
+
+    func testMedianCollapseProducesValuesAcrossTileBoundary() throws {
+        // Two planes give a 32,768-pixel tile; the last pixel is in tile two.
+        let hdu = try floatCube(width: 32_769, height: 1, planes: [
+            [Float](repeating: 2, count: 32_769),
+            [Float](repeating: 6, count: 32_769),
+        ])
+        let result = try FITSImage.collapsedCheckingCancellation(hdu: hdu, mode: .median)
+        XCTAssertEqual(result.physicalValue(x: 0, y: 0), 4)
+        XCTAssertEqual(result.physicalValue(x: 32_768, y: 0), 4)
+    }
+
+    func testSlabUsesInclusivePlaneRangeAndPreservesNaN() throws {
+        let hdu = try floatCube(width: 3, height: 1, planes: [
+            [100, .nan, .nan], [1, 2, .nan], [3, .nan, .nan], [200, 4, .nan],
+        ])
+        let result = try FITSImage.slabCheckingCancellation(hdu: hdu, from: 1, to: 2)
+        XCTAssertEqual(result.physicalValue(x: 0, y: 0), 4)
+        XCTAssertEqual(result.physicalValue(x: 1, y: 0), 2)
+        XCTAssertTrue(result.physicalValue(x: 2, y: 0).isNaN)
+    }
+
+    func testSlabRejectsInvalidBounds() throws {
+        let hdu = try cubeHDU()
+        for (from, to) in [(-1, 1), (0, 3), (2, 1)] {
+            XCTAssertThrowsError(try FITSImage.slabCheckingCancellation(
+                hdu: hdu, from: from, to: to
+            ))
+        }
+    }
+
+    func testSlabRetainsMacFloatAccumulation() throws {
+        let hdu = try floatCube(width: 1, height: 1, planes: [
+            [100_000_000], [1], [-100_000_000],
+        ])
+        // Adding 1 to 100 million is rounded away in Float32.
+        let result = try FITSImage.slab(hdu: hdu, from: 0, to: 2)
+        XCTAssertEqual(result.physicalValue(x: 0, y: 0), 0)
+    }
+
+    func testSlabChecksCancellationWithinWidePlane() throws {
+        let hdu = try floatCube(width: 16_384, height: 1, planes: [
+            [Float](repeating: 1, count: 16_384),
+        ])
+        var checks = 0
+        XCTAssertThrowsError(try FITSImage.slabCheckingCancellation(
+            hdu: hdu, from: 0, to: 0, checkCancellation: {
+                checks += 1
+                if checks == 3 { throw CancellationError() }
+            }
+        )) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(checks, 3)
+    }
+
+    private func floatCube(width: Int, height: Int, planes: [[Float]]) throws -> FITSHDU {
+        precondition(planes.allSatisfy { $0.count == width * height })
+        let cards = [
+            pad("SIMPLE  =                    T"),
+            pad("BITPIX  =                  -32"),
+            pad("NAXIS   =                    3"),
+            pad("NAXIS1  = \(String(format: "%20d", width))"),
+            pad("NAXIS2  = \(String(format: "%20d", height))"),
+            pad("NAXIS3  = \(String(format: "%20d", planes.count))"),
+            pad("END"),
+        ]
+        var header = cards.joined()
+        header += String(repeating: " ", count: (2880 - header.count % 2880) % 2880)
+        var data = Data(header.utf8)
+        for plane in planes {
+            for value in plane {
+                var bits = value.bitPattern.bigEndian
+                withUnsafeBytes(of: &bits) { data.append(contentsOf: $0) }
+            }
+        }
+        data.append(Data(repeating: 0, count: (2880 - data.count % 2880) % 2880))
+        return try FITSFile(data: data).hdus[0]
+    }
+
     private func pad(_ s: String) -> String {
         s.padding(toLength: 80, withPad: " ", startingAt: 0)
     }

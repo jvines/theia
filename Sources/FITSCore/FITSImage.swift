@@ -291,26 +291,38 @@ public struct FITSImage: Sendable {
     ///
     /// Throws `FITSError.invalidHeader` if `hdu` is not a 3D cube.
     public static func collapsed(hdu: FITSHDU, mode: CollapseMode) throws -> FITSImage {
-        guard hdu.naxis == 3 else {
-            throw FITSError.invalidHeader("collapse requires NAXIS=3 (got \(hdu.naxis))")
-        }
-        let axes = hdu.axes
-        let w = axes[0], h = axes[1], depth = axes[2]
-        let pixelCount = w * h
+        try collapsedCheckingCancellation(hdu: hdu, mode: mode, checkCancellation: {})
+    }
+
+    /// Cancellable form of `collapsed(hdu:mode:)`. Checks during plane decoding,
+    /// accumulation, and median tile processing.
+    public static func collapsedCheckingCancellation(
+        hdu: FITSHDU,
+        mode: CollapseMode,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> FITSImage {
+        try checkCancellation()
+        let (w, h, depth, pixelCount) = try cubeShape(hdu)
 
         switch mode {
         case .sum, .mean, .max:
-            // Online accumulators: one float per pixel, processed plane-by-plane.
-            // No `depth × W × H × 8` peak allocation; safe for 100-plane HD cubes.
+            // Online accumulators: one Double and one count per output pixel.
+            // Only one decoded plane is held at a time, regardless of depth.
             var accum = [Double](repeating: 0, count: pixelCount)
             var counts = [Int32](repeating: 0, count: pixelCount)
             // Seed `accum` to -inf for `.max` so the first sample wins.
             if mode == .max {
-                for i in 0..<pixelCount { accum[i] = -.infinity }
+                for i in 0..<pixelCount {
+                    if i & 8_191 == 0 { try checkCancellation() }
+                    accum[i] = -.infinity
+                }
             }
             for p in 0..<depth {
-                let plane = try FITSImage(hdu: hdu, plane: p).physicalValues()
+                try checkCancellation()
+                let plane = try FITSImage(hdu: hdu, plane: p)
+                    .physicalValuesCheckingCancellation(checkCancellation: checkCancellation)
                 for i in 0..<pixelCount {
+                    if i & 8_191 == 0 { try checkCancellation() }
                     let v = plane[i]
                     if v.isNaN { continue }
                     counts[i] &+= 1
@@ -323,6 +335,7 @@ public struct FITSImage: Sendable {
             }
             var out = [Float](repeating: 0, count: pixelCount)
             for i in 0..<pixelCount {
+                if i & 8_191 == 0 { try checkCancellation() }
                 let n = Int(counts[i])
                 if n == 0 { out[i] = .nan; continue }
                 switch mode {
@@ -335,25 +348,30 @@ public struct FITSImage: Sendable {
             return .fromFloat32(pixels: out, width: w, height: h)
 
         case .median:
-            // Median needs every value per pixel; tile output so we hold at most
-            // `tile × depth × 8` bytes of plane buffers at once. Tile chosen so
-            // a 100-plane cube uses ≤ ~50 MB peak (≈ 64k pixels × 100 × 8 B).
+            // Median needs every value per pixel; tile output to bound the
+            // per-pixel storage to about 65,536 Doubles, plus one decoded plane.
             let tileSize = max(1, 65_536 / max(1, depth))
             var out = [Float](repeating: 0, count: pixelCount)
             var i = 0
             var perPixel = [Double](repeating: 0, count: tileSize * depth)
             while i < pixelCount {
+                try checkCancellation()
                 let take = min(tileSize, pixelCount - i)
                 for p in 0..<depth {
-                    let plane = try FITSImage(hdu: hdu, plane: p).physicalValues()
+                    try checkCancellation()
+                    let plane = try FITSImage(hdu: hdu, plane: p)
+                        .physicalValuesCheckingCancellation(checkCancellation: checkCancellation)
                     for k in 0..<take {
+                        if k & 8_191 == 0 { try checkCancellation() }
                         perPixel[k * depth + p] = plane[i + k]
                     }
                 }
                 for k in 0..<take {
+                    if k & 8_191 == 0 { try checkCancellation() }
                     var values: [Double] = []
                     values.reserveCapacity(depth)
                     for p in 0..<depth {
+                        if p > 0 && p & 8_191 == 0 { try checkCancellation() }
                         let v = perPixel[k * depth + p]
                         if !v.isNaN { values.append(v) }
                     }
@@ -367,6 +385,61 @@ public struct FITSImage: Sendable {
             }
             return .fromFloat32(pixels: out, width: w, height: h)
         }
+    }
+
+    /// Sum an inclusive range of cube planes using Float32 accumulation, as in
+    /// the Mac slab operation. Pixels without valid samples remain NaN.
+    public static func slab(hdu: FITSHDU, from: Int, to: Int) throws -> FITSImage {
+        try slabCheckingCancellation(hdu: hdu, from: from, to: to, checkCancellation: {})
+    }
+
+    /// Cancellable form of `slab(hdu:from:to:)`.
+    public static func slabCheckingCancellation(
+        hdu: FITSHDU,
+        from: Int,
+        to: Int,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> FITSImage {
+        try checkCancellation()
+        let (w, h, depth, pixelCount) = try cubeShape(hdu)
+        guard from >= 0, from <= to, to < depth else {
+            throw FITSError.invalidHeader("slab range \(from)...\(to) outside [0, \(depth))")
+        }
+
+        var out = [Float](repeating: 0, count: pixelCount)
+        var seen = [Bool](repeating: false, count: pixelCount)
+        for plane in from...to {
+            try checkCancellation()
+            let image = try FITSImage(hdu: hdu, plane: plane)
+            for i in 0..<pixelCount {
+                if i & 8_191 == 0 { try checkCancellation() }
+                let value = image.physicalValue(x: i % w, y: i / w)
+                if value.isNaN { continue }
+                out[i] += Float(value)
+                seen[i] = true
+            }
+        }
+        for i in 0..<pixelCount {
+            if i & 8_191 == 0 { try checkCancellation() }
+            if !seen[i] { out[i] = .nan }
+        }
+        return .fromFloat32(pixels: out, width: w, height: h)
+    }
+
+    private static func cubeShape(_ hdu: FITSHDU) throws -> (
+        width: Int, height: Int, depth: Int, pixelCount: Int
+    ) {
+        guard hdu.naxis == 3, hdu.axes.count == 3 else {
+            throw FITSError.invalidHeader("cube operation requires NAXIS=3 (got \(hdu.naxis))")
+        }
+        let axes = hdu.axes
+        let w = axes[0], h = axes[1], depth = axes[2]
+        guard w > 0, h > 0, depth > 0 else {
+            throw FITSError.invalidHeader("cube axes must be positive (got \(axes))")
+        }
+        let product = w.multipliedReportingOverflow(by: h)
+        guard !product.overflow else { throw FITSError.invalidHeader("cube plane size overflow") }
+        return (w, h, depth, product.partialValue)
     }
 
     private func rawValue(x: Int, y: Int) -> Double {
