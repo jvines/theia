@@ -307,6 +307,24 @@ import TheiaKit
         XCTAssertEqual(renderer.transform.centre, pannedCentre)
     }
 
+    func testNewDisplayRevisionPreservesUserZoom() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("No Metal device")
+        }
+        let data = MakeFITS.uint8Image(naxis1: 10, naxis2: 10,
+                                       pixels: [UInt8](repeating: 1, count: 100))
+        let image = try FITSImage(hdu: FITSFile(data: data).hdus[0])
+        let renderer = try FITSRenderer(device: device, viewport: ImageViewState())
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 200, height: 150), device: device)
+        try renderer.setImage(image, revision: 0)
+        renderer.mtkView(view, drawableSizeWillChange: view.drawableSize)
+        renderer.transform = ViewTransform(scale: 30, centre: SIMD2(3, 4))
+
+        try renderer.setImage(image, revision: 1)
+
+        XCTAssertEqual(renderer.transform, ViewTransform(scale: 30, centre: SIMD2(3, 4)))
+    }
+
 }
 
 enum MakeFITS {

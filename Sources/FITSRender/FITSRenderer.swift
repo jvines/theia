@@ -165,9 +165,8 @@ extension ImageStretch {
         self.image = image
         self.displayImage = display
         self.texture = try? MetalTextureFactory.makeTexture(from: display, device: device)
-        hasFittedImage = false
         let size = viewport.viewSizePoints
-        if size.width > 0, size.height > 0 {
+        if !hasFittedImage, size.width > 0, size.height > 0 {
             transform = ViewTransform.fit(
                 imageSize: SIMD2(Double(image.width), Double(image.height)),
                 viewSize: SIMD2(Double(size.width), Double(size.height))

@@ -56,6 +56,12 @@ public enum SessionCommand: Sendable {
     case toggleBlink
     case clearDerivedImage
     case showPanel(PanelKind)
+    case fitView
+    case actualSize
+    case zoomIn
+    case zoomOut
+    case zoom(factor: Double, aroundImagePoint: SIMD2<Double>)
+    case pan(viewDelta: SIMD2<Double>)
 }
 
 public enum CommandFailure: Error, Sendable, Equatable {
@@ -67,6 +73,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidPercentileBounds
     case requiresUserInterface
     case unavailablePlayback
+    case unavailableViewSize
+    case invalidZoomFactor
+    case invalidPanDelta
 
     public var message: String {
         switch self {
@@ -78,6 +87,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidPercentileBounds: "Percentile bounds must be finite"
         case .requiresUserInterface: "Command requires a user interface"
         case .unavailablePlayback: "Current HDU has no playback planes"
+        case .unavailableViewSize: "View size is unavailable"
+        case .invalidZoomFactor: "Zoom factor or anchor is invalid"
+        case .invalidPanDelta: "Pan delta is invalid"
         }
     }
 }
@@ -163,6 +175,34 @@ extension DocumentSession {
                     return CommandOutcome(failure: .requiresUserInterface)
                 }
                 return CommandOutcome(effects: [.showPanel(panel)])
+            case .fitView:
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard view.fitDisplayedImage() else {
+                    return CommandOutcome(failure: .unavailableViewSize)
+                }
+            case .actualSize:
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                view.transform.scale = 1
+            case .zoomIn:
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard view.zoom(by: 2, aroundImagePoint: view.transform.centre) else {
+                    return CommandOutcome(failure: .invalidZoomFactor)
+                }
+            case .zoomOut:
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard view.zoom(by: 0.5, aroundImagePoint: view.transform.centre) else {
+                    return CommandOutcome(failure: .invalidZoomFactor)
+                }
+            case .zoom(let factor, let anchor):
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard view.zoom(by: factor, aroundImagePoint: anchor) else {
+                    return CommandOutcome(failure: .invalidZoomFactor)
+                }
+            case .pan(let delta):
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard view.pan(by: delta) else {
+                    return CommandOutcome(failure: .invalidPanDelta)
+                }
             }
             return CommandOutcome()
         }

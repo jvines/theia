@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import FITSCore
 import FITSRender
+import TheiaKit
 import XPABridge
 
 /// App-level coordinator: handles file opens from Finder / drag-and-drop / the
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let xpaBridge = XPACommandBridge()
     private var xpaServer: XPAServer?
+    private let viewCommandsMenu = ViewCommandsMenuController()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Self.shared = self
@@ -42,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("didFinishLaunching, args=\(CommandLine.arguments), controllers=\(controllers.count)")
+        viewCommandsMenu.install()
         ScriptingServer.shared.start()
         startXPAServer()
         // If launched with a file path on argv (rare with .app bundles), open it.
@@ -275,6 +278,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Scripting bridge
 
     func allControllersForScripting() -> [DocumentWindowController] { controllers }
+
+    func activeSessionForMenu() -> DocumentSession? {
+        guard let window = ViewMenuFocus.documentWindow(
+            key: NSApp.keyWindow, main: NSApp.mainWindow,
+            documents: controllers.compactMap(\.window)
+        ) else { return nil }
+        return controllers.first { $0.window === window }?.documentModel.session
+    }
 
     /// Looks up a controller by its stable scripting id (not its array position).
     func controllerForScripting(at id: Int) -> DocumentWindowController? {

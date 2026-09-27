@@ -497,7 +497,7 @@ public final class InteractiveMTKView: MTKView {
         }
         switch drawMode {
         case .pan, .drawPolygon:
-            r.transform.pan(by: SIMD2(Double(event.deltaX), -Double(event.deltaY)))
+            r.viewport.pan(by: SIMD2(Double(event.deltaX), -Double(event.deltaY)))
             setNeedsDisplay(bounds)
         case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
             guard let start = dragStartImage,
@@ -552,7 +552,7 @@ public final class InteractiveMTKView: MTKView {
         guard let r = fitsRenderer else { return }
         let p = convert(windowLocation, from: nil)
         let anchor = viewMapping(for: r).viewYUpToImage(SIMD2(Double(p.x), Double(p.y)))
-        r.transform.zoom(by: factor, aroundImagePoint: anchor)
+        r.viewport.zoom(by: factor, aroundImagePoint: anchor)
         setNeedsDisplay(bounds)
     }
 }

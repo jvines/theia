@@ -79,4 +79,38 @@ enum ImageViewChange {
         if revision != previousRevision { onChange?(.imageRevision) }
         if vmin != previousMin || vmax != previousMax { onChange?(.displayParameters) }
     }
+
+    @discardableResult public func fitDisplayedImage() -> Bool {
+        guard let image, viewSizePoints.width.isFinite, viewSizePoints.height.isFinite,
+              viewSizePoints.width > 0, viewSizePoints.height > 0 else { return false }
+        transform = ViewTransform.fit(
+            imageSize: SIMD2(Double(image.width), Double(image.height)),
+            viewSize: SIMD2(Double(viewSizePoints.width), Double(viewSizePoints.height))
+        )
+        return true
+    }
+
+    @discardableResult public func zoom(
+        by factor: Double, aroundImagePoint anchor: SIMD2<Double>
+    ) -> Bool {
+        guard image != nil, factor.isFinite, factor > 0,
+              anchor.x.isFinite, anchor.y.isFinite,
+              transform.scale.isFinite, transform.scale > 0 else { return false }
+        var next = transform
+        next.zoom(by: factor, aroundImagePoint: anchor)
+        guard next.scale.isFinite, next.scale > 0,
+              next.centre.x.isFinite, next.centre.y.isFinite else { return false }
+        transform = next
+        return true
+    }
+
+    @discardableResult public func pan(by viewDelta: SIMD2<Double>) -> Bool {
+        guard image != nil, viewDelta.x.isFinite, viewDelta.y.isFinite,
+              transform.scale.isFinite, transform.scale > 0 else { return false }
+        var next = transform
+        next.pan(by: viewDelta)
+        guard next.centre.x.isFinite, next.centre.y.isFinite else { return false }
+        transform = next
+        return true
+    }
 }

@@ -21,6 +21,18 @@ public struct CommandMenuItem: Sendable {
     public let enabled: Bool
     public let state: CommandSelectionState
     public let command: SessionCommand?
+    public let shortcut: CommandShortcut?
+}
+
+public struct CommandShortcut: Sendable, Equatable {
+    /// The primary modifier maps to Command on macOS and Control on Linux.
+    public let key: String
+    public let shift: Bool
+
+    public init(key: String, shift: Bool = false) {
+        self.key = key
+        self.shift = shift
+    }
 }
 
 public enum CommandMenuEntry: Sendable {
@@ -36,6 +48,22 @@ public enum CommandMenuEntry: Sendable {
 /// Platform-neutral toolbar metadata and state. Identifiers match the Mac's
 /// existing NSToolbarItem identifiers so saved toolbar layouts remain valid.
 @MainActor public enum CommandCatalog {
+    public static func viewMenu(for session: DocumentSession?) -> [CommandMenuEntry] {
+        let enabled = session?.displayed != nil
+        func item(_ id: String, _ title: String, _ command: SessionCommand,
+                  key: String) -> CommandMenuEntry {
+            .item(CommandMenuItem(identifier: id, title: title, enabled: enabled,
+                                  state: .none, command: command,
+                                  shortcut: CommandShortcut(key: key)))
+        }
+        return [
+            item("view.fit", "Fit to Window", .fitView, key: "0"),
+            item("view.actualSize", "Actual Size", .actualSize, key: "1"),
+            item("view.zoomIn", "Zoom In", .zoomIn, key: "="),
+            item("view.zoomOut", "Zoom Out", .zoomOut, key: "-"),
+        ]
+    }
+
     public static func sessionMenu(
         _ identifier: String, for session: DocumentSession
     ) -> [CommandMenuEntry]? {
@@ -45,9 +73,10 @@ public enum CommandMenuEntry: Sendable {
             enabled: Bool = true, selected: Bool = false
         ) -> CommandMenuEntry {
             .item(CommandMenuItem(identifier: id, title: title, enabled: enabled,
-                                  state: .checked(selected), command: command))
+                                  state: .checked(selected), command: command, shortcut: nil))
         }
         switch identifier {
+        case "view": return viewMenu(for: session)
         case "stretch":
             return ImageStretch.allCases.map { value in
                 item("stretch.\(value.rawValue)", value.label, .setStretch(value),

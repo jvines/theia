@@ -27,6 +27,11 @@ let macOSTargets: [Target] = [
         dependencies: ["FITSRender", "TheiaKit"],
         path: "Tests/FITSRenderTests"
     ),
+    .testTarget(
+        name: "FITSViewerAppTests",
+        dependencies: ["FITSViewerApp"],
+        path: "Tests/FITSViewerAppTests"
+    ),
 ]
 #else
 let macOSProducts: [Product] = []

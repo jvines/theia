@@ -182,6 +182,79 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testViewCommandsFitAndZoomAroundAnImageAnchor() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.view.viewSizePoints = CGSize(width: 100, height: 80)
+
+            XCTAssertNil(session.perform(.fitView, origin: .user).failure)
+            XCTAssertEqual(session.view.transform.scale, 40)
+            XCTAssertEqual(session.view.transform.centre, SIMD2(0.5, 0.5))
+
+            XCTAssertNil(session.perform(
+                .zoom(factor: 2, aroundImagePoint: SIMD2(1, 0)), origin: .user
+            ).failure)
+            XCTAssertEqual(session.view.transform.scale, 80)
+            XCTAssertEqual(session.view.transform.centre, SIMD2(0.75, 0.25))
+
+            XCTAssertNil(session.perform(.actualSize, origin: .user).failure)
+            XCTAssertEqual(session.view.transform.scale, 1)
+            XCTAssertEqual(session.view.transform.centre, SIMD2(0.75, 0.25))
+        }
+    }
+
+    func testViewCommandsRejectInvalidZoomWithoutMutatingTransform() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let before = session.view.transform
+            XCTAssertEqual(session.perform(
+                .zoom(factor: .nan, aroundImagePoint: .zero), origin: .script
+            ).failure, .invalidZoomFactor)
+            XCTAssertEqual(session.view.transform, before)
+            session.view.viewSizePoints = .zero
+            XCTAssertEqual(session.perform(.fitView, origin: .script).failure, .unavailableViewSize)
+            XCTAssertEqual(session.view.transform, before)
+        }
+    }
+
+    func testViewCommandsZoomAtCentreAndPanInViewPoints() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            session.view.transform = ViewTransform(scale: 2, centre: SIMD2(10, 10))
+            XCTAssertNil(session.perform(.zoomIn, origin: .user).failure)
+            XCTAssertEqual(session.view.transform, ViewTransform(scale: 4, centre: SIMD2(10, 10)))
+            XCTAssertNil(session.perform(.zoomOut, origin: .user).failure)
+            XCTAssertEqual(session.view.transform.scale, 2)
+            XCTAssertNil(session.perform(.pan(viewDelta: SIMD2(4, -6)), origin: .user).failure)
+            XCTAssertEqual(session.view.transform.centre, SIMD2(8, 7))
+            XCTAssertEqual(session.perform(
+                .pan(viewDelta: SIMD2(.nan, 0)), origin: .script
+            ).failure, .invalidPanDelta)
+            XCTAssertEqual(session.view.transform.centre, SIMD2(8, 7))
+        }
+    }
+
+    func testViewMenuKeepsActionsVisibleAndDisablesThemWithoutAnImage() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let actions = CommandCatalog.viewMenu(for: session).compactMap(\.item)
+            XCTAssertEqual(actions.map(\.identifier), [
+                "view.fit", "view.actualSize", "view.zoomIn", "view.zoomOut",
+            ])
+            XCTAssertTrue(actions.allSatisfy(\.enabled))
+            XCTAssertEqual(actions.first?.shortcut?.key, "0")
+            if case .fitView? = actions.first?.command {} else {
+                XCTFail("Fit menu action should dispatch the shared command")
+            }
+
+            session.selectHDU(4) // table
+            XCTAssertTrue(CommandCatalog.viewMenu(for: session).compactMap(\.item)
+                .allSatisfy { !$0.enabled })
+            XCTAssertTrue(CommandCatalog.viewMenu(for: nil).compactMap(\.item)
+                .allSatisfy { !$0.enabled })
+        }
+    }
+
     func testNestedEventContextInheritsEchoTagAndRestoresOuterContext() async throws {
         try await MainActor.run {
             let session = try makeSession()
