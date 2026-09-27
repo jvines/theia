@@ -1,18 +1,19 @@
 import AppKit
 import SwiftUI
 import FITSCore
+import TheiaKit
 
 @MainActor
 final class LineProfileWindowController: NSWindowController {
     static private(set) var shared: LineProfileWindowController?
 
-    static func show(samples: [Profiles.LineSample], imageName: String, attachedTo parent: NSWindow?) {
+    static func show(model: LineProfileModel, imageName: String, attachedTo parent: NSWindow?) {
         let view = ProfilePlotView(
             title: "Line profile — \(imageName)",
             xLabel: "distance (px)",
             yLabel: "value",
-            xValues: samples.map(\.distance),
-            yValues: samples.map(\.value),
+            xValues: model.xValues,
+            yValues: model.yValues,
             highlightX: nil
         )
         .padding(12)
@@ -205,16 +206,8 @@ private struct GrowthCurveView: View {
 final class CubeSpectrumWindowController: NSWindowController {
     static private(set) var shared: CubeSpectrumWindowController?
 
-    static func show(values: [Double], currentPlane: Int, label: String, attachedTo parent: NSWindow?,
-                     xValues: [Double]? = nil, xLabel: String = "plane") {
-        let xs = xValues ?? (0..<values.count).map(Double.init)
-        let highlight: Double? = (xValues == nil) ? Double(currentPlane) :
-            (currentPlane < xs.count ? xs[currentPlane] : nil)
-        let view = CubeSpectrumView(
-            title: "Cube spectrum — \(label)",
-            xLabel: xLabel,
-            xs: xs, ys: values, highlightX: highlight
-        )
+    static func show(model: CubeSpectrumModel, attachedTo parent: NSWindow?) {
+        let view = CubeSpectrumView(model: model)
         if let existing = shared {
             existing.window?.contentView = NSHostingView(rootView: AnyView(view))
             existing.window?.makeKeyAndOrderFront(nil)
@@ -229,33 +222,30 @@ final class CubeSpectrumWindowController: NSWindowController {
 }
 
 private struct CubeSpectrumView: View {
-    let title: String
-    let xLabel: String
-    let xs: [Double]
-    let ys: [Double]
-    let highlightX: Double?
-    @State private var fit: Gaussian1D.Result?
-    @State private var fitCenter: String = ""
-    @State private var fitHalfWidth: String = ""
+    @State private var model: CubeSpectrumModel
+
+    init(model: CubeSpectrumModel) {
+        self._model = State(initialValue: model)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ProfilePlotView(title: title, xLabel: xLabel, yLabel: "value",
-                            xValues: xs, yValues: ys, highlightX: fit?.center ?? highlightX)
+            ProfilePlotView(title: model.title, xLabel: model.xLabel, yLabel: "value",
+                            xValues: model.xs, yValues: model.ys,
+                            highlightX: model.plotHighlight)
             HStack(spacing: 6) {
                 Text("Fit center").font(.caption).foregroundStyle(.secondary)
-                TextField(xLabel, text: $fitCenter).textFieldStyle(.roundedBorder).frame(width: 90)
+                TextField(model.xLabel, text: $model.fitCenterText).textFieldStyle(.roundedBorder).frame(width: 90)
                 Text("± width").font(.caption).foregroundStyle(.secondary)
-                TextField("", text: $fitHalfWidth).textFieldStyle(.roundedBorder).frame(width: 70)
+                TextField("", text: $model.fitHalfWidthText).textFieldStyle(.roundedBorder).frame(width: 70)
                 Button("Fit Gaussian") {
-                    runFit()
+                    model.runFit()
                 }
                 Button("Auto") {
-                    autoFit()
+                    model.autoFit()
                 }
-                if let f = fit {
-                    Text(String(format: "c=%.4g  σ=%.4g  FWHM=%.4g  amp=%.4g  bg=%.4g",
-                                f.center, f.sigma, f.fwhm, f.amplitude, f.baseline))
+                if let fitText = model.fitText {
+                    Text(fitText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
@@ -265,26 +255,6 @@ private struct CubeSpectrumView: View {
         .padding(12)
     }
 
-    private func runFit() {
-        guard let c = Double(fitCenter), let w = Double(fitHalfWidth), w > 0 else { return }
-        fit = Gaussian1D.fit(xs: xs, ys: ys, near: c, halfWidth: w)
-    }
-
-    private func autoFit() {
-        // Default centre = highlight or the brightest channel; width = 10% of range.
-        let span = (xs.last ?? 0) - (xs.first ?? 0)
-        let w = max(span * 0.1, 1)
-        // Find argmax over y (NaN-skip).
-        var bestX = xs.first ?? 0
-        var bestY = -Double.infinity
-        for i in xs.indices where !ys[i].isNaN {
-            if ys[i] > bestY { bestY = ys[i]; bestX = xs[i] }
-        }
-        let c = highlightX ?? bestX
-        fitCenter = String(format: "%.4g", c)
-        fitHalfWidth = String(format: "%.4g", w)
-        fit = Gaussian1D.fit(xs: xs, ys: ys, near: c, halfWidth: w)
-    }
 }
 
 extension CubeSpectrumWindowController: NSWindowDelegate {

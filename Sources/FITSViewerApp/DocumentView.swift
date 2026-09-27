@@ -827,9 +827,7 @@ extension DocumentView {
 
     private func handleLineProfile(from: SIMD2<Double>, to: SIMD2<Double>) {
         guard let hdu = document.file.hdus[safe: selectedHDU] else { return }
-        let dx = to.x - from.x, dy = to.y - from.y
-        let len = (dx * dx + dy * dy).squareRoot()
-        let n = max(64, Int(len.rounded(.up)) * 2)
+        let n = LineProfileModel.sampleCount(from: from, to: to)
         profileGeometry = .line(from: from, to: to)
         if hdu.naxis == 3 {
             guard let pv = try? Profiles.pvDiagram(hdu: hdu, from: (from.x, from.y), to: (to.x, to.y), samples: n) else { return }
@@ -837,9 +835,9 @@ extension DocumentView {
             return
         }
         guard let image = currentImage() else { return }
-        let samples = Profiles.lineProfile(image: image, from: (from.x, from.y), to: (to.x, to.y),
-                                           samples: n, interpolation: .bilinear)
-        LineProfileWindowController.show(samples: samples, imageName: document.url.lastPathComponent, attachedTo: NSApp.keyWindow)
+        let model = LineProfileModel(image: image, from: from, to: to)
+        LineProfileWindowController.show(model: model, imageName: document.url.lastPathComponent,
+                                         attachedTo: NSApp.keyWindow)
     }
 
     private func handleRadialProfile(center: SIMD2<Double>, radius: Double) {
@@ -889,16 +887,18 @@ extension DocumentView {
         let hit = RegionHitTest.hit(in: regions, atImagePoint: p, toleranceImagePixels: 4, wcs: wcs)
         if let h = hit, regions.indices.contains(h.regionIndex),
            let values = try? Profiles.cubeSpectrum(hdu: hdu, region: regions[h.regionIndex], wcs: wcs, combine: .sum) {
-            CubeSpectrumWindowController.show(values: values, currentPlane: selectedPlane,
-                                              label: "region #\(h.regionIndex) (sum)",
-                                              attachedTo: NSApp.keyWindow, xValues: xs, xLabel: xLabel)
+            let model = CubeSpectrumModel(values: values, currentPlane: selectedPlane,
+                                          label: "region #\(h.regionIndex) (sum)",
+                                          xValues: xs, xLabel: xLabel)
+            CubeSpectrumWindowController.show(model: model, attachedTo: NSApp.keyWindow)
             return
         }
         let pixel = (Int(p.x.rounded()), Int(p.y.rounded()))
         guard let values = try? Profiles.cubeSpectrum(hdu: hdu, atPixel: pixel) else { return }
-        CubeSpectrumWindowController.show(values: values, currentPlane: selectedPlane,
-                                          label: "pixel (\(pixel.0), \(pixel.1))",
-                                          attachedTo: NSApp.keyWindow, xValues: xs, xLabel: xLabel)
+        let model = CubeSpectrumModel(values: values, currentPlane: selectedPlane,
+                                      label: "pixel (\(pixel.0), \(pixel.1))",
+                                      xValues: xs, xLabel: xLabel)
+        CubeSpectrumWindowController.show(model: model, attachedTo: NSApp.keyWindow)
     }
 
     private func handleCursor(_ info: CursorInfo?) {
