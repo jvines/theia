@@ -81,11 +81,27 @@ struct PixelTablePanel: View {
 final class PixelTableWindowController: NSWindowController {
     /// Shared single instance so reopening doesn't spawn duplicates.
     static private(set) var shared: PixelTableWindowController?
+    private(set) var boundCursorBridge: PixelTableCursorBridge?
+    private(set) var boundImageProvider: (() -> FITSImage?)?
+
+    static func focus(provider: @escaping () -> FITSImage?,
+                      cursorPublisher: PixelTableCursorBridge) {
+        shared?.bind(provider: provider, cursorPublisher: cursorPublisher)
+    }
+
+    private func bind(provider: @escaping () -> FITSImage?,
+                      cursorPublisher: PixelTableCursorBridge) {
+        boundImageProvider = provider
+        boundCursorBridge = cursorPublisher
+        window?.contentView = NSHostingView(rootView: PixelTableContainerView(
+            provider: provider, cursorBridge: cursorPublisher))
+    }
 
     static func show(provider: @escaping () -> FITSImage?,
                      cursorPublisher: PixelTableCursorBridge,
                      attachedTo parent: NSWindow?) {
         if let existing = shared {
+            existing.bind(provider: provider, cursorPublisher: cursorPublisher)
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -98,14 +114,13 @@ final class PixelTableWindowController: NSWindowController {
         panel.title = "Pixel Table"
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
-        let view = PixelTableContainerView(provider: provider, cursorBridge: cursorPublisher)
-        panel.contentView = NSHostingView(rootView: view)
         if let parent {
             panel.setFrameOrigin(NSPoint(x: parent.frame.minX + 24, y: parent.frame.minY + 24))
         } else {
             panel.center()
         }
         let controller = PixelTableWindowController(window: panel)
+        controller.bind(provider: provider, cursorPublisher: cursorPublisher)
         shared = controller
         panel.delegate = controller
         panel.makeKeyAndOrderFront(nil)

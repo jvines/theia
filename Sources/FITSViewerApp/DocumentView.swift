@@ -9,6 +9,7 @@ struct DocumentView: View {
     let document: DocumentModel
     @ObservedObject var toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
+    let pixelTableBridge: PixelTableCursorBridge
 
     @State private var session: DocumentSession
     @State private var autosaveWatcher: SessionAutosaveWatcher
@@ -16,7 +17,6 @@ struct DocumentView: View {
     @State private var persistenceWarning: String?
     private let viewport: ImageViewState
     private let interaction: InteractionController
-    private let pixelTableBridge = PixelTableCursorBridge()
 
     private var stretch: ImageStretch {
         get { session.view.stretch }
@@ -114,10 +114,12 @@ struct DocumentView: View {
 
     init(document: DocumentModel,
          toolbarState: ToolbarState,
-         toolbarController: FITSToolbarController) {
+         toolbarController: FITSToolbarController,
+         pixelTableBridge: PixelTableCursorBridge) {
         self.document = document
         self.toolbarState = toolbarState
         self.toolbarController = toolbarController
+        self.pixelTableBridge = pixelTableBridge
         self.viewport = document.session.view
         self.interaction = InteractionController(view: document.session.view, mode: .full,
                                                  session: document.session)
@@ -904,16 +906,21 @@ extension DocumentView {
     private func handleLineProfile(from: SIMD2<Double>, to: SIMD2<Double>) {
         guard let hdu = document.file.hdus[safe: selectedHDU] else { return }
         let n = LineProfileModel.sampleCount(from: from, to: to)
-        profileGeometry = .line(from: from, to: to)
+        let marker = ProfileGeometry.line(from: from, to: to)
         if hdu.naxis == 3 {
             guard let pv = try? Profiles.pvDiagram(hdu: hdu, from: (from.x, from.y), to: (to.x, to.y), samples: n) else { return }
-            PVDiagramWindowController.show(image: pv, imageName: document.url.lastPathComponent, attachedTo: NSApp.keyWindow)
+            PVDiagramWindowController.show(image: pv, imageName: document.url.lastPathComponent,
+                                           attachedTo: NSApp.keyWindow,
+                                           onClose: ProfileWindowMarker.onClose(marker, in: session))
+            profileGeometry = marker
             return
         }
         guard let image = currentImage() else { return }
         let model = LineProfileModel(image: image, from: from, to: to)
         LineProfileWindowController.show(model: model, imageName: document.url.lastPathComponent,
-                                         attachedTo: NSApp.keyWindow)
+                                         attachedTo: NSApp.keyWindow,
+                                         onClose: ProfileWindowMarker.onClose(marker, in: session))
+        profileGeometry = marker
     }
 
     private func handleRadialProfile(center: SIMD2<Double>, radius: Double) {
@@ -925,15 +932,10 @@ extension DocumentView {
             initialRadius: maxR,
             imageName: document.url.lastPathComponent,
             attachedTo: NSApp.keyWindow,
-            onRadiusChange: { newR in
-                _ = session.perform(.setProfileRadius(newR), origin: .user)
+            onRadiusChange: { [weak session] newR in
+                _ = session?.perform(.setProfileRadius(newR), origin: .user)
             },
-            onClose: {
-                if case .radial(let markerCenter, _) = session.profileMarker,
-                   markerCenter == center {
-                    session.profileMarker = nil
-                }
-            }
+            onClose: ProfileWindowMarker.onRadialClose(center: center, in: session)
         )
         profileGeometry = .radial(center: center, maxRadius: maxR)
     }
@@ -956,22 +958,17 @@ extension DocumentView {
             initialRadius: maxR,
             imageName: document.url.lastPathComponent,
             attachedTo: NSApp.keyWindow,
-            onRadiusChange: { newR in
-                _ = session.perform(.setProfileRadius(newR), origin: .user)
+            onRadiusChange: { [weak session] newR in
+                _ = session?.perform(.setProfileRadius(newR), origin: .user)
             },
-            onClose: {
-                if case .growth(let markerCenter, _) = session.profileMarker,
-                   markerCenter == center {
-                    session.profileMarker = nil
-                }
-            }
+            onClose: ProfileWindowMarker.onGrowthClose(center: center, in: session)
         )
         profileGeometry = .growth(center: center, maxRadius: maxR)
     }
 
     private func handleCubeSpectrum(at p: SIMD2<Double>) {
         guard let hdu = document.file.hdus[safe: selectedHDU], hdu.naxis == 3 else { return }
-        profileGeometry = .point(p)
+        let marker = ProfileGeometry.point(p)
         let wcs = WCS(header: hdu.header, variant: activeWCSVariant)
         let axis = SpectralAxis(header: hdu.header)
         let xs = axis?.values(planeCount: hdu.planeCount)
@@ -982,7 +979,10 @@ extension DocumentView {
             let model = CubeSpectrumModel(values: values, currentPlane: selectedPlane,
                                           label: "region #\(h.regionIndex) (sum)",
                                           xValues: xs, xLabel: xLabel)
-            CubeSpectrumWindowController.show(model: model, attachedTo: NSApp.keyWindow)
+            CubeSpectrumWindowController.show(
+                model: model, attachedTo: NSApp.keyWindow,
+                onClose: ProfileWindowMarker.onClose(marker, in: session))
+            profileGeometry = marker
             return
         }
         let pixel = (Int(p.x.rounded()), Int(p.y.rounded()))
@@ -990,7 +990,10 @@ extension DocumentView {
         let model = CubeSpectrumModel(values: values, currentPlane: selectedPlane,
                                       label: "pixel (\(pixel.0), \(pixel.1))",
                                       xValues: xs, xLabel: xLabel)
-        CubeSpectrumWindowController.show(model: model, attachedTo: NSApp.keyWindow)
+        CubeSpectrumWindowController.show(
+            model: model, attachedTo: NSApp.keyWindow,
+            onClose: ProfileWindowMarker.onClose(marker, in: session))
+        profileGeometry = marker
     }
 
     private func handleCursor(_ info: CursorInfo?) {
@@ -1157,7 +1160,9 @@ extension DocumentView {
         contourSpec = model.spec
         ContourLevelsWindowController.show(
             model: model,
-            onChange: { newSpec in contourSpec = newSpec },
+            onChange: { [weak session] newSpec in
+                _ = session?.perform(.setContourSpec(newSpec), origin: .user)
+            },
             attachedTo: NSApp.keyWindow
         )
     }

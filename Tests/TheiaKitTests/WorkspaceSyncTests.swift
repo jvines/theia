@@ -74,6 +74,40 @@ final class WorkspaceSyncTests: XCTestCase {
         }
     }
 
+    func testCursorSyncConvertsBetweenCelestialFrames() async throws {
+        try await MainActor.run {
+            let icrs = try makeSession(name: "icrs")
+            let galacticCenter = CelestialTransform.convert(lon: 180, lat: 0,
+                                                            from: .icrs, to: .galactic)
+            let galactic = try makeSession(name: "galactic", crpix1: 2,
+                                           ctype1: "GLON-TAN", ctype2: "GLAT-TAN",
+                                           crval1: galacticCenter.lon,
+                                           crval2: galacticCenter.lat)
+            let workspace = Workspace()
+            workspace.register(icrs)
+            workspace.register(galactic)
+            _ = workspace.perform(.setSyncFlag(.crosshair, true), origin: .user)
+
+            icrs.cursor = CursorInfo(imageX: 0, imageY: 0, value: 1)
+            XCTAssertEqual(galactic.remoteCrosshair?.x ?? .nan, 1, accuracy: 1e-4)
+            XCTAssertEqual(galactic.remoteCrosshair?.y ?? .nan, 0, accuracy: 1e-4)
+        }
+    }
+
+    func testCursorSyncClearsTargetWhenSkyPointCannotBeProjected() async throws {
+        try await MainActor.run {
+            let source = try makeSession(name: "source")
+            let oppositeSky = try makeSession(name: "opposite-sky", crval1: 0)
+            let workspace = Workspace()
+            workspace.register(source)
+            workspace.register(oppositeSky)
+            _ = workspace.perform(.setSyncFlag(.crosshair, true), origin: .user)
+
+            source.cursor = CursorInfo(imageX: 0, imageY: 0, value: 1)
+            XCTAssertNil(oppositeSky.remoteCrosshair)
+        }
+    }
+
     func testUnregisterStopsSyncingClosedDocument() async throws {
         try await MainActor.run {
             let first = try makeSession(name: "first")
@@ -159,14 +193,16 @@ final class WorkspaceSyncTests: XCTestCase {
         }
     }
 
-    @MainActor private func makeSession(name: String, crpix1: Int = 1) throws -> DocumentSession {
+    @MainActor private func makeSession(name: String, crpix1: Int = 1,
+                                        ctype1: String = "RA---TAN", ctype2: String = "DEC--TAN",
+                                        crval1: Double = 180, crval2: Double = 0) throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",
             "NAXIS   =                    2", "NAXIS1  =                    2",
-            "NAXIS2  =                    2", "CTYPE1  = 'RA---TAN'",
-            "CTYPE2  = 'DEC--TAN'", "CRPIX1  =                   \(crpix1)",
-            "CRPIX2  =                    1", "CRVAL1  =                  180",
-            "CRVAL2  =                    0", "CDELT1  =                 -0.1",
+            "NAXIS2  =                    2", "CTYPE1  = '\(ctype1)'",
+            "CTYPE2  = '\(ctype2)'", "CRPIX1  =                   \(crpix1)",
+            "CRPIX2  =                    1", "CRVAL1  = \(crval1)",
+            "CRVAL2  = \(crval2)", "CDELT1  =                 -0.1",
             "CDELT2  =                  0.1", "END",
         ]
         let header = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()

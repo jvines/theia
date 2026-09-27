@@ -92,15 +92,31 @@ struct ContourLevelsPanel: View {
 @MainActor
 final class ContourLevelsWindowController: NSWindowController {
     static private(set) var shared: ContourLevelsWindowController?
+    private(set) var boundModel: ContourLevelsModel?
+    private(set) var boundOnChange: ((ContourSpec) -> Void)?
+
+    static func focus(modelProvider: () -> ContourLevelsModel,
+                      onChange: @escaping (ContourSpec) -> Void) {
+        guard let shared else { return }
+        shared.bind(model: modelProvider(), onChange: onChange)
+    }
+
+    private func bind(model: ContourLevelsModel,
+                      onChange: @escaping (ContourSpec) -> Void) {
+        boundModel = model
+        boundOnChange = onChange
+        window?.contentView = NSHostingView(rootView: ContourLevelsPanel(
+            model: model, onChange: onChange))
+    }
 
     static func show(model: ContourLevelsModel,
                      onChange: @escaping (ContourSpec) -> Void,
                      attachedTo parent: NSWindow?) {
         if let existing = shared {
+            existing.bind(model: model, onChange: onChange)
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let view = ContourLevelsPanel(model: model, onChange: onChange)
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 260),
             styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
@@ -110,11 +126,11 @@ final class ContourLevelsWindowController: NSWindowController {
         panel.title = "Contour Levels"
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
-        panel.contentView = NSHostingView(rootView: view)
         if let parent {
             panel.setFrameOrigin(NSPoint(x: parent.frame.maxX - 400, y: parent.frame.maxY - 320))
         } else { panel.center() }
         let controller = ContourLevelsWindowController(window: panel)
+        controller.bind(model: model, onChange: onChange)
         shared = controller
         panel.delegate = controller
         panel.makeKeyAndOrderFront(nil)

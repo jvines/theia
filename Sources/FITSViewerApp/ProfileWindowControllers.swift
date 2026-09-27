@@ -4,10 +4,39 @@ import FITSCore
 import TheiaKit
 
 @MainActor
+enum ProfileWindowMarker {
+    static func onClose(_ marker: ProfileGeometry, in session: DocumentSession) -> () -> Void {
+        { [weak session] in
+            if session?.profileMarker == marker { session?.profileMarker = nil }
+        }
+    }
+
+    static func onRadialClose(center: SIMD2<Double>, in session: DocumentSession) -> () -> Void {
+        { [weak session] in
+            guard let session,
+                  case .radial(let markerCenter, _) = session.profileMarker,
+                  markerCenter == center else { return }
+            session.profileMarker = nil
+        }
+    }
+
+    static func onGrowthClose(center: SIMD2<Double>, in session: DocumentSession) -> () -> Void {
+        { [weak session] in
+            guard let session,
+                  case .growth(let markerCenter, _) = session.profileMarker,
+                  markerCenter == center else { return }
+            session.profileMarker = nil
+        }
+    }
+}
+
+@MainActor
 final class LineProfileWindowController: NSWindowController {
     static private(set) var shared: LineProfileWindowController?
+    private var onClose: (() -> Void)?
 
-    static func show(model: LineProfileModel, imageName: String, attachedTo parent: NSWindow?) {
+    static func show(model: LineProfileModel, imageName: String, attachedTo parent: NSWindow?,
+                     onClose: @escaping () -> Void) {
         let view = ProfilePlotView(
             title: "Line profile — \(imageName)",
             xLabel: "distance (px)",
@@ -18,12 +47,15 @@ final class LineProfileWindowController: NSWindowController {
         )
         .padding(12)
         if let existing = shared {
+            existing.onClose?()
+            existing.onClose = onClose
             existing.window?.contentView = NSHostingView(rootView: AnyView(view))
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
         let panel = makePanel(title: "Line Profile", parent: parent, content: view)
         let c = LineProfileWindowController(window: panel)
+        c.onClose = onClose
         shared = c
         panel.delegate = c
         panel.makeKeyAndOrderFront(nil)
@@ -31,7 +63,10 @@ final class LineProfileWindowController: NSWindowController {
 }
 
 extension LineProfileWindowController: NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) { Self.shared = nil }
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
+        Self.shared = nil
+    }
 }
 
 @MainActor
@@ -225,16 +260,21 @@ private struct GrowthCurveView: View {
 @MainActor
 final class CubeSpectrumWindowController: NSWindowController {
     static private(set) var shared: CubeSpectrumWindowController?
+    private var onClose: (() -> Void)?
 
-    static func show(model: CubeSpectrumModel, attachedTo parent: NSWindow?) {
+    static func show(model: CubeSpectrumModel, attachedTo parent: NSWindow?,
+                     onClose: @escaping () -> Void) {
         let view = CubeSpectrumView(model: model)
         if let existing = shared {
+            existing.onClose?()
+            existing.onClose = onClose
             existing.window?.contentView = NSHostingView(rootView: AnyView(view))
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
         let panel = makePanel(title: "Cube Spectrum", parent: parent, content: view)
         let c = CubeSpectrumWindowController(window: panel)
+        c.onClose = onClose
         shared = c
         panel.delegate = c
         panel.makeKeyAndOrderFront(nil)
@@ -278,7 +318,10 @@ private struct CubeSpectrumView: View {
 }
 
 extension CubeSpectrumWindowController: NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) { Self.shared = nil }
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
+        Self.shared = nil
+    }
 }
 
 @MainActor

@@ -10,10 +10,14 @@ import TheiaKit
 @MainActor
 final class PVDiagramWindowController: NSWindowController {
     static private(set) var shared: PVDiagramWindowController?
+    private var onClose: (() -> Void)?
 
-    static func show(image: FITSImage, imageName: String, attachedTo parent: NSWindow?) {
+    static func show(image: FITSImage, imageName: String, attachedTo parent: NSWindow?,
+                     onClose: @escaping () -> Void) {
         let view = PVDiagramView(image: image)
         if let existing = shared {
+            existing.onClose?()
+            existing.onClose = onClose
             existing.window?.contentView = NSHostingView(rootView: view)
             existing.window?.makeKeyAndOrderFront(nil)
             return
@@ -32,6 +36,7 @@ final class PVDiagramWindowController: NSWindowController {
             panel.setFrameOrigin(NSPoint(x: parent.frame.minX + 60, y: parent.frame.minY + 60))
         } else { panel.center() }
         let c = PVDiagramWindowController(window: panel)
+        c.onClose = onClose
         shared = c
         panel.delegate = c
         panel.makeKeyAndOrderFront(nil)
@@ -39,7 +44,10 @@ final class PVDiagramWindowController: NSWindowController {
 }
 
 extension PVDiagramWindowController: NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) { Self.shared = nil }
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
+        Self.shared = nil
+    }
 }
 
 private struct PVDiagramView: View {

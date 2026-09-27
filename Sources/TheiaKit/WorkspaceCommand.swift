@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import FITSCore
 
 public enum HelpDestination: Sendable, Equatable {
     case documentation
@@ -149,11 +150,19 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
             let point = source.cursor.map {
                 SIMD2(Double($0.imageX), Double($0.imageY))
             }
-            let sky = point.flatMap { source.displayedWCS?.pixelToSky(imageX: $0.x, imageY: $0.y) }
+            let sourceWCS = source.displayedWCS
+            let sky = point.flatMap { sourceWCS?.pixelToSky(imageX: $0.x, imageY: $0.y) }
             for target in targets {
                 var localPoint = point
-                if let sky, let converted = target.displayedWCS?.skyToPixel(ra: sky.ra, dec: sky.dec) {
-                    localPoint = SIMD2(converted.x, converted.y)
+                if let sky, let sourceWCS, let targetWCS = target.displayedWCS {
+                    let native = CelestialTransform.convert(
+                        lon: sky.ra, lat: sky.dec,
+                        from: sourceWCS.nativeFrame, to: targetWCS.nativeFrame
+                    )
+                    localPoint = targetWCS.skyToPixel(ra: native.lon, dec: native.lat)
+                        .map { SIMD2($0.x, $0.y) }
+                } else if sourceWCS != nil && target.displayedWCS != nil {
+                    localPoint = nil
                 }
                 if target.remoteCrosshair != localPoint {
                     target.withEventContext(origin: event.origin, echoTag: tag) {

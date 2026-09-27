@@ -11,6 +11,7 @@ final class DocumentWindowController: NSWindowController {
     let documentModel: DocumentModel
     let toolbarState: ToolbarState
     let toolbarController: FITSToolbarController
+    let pixelTableBridge = PixelTableCursorBridge()
     private let pulseSource: PlaybackDisplayLink
     private let frameDriver: SessionFrameDriver
 
@@ -51,7 +52,8 @@ final class DocumentWindowController: NSWindowController {
         let view = DocumentView(
             document: documentModel,
             toolbarState: toolbarState,
-            toolbarController: toolbarController
+            toolbarController: toolbarController,
+            pixelTableBridge: pixelTableBridge
         )
         window.contentView = NSHostingView(rootView: view)
 
@@ -60,6 +62,22 @@ final class DocumentWindowController: NSWindowController {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func bindOpenPanels() {
+        let session = documentModel.session
+        pixelTableBridge.cursor = session.cursor
+        pixelTableBridge.imageRevision = session.imageRevision
+        PixelTableWindowController.focus(provider: { [weak session] in session?.displayed },
+                                         cursorPublisher: pixelTableBridge)
+        ContourLevelsWindowController.focus(modelProvider: {
+            let range = session.displayed.flatMap { PixelStatistics.minMax($0.physicalValues()) }
+            return ContourLevelsModel(initial: session.contourSpec,
+                                      dataMin: range?.min ?? .nan,
+                                      dataMax: range?.max ?? .nan)
+        }, onChange: { [weak session] spec in
+            _ = session?.perform(.setContourSpec(spec), origin: .user)
+        })
+    }
 
 }
 
@@ -74,13 +92,21 @@ extension DocumentWindowController {
 extension DocumentWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         AppDelegate.shared?.controllerDidFocus(self)
+        bindOpenPanels()
     }
 
     func windowWillClose(_ notification: Notification) {
+        ScaleParametersWindowController.close(for: documentModel.session.view)
         documentModel.session.close()
         frameDriver.close()
         pulseSource.stop()
         WindowSyncCoordinator.shared.unregister(self)
         AppDelegate.shared?.controllerDidClose(self)
+        if let next = AppDelegate.shared?.currentController {
+            next.bindOpenPanels()
+        } else {
+            PixelTableWindowController.shared?.window?.close()
+            ContourLevelsWindowController.shared?.window?.close()
+        }
     }
 }

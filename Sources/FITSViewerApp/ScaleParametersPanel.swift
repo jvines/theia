@@ -159,10 +159,23 @@ struct ScaleParametersPanel: View {
 /// Floating panel host so the user can keep tweaking the scale while watching the image.
 @MainActor
 final class ScaleParametersWindowController: NSWindowController {
+    private static var panels: [ObjectIdentifier: ScaleParametersWindowController] = [:]
+    private var viewportID: ObjectIdentifier?
+
+    static func close(for viewport: ImageViewState) {
+        panels[ObjectIdentifier(viewport)]?.window?.close()
+    }
+
+    @discardableResult
     static func show(viewport: ImageViewState,
                      physicalValuesProvider: @escaping () -> [Double],
                      onApplyPreset: @escaping (ScalePreset) -> Void,
-                     attachedTo parent: NSWindow?) {
+                     attachedTo parent: NSWindow?) -> ScaleParametersWindowController {
+        let id = ObjectIdentifier(viewport)
+        if let existing = panels[id] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return existing
+        }
         let view = ScaleParametersPanel(
             viewport: viewport,
             physicalValuesProvider: physicalValuesProvider,
@@ -187,6 +200,17 @@ final class ScaleParametersWindowController: NSWindowController {
         } else {
             panel.center()
         }
+        let controller = ScaleParametersWindowController(window: panel)
+        controller.viewportID = id
+        panels[id] = controller
+        panel.delegate = controller
         panel.makeKeyAndOrderFront(nil)
+        return controller
+    }
+}
+
+extension ScaleParametersWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        if let viewportID { Self.panels[viewportID] = nil }
     }
 }
