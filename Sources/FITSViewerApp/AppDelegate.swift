@@ -312,6 +312,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applyEffect(_ effect: Effect) {
         switch effect {
+        case .alert(let title, let message, let style):
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            switch style {
+            case .informational: alert.alertStyle = .informational
+            case .warning: alert.alertStyle = .warning
+            case .critical: alert.alertStyle = .critical
+            }
+            alert.runModal()
+        case .ask(_, let request):
+            controllers.first { $0.documentModel.session.id == request.documentID }?
+                .toolbarState.onEffect(effect)
+        case .exportImage(let snapshot, _):
+            controllers.first { $0.documentModel.session.id == snapshot.documentID }?
+                .toolbarState.onEffect(effect)
         case .showPanel(let panel):
             guard let session = activeSessionForMenu(),
                   let controller = controllers.first(where: { $0.documentModel.session === session })

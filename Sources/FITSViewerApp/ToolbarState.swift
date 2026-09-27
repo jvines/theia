@@ -27,7 +27,6 @@ final class ToolbarState: ObservableObject {
     @Published var wcsVariantLabels: [String: String] = [:]  // variant → display label
 
     var onEffect: (Effect) -> Void = { _ in }
-    var onExport: () -> Void = {}
     var onReproject: (Int) -> Void = { _ in }
     var onFetchCatalog: () -> Void = {}
     var onOpenScaleParameters: () -> Void = {}

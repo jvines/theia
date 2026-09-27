@@ -876,7 +876,6 @@ extension DocumentView {
         }
         toolbarState.hasMultipleHDUs = document.file.hdus.count >= 2
         toolbarState.onEffect           = { effect in applyEffect(effect) }
-        toolbarState.onExport           = { exportImage() }
         toolbarState.onReproject        = { reproject(onto: $0) }
         toolbarState.onFetchCatalog     = { Task { await fetchCatalog() } }
         toolbarState.onOpenScaleParameters = { performAndApply(.showPanel(.scaleParameters)) }
@@ -1692,6 +1691,28 @@ extension DocumentView {
 
     fileprivate func applyEffect(_ effect: Effect) {
         switch effect {
+        case .ask(.savePath(let suggestedName, let types), let request):
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = types.compactMap { UTType(filenameExtension: $0) }
+            panel.nameFieldStringValue = suggestedName
+            panel.canCreateDirectories = true
+            panel.begin { response in
+                let answer: Answer
+                if response == .OK, let url = panel.url { answer = .path(url) }
+                else { answer = .cancelled }
+                let outcome = session.perform(.answer(request, answer), origin: .user)
+                for next in outcome.effects { applyEffect(next) }
+            }
+        case .ask:
+            break
+        case .exportImage(let snapshot, let url):
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try snapshot.writeImage(to: url)
+                } catch {
+                    DispatchQueue.main.async { NSAlert(error: error).runModal() }
+                }
+            }
         case .showPanel(.scaleParameters): openScaleParametersPanel()
         case .showPanel(.pixelTable):
             PixelTableWindowController.show(
@@ -1700,7 +1721,7 @@ extension DocumentView {
                 attachedTo: NSApp.keyWindow
             )
         case .showPanel(.contourLevels): openContourLevelsPanel()
-        case .showAppWindow, .openURL, .copyToClipboard, .tileWindows, .quit:
+        case .alert, .showAppWindow, .openURL, .copyToClipboard, .tileWindows, .quit:
             AppDelegate.shared?.applyEffect(effect)
         }
     }
@@ -1775,28 +1796,4 @@ extension DocumentView {
         }
     }
 
-    fileprivate func exportImage() {
-        guard let image = displayOverride?.image ?? currentImage() else { return }
-        let exportStretch = stretch
-        let exportMap = colorMap
-        let exportVmin = Double(viewport.vmin)
-        let exportVmax = Double(viewport.vmax)
-        let exportParameter = viewport.stretchParameter
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png, .tiff]
-        panel.nameFieldStringValue = "image.png"
-        panel.canCreateDirectories = true
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            let format: ExportFormat = url.pathExtension.lowercased() == "tiff" ? .tiff : .png
-            do {
-                try ImageExport.writeImage(
-                    image, stretch: exportStretch, vmin: exportVmin, vmax: exportVmax,
-                    colorMap: exportMap, parameter: exportParameter, format: format, to: url
-                )
-            } catch {
-                NSLog("export failed: \(error)")
-            }
-        }
-    }
 }

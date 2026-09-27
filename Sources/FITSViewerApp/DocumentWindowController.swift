@@ -71,6 +71,7 @@ extension DocumentWindowController {
 
 extension DocumentWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        documentModel.session.close()
         frameDriver.close()
         pulseSource.stop()
         WindowSyncCoordinator.shared.unregister(self)

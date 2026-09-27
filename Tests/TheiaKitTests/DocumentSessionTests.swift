@@ -5,6 +5,79 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testExportQuestionKeepsTheRequestTimeImageAndDisplayParameters() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            _ = session.perform(.setStretch(.log), origin: .user)
+            _ = session.perform(.setLevels(min: 1, max: 7), origin: .user)
+            let outcome = session.perform(.exportImage, origin: .user)
+            XCTAssertNil(outcome.failure)
+            guard case .ask(let question, let request) = outcome.effects.first else {
+                return XCTFail("Export should ask for a path")
+            }
+            XCTAssertEqual(question, .savePath(suggestedName: "image.png", types: ["png", "tiff"]))
+            guard case .exportImage(let snapshot) = request else {
+                return XCTFail("Export should carry a render snapshot")
+            }
+            XCTAssertEqual(snapshot.plane, 0)
+            XCTAssertEqual(snapshot.stretch, .log)
+            XCTAssertEqual(snapshot.vmin, 1)
+            XCTAssertEqual(snapshot.vmax, 7)
+            XCTAssertEqual(snapshot.image.physicalValue(x: 0, y: 0), 0)
+
+            _ = session.perform(.selectPlane(1), origin: .user)
+            _ = session.perform(.setStretch(.linear), origin: .user)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("theia-export-\(UUID().uuidString).tiff")
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let answered = session.perform(.answer(request, .path(destination)), origin: .user)
+            XCTAssertNil(answered.failure)
+            guard case .exportImage(let saved, let url) = answered.effects.first else {
+                return XCTFail("Answer should export the saved snapshot")
+            }
+            XCTAssertEqual(url, destination)
+            XCTAssertEqual(saved.id, snapshot.id)
+            XCTAssertEqual(saved.image.physicalValue(x: 0, y: 0), 0)
+            try saved.writeImage(to: destination)
+            let encoded = try Data(contentsOf: destination)
+            XCTAssertEqual(Array(encoded.prefix(4)), [73, 73, 42, 0])
+            XCTAssertEqual(Array(encoded.suffix(8)), [0, 0, 0, 255, 0, 0, 0, 255])
+            XCTAssertEqual(session.perform(.answer(request, .path(destination)), origin: .user).failure,
+                           .invalidPendingRequest)
+        }
+    }
+
+    func testExportQuestionRejectsScriptAndCancellationAndClosedDocument() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.exportImage, origin: .script).failure,
+                           .requiresUserInterface)
+            guard case .ask(_, let cancelled) = session.perform(.exportImage, origin: .user).effects.first else {
+                return XCTFail("Export should ask for a path")
+            }
+            XCTAssertTrue(session.perform(.answer(cancelled, .cancelled), origin: .user).effects.isEmpty)
+            let replayed = session.perform(.answer(cancelled, .path(URL(fileURLWithPath: "/tmp/no.png"))),
+                                           origin: .user)
+            XCTAssertEqual(replayed.failure, .invalidPendingRequest)
+            XCTAssertEqual(replayed.effects, [.alert(title: "Export not saved",
+                                                    message: "Save request is no longer pending",
+                                                    style: .warning)])
+            guard case .ask(_, let pending) = session.perform(.exportImage, origin: .user).effects.first else {
+                return XCTFail("Second export should ask for a path")
+            }
+            XCTAssertEqual(session.perform(.answer(pending, .paths([])), origin: .user).failure,
+                           .invalidAnswer)
+            XCTAssertEqual(session.perform(.answer(pending, .path(URL(fileURLWithPath: "/tmp/no.png"))),
+                                           origin: .script).failure, .requiresUserInterface)
+            session.close()
+            let closed = session.perform(.answer(pending, .path(URL(fileURLWithPath: "/tmp/no.png"))),
+                                         origin: .user)
+            XCTAssertEqual(closed.failure, .documentClosed)
+            XCTAssertEqual(closed.effects, [.alert(title: "Export not saved",
+                                                  message: "Document is closed", style: .warning)])
+        }
+    }
+
     func testToolsMenuUsesSharedSectionsAndTypedActions() async throws {
         try await MainActor.run {
             let session = try makeSession()

@@ -357,7 +357,8 @@ public enum CommandMenuEntry: Sendable {
         case "scale":
             return item("Scale", "Choose vmin/vmax preset or open Scale Parameters…", enabled: image)
         case "export":
-            return item("Export…", "Export current view as PNG or TIFF", enabled: image)
+            return item("Export…", "Export current view as PNG or TIFF", enabled: image,
+                        command: .exportImage)
         case "grid":
             return item("Grid", "Toggle WCS gridlines", enabled: wcs,
                         state: .checked(session.showGrid),

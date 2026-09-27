@@ -152,7 +152,7 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
                             menu: buildSessionMenu("scale"))
         case ID.export:
             return makeButton(id: id, symbol: "square.and.arrow.up",
-                              action: #selector(exportAction))
+                              action: #selector(sessionToolbarAction(_:)))
         case ID.grid:
             return makeButton(id: id, symbol: "grid.circle",
                               action: #selector(sessionToolbarAction(_:)))
@@ -312,7 +312,6 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
             for effect in outcome.effects { state.onEffect(effect) }
         }
     }
-    @objc private func exportAction()        { state.onExport() }
     @objc private func workspaceMenuAction(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? WorkspaceCommandBox else { return }
         AppDelegate.shared?.performWorkspaceCommand(box.command, origin: .user)

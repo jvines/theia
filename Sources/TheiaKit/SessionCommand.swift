@@ -64,6 +64,8 @@ public enum SessionCommand: Sendable, Equatable {
     case setFPS(Double)
     case toggleBlink
     case clearDerivedImage
+    case exportImage
+    case answer(PendingRequest, Answer)
     case showPanel(PanelKind)
     case fitView
     case actualSize
@@ -87,6 +89,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidZoomFactor
     case invalidPanDelta
     case invalidRegionIndex(Int)
+    case invalidPendingRequest
+    case invalidAnswer
+    case documentClosed
 
     public var message: String {
         switch self {
@@ -103,6 +108,9 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidZoomFactor: "Zoom factor or anchor is invalid"
         case .invalidPanDelta: "Pan delta is invalid"
         case .invalidRegionIndex(let index): "Invalid region index \(index)"
+        case .invalidPendingRequest: "Save request is no longer pending"
+        case .invalidAnswer: "Answer does not match the save request"
+        case .documentClosed: "Document is closed"
         }
     }
 }
@@ -120,7 +128,16 @@ public enum AppWindowKind: Sendable, Equatable {
     case onboarding
 }
 
+public enum AlertStyle: Sendable, Equatable {
+    case informational
+    case warning
+    case critical
+}
+
 public enum Effect: Sendable, Equatable {
+    case alert(title: String, message: String, style: AlertStyle)
+    case ask(Question, PendingRequest)
+    case exportImage(RenderSnapshot, URL)
     case showPanel(PanelKind)
     case showAppWindow(AppWindowKind)
     case openURL(URL)
@@ -253,6 +270,16 @@ extension DocumentSession {
                 }
                 toggleBlink()
             case .clearDerivedImage: setDerived(nil)
+            case .exportImage:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestImageExport()
+            case .answer(let request, let answer):
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return self.answer(request, with: answer)
             case .showPanel(let panel):
                 guard origin == .user else {
                     return CommandOutcome(failure: .requiresUserInterface)

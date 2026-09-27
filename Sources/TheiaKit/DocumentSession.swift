@@ -54,6 +54,7 @@ public struct HDUFacts {
 /// Expensive decoded planes are cached by source HDU and plane. A derived image
 /// has precedence over that source until an HDU or plane is selected.
 @MainActor @Observable public final class DocumentSession {
+    public let id = UUID()
     public let url: URL
     public let file: FITSFile
     public let facts: [HDUFacts]
@@ -139,6 +140,8 @@ public struct HDUFacts {
     @ObservationIgnored private var eventOrigin: CommandOrigin = .user
     @ObservationIgnored private var eventEchoTag: UUID?
     @ObservationIgnored private var persistSelection = true
+    @ObservationIgnored var pendingExportRequests: [UUID: RenderSnapshot] = [:]
+    @ObservationIgnored var isClosed = false
 
     public init(url: URL, file: FITSFile, stretch: ImageStretch = .linear, colorMap: ColorMap = .gray) {
         let fileFacts = file.hdus.map(HDUFacts.init)
