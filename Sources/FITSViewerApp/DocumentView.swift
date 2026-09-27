@@ -1722,6 +1722,8 @@ extension DocumentView {
                 attachedTo: NSApp.keyWindow
             )
         case .showPanel(.contourLevels): openContourLevelsPanel()
+        case .showAppWindow, .openURL, .tileWindows, .quit:
+            AppDelegate.shared?.applyEffect(effect)
         }
     }
 

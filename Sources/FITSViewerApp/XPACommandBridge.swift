@@ -119,8 +119,8 @@ final class XPACommandBridge: XPAServerDelegate {
             return true
 
         case "exit", "quit":
-            DispatchQueue.main.async { NSApp.terminate(nil) }
-            return true
+            guard let app = AppDelegate.shared else { return false }
+            return app.performWorkspaceCommand(.quit, origin: .script).failure == nil
 
         default:
             return false

@@ -3,6 +3,7 @@ import Combine
 import Observation
 import FITSCore
 import FITSRender
+import TheiaKit
 
 /// App-wide coordinator that, when enabled, broadcasts viewport / scale / colormap
 /// changes from one document window to every other open document window. Lets users
@@ -11,13 +12,10 @@ import FITSRender
 /// Each `DocumentWindowController` registers its viewport / toolbar state on init
 /// and unregisters on close.
 @MainActor
-final class WindowSyncCoordinator: ObservableObject {
+final class WindowSyncCoordinator {
     static let shared = WindowSyncCoordinator()
 
-    @Published var matchZoom: Bool = false
-    @Published var matchColormap: Bool = false
-    @Published var matchScale: Bool = false
-    @Published var matchCrosshair: Bool = false
+    let workspace = Workspace()
 
     private var entries: [Entry] = []
     private var suppressBroadcast = false
@@ -104,7 +102,7 @@ final class WindowSyncCoordinator: ObservableObject {
     // MARK: - Broadcasts
 
     private func broadcastTransform(_ t: ViewTransform, from origin: DocumentWindowController) {
-        guard matchZoom, !suppressBroadcast else { return }
+        guard workspace.syncEnabled(.zoomPan), !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
         let echoTag = UUID()
@@ -121,7 +119,7 @@ final class WindowSyncCoordinator: ObservableObject {
     }
 
     private func broadcastScale(vmin: Float, vmax: Float, from origin: DocumentWindowController) {
-        guard matchScale, !suppressBroadcast else { return }
+        guard workspace.syncEnabled(.scale), !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
         let echoTag = UUID()
@@ -137,7 +135,7 @@ final class WindowSyncCoordinator: ObservableObject {
     }
 
     private func broadcastColormap(_ cm: ColorMap, from origin: DocumentWindowController) {
-        guard matchColormap, !suppressBroadcast else { return }
+        guard workspace.syncEnabled(.colormap), !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
         let echoTag = UUID()
@@ -154,7 +152,7 @@ final class WindowSyncCoordinator: ObservableObject {
     /// Broadcast a cursor position from `origin`. Other windows receive the matching
     /// pixel — via WCS if both have it, else the same (x, y) pixel.
     func broadcastCursor(imagePoint: SIMD2<Double>, from origin: DocumentWindowController, sourceWCS: WCS?) {
-        guard matchCrosshair, !suppressBroadcast else { return }
+        guard workspace.syncEnabled(.crosshair), !suppressBroadcast else { return }
         suppressBroadcast = true
         defer { suppressBroadcast = false }
         let echoTag = UUID()

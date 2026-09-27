@@ -195,7 +195,10 @@ final class ScriptingServer {
         case ("POST", "/open"):
             return openResponse(body: body)
         case ("POST", "/quit"):
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+            guard let app = AppDelegate.shared,
+                  app.performWorkspaceCommand(.quit, origin: .script).failure == nil else {
+                return httpResponse(503, json: ["error": "app unavailable"])
+            }
             return httpResponse(200, json: ["ok": true])
         default: break
         }

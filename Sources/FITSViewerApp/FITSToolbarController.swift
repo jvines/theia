@@ -87,27 +87,27 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
 
     private func buildSyncMenu() -> NSMenu {
         let menu = NSMenu()
-        let coord = WindowSyncCoordinator.shared
-        let zoom = NSMenuItem(title: "Match zoom + pan", action: #selector(toggleMatchZoom), keyEquivalent: "")
-        zoom.target = self
-        zoom.state = coord.matchZoom ? .on : .off
-        menu.addItem(zoom)
-        let scale = NSMenuItem(title: "Match scale (vmin/vmax)", action: #selector(toggleMatchScale), keyEquivalent: "")
-        scale.target = self
-        scale.state = coord.matchScale ? .on : .off
-        menu.addItem(scale)
-        let map = NSMenuItem(title: "Match colormap", action: #selector(toggleMatchColormap), keyEquivalent: "")
-        map.target = self
-        map.state = coord.matchColormap ? .on : .off
-        menu.addItem(map)
-        let cross = NSMenuItem(title: "Match crosshair (cursor)", action: #selector(toggleMatchCrosshair), keyEquivalent: "")
-        cross.target = self
-        cross.state = coord.matchCrosshair ? .on : .off
-        menu.addItem(cross)
-        menu.addItem(.separator())
-        let tile = NSMenuItem(title: "Tile windows", action: #selector(tileAction), keyEquivalent: "")
-        tile.target = self
-        menu.addItem(tile)
+        for entry in CommandCatalog.workspaceMenu(
+            section: .sync, for: WindowSyncCoordinator.shared.workspace
+        ) {
+            guard let descriptor = entry.item else {
+                menu.addItem(.separator())
+                continue
+            }
+            guard descriptor.visible else { continue }
+            let item = NSMenuItem(title: descriptor.title,
+                                  action: #selector(workspaceMenuAction(_:)),
+                                  keyEquivalent: descriptor.shortcut?.key ?? "")
+            item.identifier = NSUserInterfaceItemIdentifier(descriptor.identifier)
+            item.toolTip = descriptor.tooltip
+            item.isEnabled = descriptor.enabled
+            if case .checked(let checked) = descriptor.state {
+                item.state = checked ? .on : .off
+            }
+            item.target = self
+            item.representedObject = WorkspaceCommandBox(descriptor.command)
+            menu.addItem(item)
+        }
         return menu
     }
 
@@ -378,16 +378,10 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
     @objc private func colorBarAction()      { state.onToggleColorBar() }
     @objc private func pixelTableAction()    { state.onOpenPixelTable() }
     @objc private func contourAction()       { state.onOpenContourLevels() }
-    @objc private func toggleMatchZoom()     { WindowSyncCoordinator.shared.matchZoom.toggle(); refresh() }
-    @objc private func toggleMatchScale()    { WindowSyncCoordinator.shared.matchScale.toggle(); refresh() }
-    @objc private func toggleMatchColormap() { WindowSyncCoordinator.shared.matchColormap.toggle(); refresh() }
-    @objc private func toggleMatchCrosshair() {
-        let c = WindowSyncCoordinator.shared
-        c.matchCrosshair.toggle()
-        if !c.matchCrosshair { c.clearCrosshairs() }
-        refresh()
+    @objc private func workspaceMenuAction(_ sender: NSMenuItem) {
+        guard let box = sender.representedObject as? WorkspaceCommandBox else { return }
+        AppDelegate.shared?.performWorkspaceCommand(box.command, origin: .user)
     }
-    @objc private func tileAction()          { WindowSyncCoordinator.shared.tileWindowsHorizontally() }
     @objc private func blinkAction()         { state.onToggleBlink() }
     @objc private func catalogAction()       { state.onFetchCatalog() }
     @objc private func headerAction()        { state.onToggleInspector() }
@@ -438,6 +432,11 @@ final class FITSToolbarController: NSObject, NSToolbarDelegate {
 private final class SessionCommandBox: NSObject {
     let command: SessionCommand
     init(_ command: SessionCommand) { self.command = command }
+}
+
+private final class WorkspaceCommandBox: NSObject {
+    let command: WorkspaceCommand
+    init(_ command: WorkspaceCommand) { self.command = command }
 }
 
 final class CollapseModeBox: NSObject {

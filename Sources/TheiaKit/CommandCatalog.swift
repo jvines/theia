@@ -35,6 +35,44 @@ public struct CommandShortcut: Sendable, Equatable {
     }
 }
 
+public enum WorkspaceMenuID: String, Sendable {
+    case about
+    case documentation
+    case source
+    case reportIssue
+    case scriptingReference
+    case welcome
+    case onboarding
+}
+
+public enum WorkspaceMenuSection: Sendable {
+    case app
+    case help
+    case sync
+}
+
+public struct WorkspaceMenuItem: Sendable {
+    public let identifier: String
+    public let title: String
+    public let section: WorkspaceMenuSection
+    public let tooltip: String
+    public let shortcut: CommandShortcut?
+    public let enabled: Bool
+    public let visible: Bool
+    public let state: CommandSelectionState
+    public let command: WorkspaceCommand
+}
+
+public enum WorkspaceMenuEntry: Sendable {
+    case item(WorkspaceMenuItem)
+    case separator
+
+    public var item: WorkspaceMenuItem? {
+        if case .item(let value) = self { return value }
+        return nil
+    }
+}
+
 public enum CommandMenuEntry: Sendable {
     case item(CommandMenuItem)
     case separator
@@ -48,6 +86,76 @@ public enum CommandMenuEntry: Sendable {
 /// Platform-neutral toolbar metadata and state. Identifiers match the Mac's
 /// existing NSToolbarItem identifiers so saved toolbar layouts remain valid.
 @MainActor public enum CommandCatalog {
+    public static func workspaceMenuItem(_ id: WorkspaceMenuID) -> WorkspaceMenuItem {
+        func item(_ identifier: String, _ title: String, _ section: WorkspaceMenuSection,
+                  _ command: WorkspaceCommand) -> WorkspaceMenuItem {
+            WorkspaceMenuItem(identifier: identifier, title: title, section: section,
+                              tooltip: title, shortcut: nil, enabled: true, visible: true,
+                              state: .none, command: command)
+        }
+        switch id {
+        case .about: return item("app.about", "About Theia", .app, .showAppWindow(.about))
+        case .documentation:
+            return item("help.documentation", "Theia Documentation", .help,
+                        .openHelp(.documentation))
+        case .source:
+            return item("help.source", "Source on GitHub", .help, .openHelp(.source))
+        case .reportIssue:
+            return item("help.reportIssue", "Report an Issue…", .help,
+                        .openHelp(.reportIssue))
+        case .scriptingReference:
+            return item("help.scriptingReference", "HTTP Scripting Reference", .help,
+                        .showAppWindow(.scriptingReference))
+        case .welcome:
+            return item("help.welcome", "Open Welcome Window", .help,
+                        .showAppWindow(.welcome))
+        case .onboarding:
+            return item("help.onboarding", "Show Onboarding", .help,
+                        .showAppWindow(.onboarding))
+        }
+    }
+
+    public static func workspaceMenu(
+        section: WorkspaceMenuSection, for workspace: Workspace
+    ) -> [WorkspaceMenuEntry] {
+        switch section {
+        case .app:
+            return [.item(workspaceMenuItem(.about))]
+        case .help:
+            return [
+                .item(workspaceMenuItem(.documentation)),
+                .item(workspaceMenuItem(.source)),
+                .item(workspaceMenuItem(.reportIssue)),
+                .separator,
+                .item(workspaceMenuItem(.scriptingReference)),
+                .separator,
+                .item(workspaceMenuItem(.welcome)),
+                .item(workspaceMenuItem(.onboarding)),
+            ]
+        case .sync:
+            func flag(_ value: SyncFlag, _ title: String, _ tooltip: String) -> WorkspaceMenuEntry {
+                let checked = workspace.syncEnabled(value)
+                return .item(WorkspaceMenuItem(
+                    identifier: "sync.\(value.rawValue)", title: title, section: .sync,
+                    tooltip: tooltip, shortcut: nil, enabled: true, visible: true,
+                    state: .checked(checked), command: .setSyncFlag(value, !checked)
+                ))
+            }
+            return [
+                flag(.zoomPan, "Match zoom + pan", "Synchronise zoom and pan across windows"),
+                flag(.scale, "Match scale (vmin/vmax)", "Synchronise brightness limits across windows"),
+                flag(.colormap, "Match colormap", "Synchronise colour maps across windows"),
+                flag(.crosshair, "Match crosshair (cursor)", "Show the cursor in other windows"),
+                .separator,
+                .item(WorkspaceMenuItem(
+                    identifier: "sync.tileWindows", title: "Tile windows", section: .sync,
+                    tooltip: "Arrange open windows side by side", shortcut: nil,
+                    enabled: true, visible: true, state: .none, command: .tileWindows
+                )),
+            ]
+        }
+    }
+
     public static func viewMenu(for session: DocumentSession?) -> [CommandMenuEntry] {
         let enabled = session?.displayed != nil
         func item(_ id: String, _ title: String, _ command: SessionCommand,

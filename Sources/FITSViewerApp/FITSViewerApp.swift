@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FITSCore
+import TheiaKit
 
 @main
 struct FITSViewerApp: App {
@@ -34,36 +35,37 @@ struct FITSViewerApp: App {
                 .keyboardShortcut("p", modifiers: .command)
             }
             CommandGroup(replacing: .appInfo) {
-                Button("About Theia") {
-                    presentAboutPanel()
+                ForEach(Array(CommandCatalog.workspaceMenu(
+                    section: .app, for: WindowSyncCoordinator.shared.workspace
+                ).enumerated()), id: \.offset) { _, entry in
+                    if let item = entry.item {
+                        if item.visible {
+                            Button(item.title) {
+                                AppDelegate.shared?.performWorkspaceCommand(item.command, origin: .user)
+                            }
+                            .help(item.tooltip)
+                            .disabled(!item.enabled)
+                        }
+                    }
                 }
             }
             CommandGroup(replacing: .help) {
-                Button("Theia Documentation") {
-                    NSWorkspace.shared.open(URL(string: "https://jvines.cl/fitsviewer")!)
-                }
-                Button("Source on GitHub") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/jvines/fitsviewer")!)
-                }
-                Button("Report an Issue…") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/jvines/fitsviewer/issues/new")!)
-                }
-                Divider()
-                Button("HTTP Scripting Reference") {
-                    AboutWindowController.showScriptingReference()
-                }
-                Divider()
-                Button("Open Welcome Window") {
-                    WelcomeWindowController.show()
-                }
-                Button("Show Onboarding") {
-                    OnboardingWindowController.show()
+                ForEach(Array(CommandCatalog.workspaceMenu(
+                    section: .help, for: WindowSyncCoordinator.shared.workspace
+                ).enumerated()), id: \.offset) { _, entry in
+                    if let item = entry.item {
+                        if item.visible {
+                            Button(item.title) {
+                                AppDelegate.shared?.performWorkspaceCommand(item.command, origin: .user)
+                            }
+                            .help(item.tooltip)
+                            .disabled(!item.enabled)
+                        }
+                    } else {
+                        Divider()
+                    }
                 }
             }
         }
-    }
-
-    private func presentAboutPanel() {
-        AboutWindowController.show()
     }
 }

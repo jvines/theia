@@ -5,6 +5,77 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testWorkspaceCommandsReturnPlatformEffectsAndSuppressScriptedWindows() async throws {
+        await MainActor.run {
+            let workspace = Workspace()
+            let about = workspace.perform(.showAppWindow(.about), origin: .user)
+            XCTAssertNil(about.failure)
+            XCTAssertEqual(about.effects, [.showAppWindow(.about)])
+
+            let scripted = workspace.perform(.showAppWindow(.about), origin: .script)
+            XCTAssertEqual(scripted.failure, .requiresUserInterface)
+            XCTAssertTrue(scripted.effects.isEmpty)
+
+            let help = workspace.perform(.openHelp(.documentation), origin: .user)
+            XCTAssertEqual(help.effects, [.openURL(HelpDestination.documentation.url)])
+            XCTAssertEqual(workspace.perform(.tileWindows, origin: .user).effects, [.tileWindows])
+            XCTAssertEqual(workspace.perform(.quit, origin: .script).effects, [.quit])
+        }
+    }
+
+    func testWorkspaceMenuCatalogueCarriesStableIDsAndCommands() async throws {
+        await MainActor.run {
+            let about = CommandCatalog.workspaceMenuItem(.about)
+            XCTAssertEqual(about.identifier, "app.about")
+            XCTAssertEqual(about.title, "About Theia")
+            if case .showAppWindow(.about) = about.command {} else {
+                XCTFail("About menu item should dispatch a workspace command")
+            }
+            let help = CommandCatalog.workspaceMenuItem(.documentation)
+            XCTAssertEqual(help.identifier, "help.documentation")
+            if case .openHelp(.documentation) = help.command {} else {
+                XCTFail("Help menu item should open the documentation")
+            }
+        }
+    }
+
+    func testWorkspaceSyncCommandsDriveCatalogueState() async throws {
+        await MainActor.run {
+            let workspace = Workspace()
+            let before = CommandCatalog.workspaceMenu(section: .sync, for: workspace)
+            XCTAssertEqual(before.compactMap(\.item).map(\.title), [
+                "Match zoom + pan", "Match scale (vmin/vmax)", "Match colormap",
+                "Match crosshair (cursor)", "Tile windows",
+            ])
+            XCTAssertEqual(before.filter { $0.item == nil }.count, 1)
+            XCTAssertEqual(before.first?.item?.state, .checked(false))
+
+            let outcome = workspace.perform(.setSyncFlag(.zoomPan, true), origin: .user)
+            XCTAssertNil(outcome.failure)
+            XCTAssertTrue(workspace.syncEnabled(.zoomPan))
+            let enabled = CommandCatalog.workspaceMenu(section: .sync, for: workspace)
+            XCTAssertEqual(enabled.first?.item?.state, .checked(true))
+            XCTAssertEqual(enabled.first?.item?.identifier, "sync.zoomPan")
+            XCTAssertEqual(enabled.first?.item?.tooltip, "Synchronise zoom and pan across windows")
+            if case .setSyncFlag(.zoomPan, false) = enabled.first?.item?.command {} else {
+                XCTFail("Checked sync entry should offer the inverse command")
+            }
+            _ = workspace.perform(.setSyncFlag(.zoomPan, false), origin: .script)
+            XCTAssertFalse(workspace.syncEnabled(.zoomPan))
+        }
+    }
+
+    func testWorkspaceHelpMenuOrderComesFromCatalogue() async throws {
+        await MainActor.run {
+            let entries = CommandCatalog.workspaceMenu(section: .help, for: Workspace())
+            XCTAssertEqual(entries.map { $0.item?.identifier ?? "separator" }, [
+                "help.documentation", "help.source", "help.reportIssue", "separator",
+                "help.scriptingReference", "separator", "help.welcome", "help.onboarding",
+            ])
+            XCTAssertTrue(entries.compactMap(\.item).allSatisfy { $0.visible && $0.enabled })
+        }
+    }
+
     func testEventsReportStateChangesAndPreserveOriginAndEchoTag() async throws {
         try await MainActor.run {
             let session = try makeSession()

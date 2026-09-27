@@ -100,8 +100,19 @@ public enum PanelKind: Sendable, Equatable {
     case contourLevels
 }
 
+public enum AppWindowKind: Sendable, Equatable {
+    case about
+    case scriptingReference
+    case welcome
+    case onboarding
+}
+
 public enum Effect: Sendable, Equatable {
     case showPanel(PanelKind)
+    case showAppWindow(AppWindowKind)
+    case openURL(URL)
+    case tileWindows
+    case quit
 }
 
 public struct CommandOutcome: Sendable {

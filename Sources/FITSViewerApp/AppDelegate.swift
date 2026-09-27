@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let xpaBridge = XPACommandBridge()
     private var xpaServer: XPAServer?
     private let viewCommandsMenu = ViewCommandsMenuController()
+    private var workspace: Workspace { WindowSyncCoordinator.shared.workspace }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Self.shared = self
@@ -285,6 +286,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             documents: controllers.compactMap(\.window)
         ) else { return nil }
         return controllers.first { $0.window === window }?.documentModel.session
+    }
+
+    @discardableResult
+    func performWorkspaceMenuItem(_ id: WorkspaceMenuID) -> CommandOutcome {
+        performWorkspaceCommand(CommandCatalog.workspaceMenuItem(id).command, origin: .user)
+    }
+
+    @discardableResult
+    func performWorkspaceCommand(
+        _ command: WorkspaceCommand, origin: CommandOrigin
+    ) -> CommandOutcome {
+        let outcome = workspace.perform(command, origin: origin)
+        if outcome.failure == nil {
+            for effect in outcome.effects { applyEffect(effect) }
+            if case .setSyncFlag(let flag, let enabled) = command {
+                if flag == .crosshair && !enabled {
+                    WindowSyncCoordinator.shared.clearCrosshairs()
+                }
+                refreshDocumentToolbars()
+            }
+        }
+        return outcome
+    }
+
+    func applyEffect(_ effect: Effect) {
+        switch effect {
+        case .showPanel(let panel):
+            guard let session = activeSessionForMenu(),
+                  let controller = controllers.first(where: { $0.documentModel.session === session })
+            else { return }
+            switch panel {
+            case .scaleParameters: controller.toolbarState.onOpenScaleParameters()
+            case .pixelTable: controller.toolbarState.onOpenPixelTable()
+            case .contourLevels: controller.toolbarState.onOpenContourLevels()
+            }
+        case .showAppWindow(let window):
+            switch window {
+            case .about: AboutWindowController.show()
+            case .scriptingReference: AboutWindowController.showScriptingReference()
+            case .welcome: WelcomeWindowController.show()
+            case .onboarding: OnboardingWindowController.show()
+            }
+        case .openURL(let url):
+            NSWorkspace.shared.open(url)
+        case .tileWindows:
+            WindowSyncCoordinator.shared.tileWindowsHorizontally()
+        case .quit:
+            // Let HTTP/XPA callers send their response before the app exits.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     /// Looks up a controller by its stable scripting id (not its array position).
