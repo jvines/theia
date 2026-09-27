@@ -1365,14 +1365,12 @@ extension DocumentView {
     fileprivate func openContourLevelsPanel() {
         let values = currentImage()?.physicalValues() ?? []
         let r = PixelStatistics.minMax(values)
-        var initial = contourSpec
-        if !initial.minValue.isFinite, let r { initial.minValue = r.min }
-        if !initial.maxValue.isFinite, let r { initial.maxValue = r.max }
-        contourSpec = initial
+        let model = ContourLevelsModel(initial: contourSpec,
+                                       dataMin: r?.min ?? .nan,
+                                       dataMax: r?.max ?? .nan)
+        contourSpec = model.spec
         ContourLevelsWindowController.show(
-            initial: initial,
-            dataMin: r?.min ?? .nan,
-            dataMax: r?.max ?? .nan,
+            model: model,
             onChange: { newSpec in contourSpec = newSpec },
             attachedTo: NSApp.keyWindow
         )
