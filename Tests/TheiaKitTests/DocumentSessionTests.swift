@@ -1072,6 +1072,95 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testQueuedImageOperationsUsePreviousResultInCommandOrder() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertNil(session.perform(.unary(.negate), origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.displayed?.physicalValue(x: 1, y: 1), -9)
+            XCTAssertEqual(session.derived?.label, "Negate")
+            XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
+            XCTAssertEqual(session.imageRevision, 2)
+        }
+    }
+
+    func testChangingPlaneCancelsPendingImageOperation() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.filter(.gaussian(sigma: 3)), origin: .user).failure)
+            session.selectPlane(1)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertNil(session.derived)
+            XCTAssertEqual(session.plane, 1)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 4)
+        }
+    }
+
+    func testClosingDocumentCancelsQueuedImageOperation() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.filter(.median(size: 19)), origin: .user).failure)
+            session.close()
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertNil(session.derived)
+            XCTAssertEqual(session.imageRevision, 0)
+            XCTAssertEqual(session.perform(.unary(.negate), origin: .user).failure,
+                           .documentClosed)
+        }
+    }
+
+    func testBackgroundFailureLeavesDisplayedImageAndReportsJobError() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            let empty = FITSImage.fromFloat32(pixels: [.nan, .nan, .nan, .nan],
+                                              width: 2, height: 2)
+            session.setDerived(DerivedImage(image: empty, wcs: nil, label: "Empty"))
+            XCTAssertNil(session.perform(.subtractBackground, origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.derived?.label, "Empty")
+            XCTAssertEqual(session.imageOperationNoticeID, 1)
+            XCTAssertEqual(session.imageOperationErrorMessage, "The image has no valid pixels.")
+        }
+    }
+
+    func testImageOperationRejectsUnavailableInputsBeforeQueuing() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.binary(.sum, 3), origin: .user).failure,
+                           .imageDimensionMismatch)
+            XCTAssertEqual(session.perform(.filter(.gaussian(sigma: -.infinity)),
+                                           origin: .user).failure, .invalidFilter)
+            session.selectHDU(4)
+            XCTAssertEqual(session.perform(.unary(.negate), origin: .user).failure,
+                           .noDisplayedImage)
+        }
+    }
+
+    func testBinaryQueuedAfterReprojectValidatesItsResultShape() async throws {
+        let session = try await MainActor.run { try makeReprojectionSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.reproject(2), origin: .user).failure)
+            XCTAssertNil(session.perform(.binary(.sum, 2), origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.displayed?.width, 3)
+            XCTAssertEqual(session.displayed?.height, 2)
+            XCTAssertEqual(session.derived?.label, "Sum vs HDU 2")
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 11)
+            XCTAssertEqual(session.displayedWCS?.crval.ra, 10)
+        }
+    }
+
     func testBlinkPartnerSkipsDifferentShapesAndNonImages() async throws {
         try await MainActor.run {
         let session = try makeSession()
@@ -1355,6 +1444,51 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testSourceDetectionQueuedAfterImageOperationUsesItsResult() async throws {
+        let session = try await MainActor.run { try makeDetectionSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertNil(session.perform(.detectSources, origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.derived?.label, "Square")
+            XCTAssertEqual(session.sourceDetectionNoticeID, 1)
+            XCTAssertFalse(session.regions.isEmpty)
+        }
+    }
+
+    func testChangingWCSVariantKeepsPixelOnlyDetectionValid() async throws {
+        let session = try await MainActor.run { try makeSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.detectSources, origin: .user).failure)
+            session.selectWCSVariant("A")
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.sourceDetectionNoticeID, 1)
+            XCTAssertEqual(session.wcsVariant, "A")
+        }
+    }
+
+    func testCatalogQueuedAfterImageOperationStillApplies() async throws {
+        let csv = "ra,dec,phot_g_mean_mag\n12.5,-3.25,10.0\n"
+        let client = CatalogClient(transport: FixedCatalogTransport(
+            response: CatalogHTTPResponse(data: Data(csv.utf8), statusCode: 200)
+        ))
+        let session = try await MainActor.run { try makeSession(catalogClient: client) }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.unary(.square), origin: .user).failure)
+            XCTAssertNil(session.perform(.fetchCatalog, origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertEqual(session.derived?.label, "Square")
+            XCTAssertEqual(session.regions.count, 1)
+            XCTAssertFalse(session.catalogFetchInProgress)
+        }
+    }
+
     func testCatalogCommandAppendsOneUndoableBatchAndReportsFailures() async throws {
         let csv = "ra,dec,phot_g_mean_mag\n12.5,-3.25,10.0\n14.0,2.0,\n"
         let client = CatalogClient(transport: FixedCatalogTransport(
@@ -1575,6 +1709,19 @@ final class DocumentSessionTests: XCTestCase {
         }
         appendHDU(&data, cards: imageCards(width: 21, height: 21), pixels: pixels)
         return DocumentSession(url: URL(fileURLWithPath: "/tmp/detection.fits"),
+                               file: try FITSFile(data: data))
+    }
+
+    @MainActor
+    private func makeReprojectionSession() throws -> DocumentSession {
+        var data = Data()
+        appendHDU(&data, cards: ["SIMPLE  =                    T", "BITPIX  =                    8",
+                                 "NAXIS   =                    0"], pixels: [])
+        appendHDU(&data, cards: imageCards(width: 2, height: 2) + wcsCards(suffix: "", ra: 10),
+                  pixels: [1, 2, 3, 4])
+        appendHDU(&data, cards: imageCards(width: 3, height: 2) + wcsCards(suffix: "", ra: 10),
+                  pixels: [10, 20, 30, 40, 50, 60])
+        return DocumentSession(url: URL(fileURLWithPath: "/tmp/reprojection.fits"),
                                file: try FITSFile(data: data))
     }
 

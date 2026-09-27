@@ -272,6 +272,7 @@ extension DocumentSession {
 
     public func close() {
         isClosed = true
+        invalidateImageOperations()
         cancelSourceDetection()
         cancelCatalogFetch()
         pendingRequests.removeAll()

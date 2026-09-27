@@ -54,6 +54,11 @@ public enum SessionCommand: Sendable, Equatable {
     case showInspectorTab(InspectorTab)
     case setContourSpec(ContourSpec)
     case setProfileRadius(Double)
+    case filter(FilterSpec)
+    case unary(ImageArithmetic.UnaryOp)
+    case binary(ImageArithmetic.BinaryOp, Int)
+    case subtractBackground
+    case reproject(Int)
     case detectSources
     case fetchCatalog
     case addRegion(Region)
@@ -122,6 +127,8 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case noDisplayedWCS
     case catalogUnavailable
     case catalogFetchInProgress
+    case invalidFilter
+    case imageDimensionMismatch
 
     public var message: String {
         switch self {
@@ -154,6 +161,8 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .noDisplayedWCS: "Displayed image has no usable WCS"
         case .catalogUnavailable: "No catalog service is configured"
         case .catalogFetchInProgress: "A catalog fetch is already in progress"
+        case .invalidFilter: "Filter size or sigma is invalid"
+        case .imageDimensionMismatch: "Images must have the same dimensions"
         }
     }
 }
@@ -276,6 +285,47 @@ extension DocumentSession {
                 default:
                     return CommandOutcome(failure: .unavailableProfileMarker)
                 }
+            case .filter(let spec):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard ImageOperations.validFilter(spec) else {
+                    return CommandOutcome(failure: .invalidFilter)
+                }
+                queueImageOperation(.filter(spec))
+            case .unary(let op):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                queueImageOperation(.unary(op))
+            case .binary(let op, let otherHDU):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard let image = displayed else {
+                    return CommandOutcome(failure: .noDisplayedImage)
+                }
+                guard facts.indices.contains(otherHDU),
+                      let shape = facts[otherHDU].shape else {
+                    return CommandOutcome(failure: .invalidHDU(otherHDU))
+                }
+                guard jobs.hasActive(kind: .imageOperation) ||
+                      (shape.x == image.width && shape.y == image.height) else {
+                    return CommandOutcome(failure: .imageDimensionMismatch)
+                }
+                queueImageOperation(.binary(op, otherHDU))
+            case .subtractBackground:
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                queueImageOperation(.subtractBackground)
+            case .reproject(let referenceHDU):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                guard displayedWCS != nil else { return CommandOutcome(failure: .noDisplayedWCS) }
+                guard facts.indices.contains(referenceHDU),
+                      facts[referenceHDU].shape != nil else {
+                    return CommandOutcome(failure: .invalidHDU(referenceHDU))
+                }
+                guard facts[referenceHDU].wcs(variant: "") != nil else {
+                    return CommandOutcome(failure: .noDisplayedWCS)
+                }
+                queueImageOperation(.reproject(referenceHDU))
             case .detectSources:
                 guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
                 guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }

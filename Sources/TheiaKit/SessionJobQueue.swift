@@ -10,12 +10,13 @@ public enum SessionJobKind: Hashable, Sendable {
     case growthCurve
     case sourceDetection
     case catalog
+    case imageOperation
     case export
 
     var latestWins: Bool {
         switch self {
         case .displayImage, .contours, .photometry, .statistics, .radialProfile, .growthCurve: true
-        case .sourceDetection, .catalog, .export: false
+        case .sourceDetection, .catalog, .imageOperation, .export: false
         }
     }
 }
@@ -69,6 +70,10 @@ public enum SessionJobKind: Hashable, Sendable {
         for (id, activeKind) in activeKinds where activeKind == kind {
             active[id]?.cancel()
         }
+    }
+
+    public func hasActive(kind: SessionJobKind) -> Bool {
+        activeKinds.values.contains(kind)
     }
 
     public func idle() async {

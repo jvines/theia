@@ -4,7 +4,7 @@ import FITSCore
 import FITSRaster
 
 /// An image operation's result, kept separate from the source HDU and its cube.
-public struct DerivedImage: Equatable {
+public struct DerivedImage: Equatable, Sendable {
     public let id: UUID
     public let image: FITSImage
     public let wcs: WCS?
@@ -123,6 +123,8 @@ public struct HDUFacts {
     public private(set) var sourceDetectionNoticeID = 0
     public private(set) var sourceDetectionNoticeTitle: String?
     public private(set) var sourceDetectionNoticeMessage: String?
+    public internal(set) var imageOperationNoticeID = 0
+    public internal(set) var imageOperationErrorMessage: String?
     public private(set) var playing = false
     public private(set) var fps: Double = 5
     public private(set) var blink: BlinkState?
@@ -146,10 +148,11 @@ public struct HDUFacts {
     @ObservationIgnored private var imageCache: [ImageKey: FITSImage] = [:]
     @ObservationIgnored internal private(set) var decodedImageCount = 0
     @ObservationIgnored private var lastPlaneAdvance: Date = .now
-    @ObservationIgnored private let jobs = SessionJobQueue()
+    @ObservationIgnored let jobs = SessionJobQueue()
+    @ObservationIgnored var imageOperationEpoch = 0
     @ObservationIgnored private var eventObservers: [UUID: @MainActor (SessionEvent) -> Void] = [:]
-    @ObservationIgnored private var eventOrigin: CommandOrigin = .user
-    @ObservationIgnored private var eventEchoTag: UUID?
+    @ObservationIgnored var eventOrigin: CommandOrigin = .user
+    @ObservationIgnored var eventEchoTag: UUID?
     @ObservationIgnored private var persistSelection = true
     @ObservationIgnored var pendingRequests: [UUID: PendingRequest] = [:]
     @ObservationIgnored var isClosed = false
@@ -204,7 +207,7 @@ public struct HDUFacts {
         return try body()
     }
 
-    private func emit(_ kind: SessionEvent.Kind) {
+    func emit(_ kind: SessionEvent.Kind) {
         let event = SessionEvent(kind: kind, origin: eventOrigin,
                                  echoTag: eventEchoTag, imageRevision: imageRevision)
         for observer in Array(eventObservers.values) { observer(event) }
@@ -326,20 +329,31 @@ public struct HDUFacts {
         )
     }
 
+    private struct DetectionJobOutput: Sendable {
+        let inputRevision: Int
+        let result: SourceDetectionResult
+    }
+
     public func detectSources() {
-        guard !isClosed, let image = displayed else { return }
-        let revision = imageRevision
+        guard !isClosed, displayed != nil else { return }
+        let epoch = imageOperationEpoch
         let origin = eventOrigin
         let echoTag = eventEchoTag
         jobs.enqueue(
-            kind: .sourceDetection, imageRevision: revision,
+            kind: .sourceDetection, imageRevision: epoch,
             currentRevision: { [weak self] in
                 guard let self, !self.isClosed else { return -1 }
-                return self.imageRevision
+                return self.imageOperationEpoch
             },
-            work: { try? SourceDetectionResult.analyze(image: image) },
-            apply: { [weak self] (result: SourceDetectionResult) in
-                guard let self else { return }
+            work: { [weak self] in
+                guard let snapshot = await self?.imageOperationSnapshot(),
+                      let result = try? SourceDetectionResult.analyze(image: snapshot.image)
+                else { return nil }
+                return DetectionJobOutput(inputRevision: snapshot.revision, result: result)
+            },
+            apply: { [weak self] (output: DetectionJobOutput) in
+                guard let self, self.imageRevision == output.inputRevision else { return }
+                let result = output.result
                 self.withEventContext(origin: origin, echoTag: echoTag) {
                     if !result.regions.isEmpty {
                         self.regionList.replace(self.regions + result.regions,
@@ -357,6 +371,7 @@ public struct HDUFacts {
     func cancelSourceDetection() { jobs.cancel(kind: .sourceDetection) }
 
     private struct CatalogJobOutput: Sendable {
+        let inputRevision: Int
         let regions: [Region]
         let error: String?
     }
@@ -365,36 +380,48 @@ public struct HDUFacts {
         guard !isClosed else { return .documentClosed }
         guard let image = displayed else { return .noDisplayedImage }
         guard let wcs = displayedWCS,
-              let search = CatalogQuery.coneSearch(
-                wcs: wcs, imageWidth: image.width, imageHeight: image.height
-              ) else { return .noDisplayedWCS }
+              CatalogQuery.coneSearch(wcs: wcs, imageWidth: image.width,
+                                      imageHeight: image.height) != nil else {
+            return .noDisplayedWCS
+        }
         guard let catalogClient else { return .catalogUnavailable }
         guard !catalogFetchInProgress else { return .catalogFetchInProgress }
         catalogErrorMessage = nil
         catalogFetchInProgress = true
-        let revision = imageRevision
+        let epoch = imageOperationEpoch
         let origin = eventOrigin
         let echoTag = eventEchoTag
         jobs.enqueue(
-            kind: .catalog, imageRevision: revision,
+            kind: .catalog, imageRevision: epoch,
             currentRevision: { [weak self] in
                 guard let self, !self.isClosed else { return -1 }
-                return self.imageRevision
+                return self.imageOperationEpoch
             },
-            work: {
+            work: { [weak self] in
+                guard let snapshot = await self?.imageOperationSnapshot() else { return nil }
+                guard let wcs = snapshot.wcs,
+                      let search = CatalogQuery.coneSearch(
+                        wcs: wcs, imageWidth: snapshot.image.width,
+                        imageHeight: snapshot.image.height
+                      ) else {
+                    return CatalogJobOutput(inputRevision: snapshot.revision,
+                                            regions: [], error: "Displayed image has no usable WCS")
+                }
                 do {
                     let sources = try await catalogClient.fetchGaia(
                         centerRA: search.centerRA,
                         centerDec: search.centerDec,
                         radiusDeg: search.radiusDeg, limit: 1000
                     )
-                    return CatalogJobOutput(regions: CatalogRegions.fromGaia(sources), error: nil)
+                    return CatalogJobOutput(inputRevision: snapshot.revision,
+                                            regions: CatalogRegions.fromGaia(sources), error: nil)
                 } catch {
-                    return CatalogJobOutput(regions: [], error: error.localizedDescription)
+                    return CatalogJobOutput(inputRevision: snapshot.revision,
+                                            regions: [], error: error.localizedDescription)
                 }
             },
             apply: { [weak self] (result: CatalogJobOutput) in
-                guard let self else { return }
+                guard let self, self.imageRevision == result.inputRevision else { return }
                 self.withEventContext(origin: origin, echoTag: echoTag) {
                     self.catalogFetchInProgress = false
                     if let error = result.error {
@@ -479,6 +506,7 @@ public struct HDUFacts {
 
     public func selectHDU(_ index: Int) {
         guard facts.indices.contains(index), index != hdu else { return }
+        invalidateImageOperations()
         jobs.cancel(kind: .sourceDetection)
         cancelCatalogFetch()
         if playing {
@@ -499,6 +527,7 @@ public struct HDUFacts {
         guard facts.indices.contains(hdu), facts[hdu].isDisplayableImage,
               index >= 0, index < facts[hdu].planeCount,
               index != plane || derived != nil else { return }
+        invalidateImageOperations()
         jobs.cancel(kind: .sourceDetection)
         cancelCatalogFetch()
         plane = index
@@ -512,18 +541,33 @@ public struct HDUFacts {
     public func selectWCSVariant(_ variant: String) {
         guard derived == nil, facts[hdu].wcsVariants.contains(variant),
               variant != sourceWCSVariant else { return }
+        // WCS-dependent transforms need a fresh request, while pixel-only
+        // analysis already in flight remains valid for these same pixels.
+        jobs.cancel(kind: .imageOperation)
         cancelCatalogFetch()
         sourceWCSVariant = variant
         emit(.displayParametersChanged)
     }
 
     public func setDerived(_ image: DerivedImage?) {
+        invalidateImageOperations()
+        updateDerived(image)
+    }
+
+    func updateDerived(_ image: DerivedImage?, cancelDependentJobs: Bool = true) {
         guard derived != image else { return }
-        jobs.cancel(kind: .sourceDetection)
-        cancelCatalogFetch()
+        if cancelDependentJobs {
+            jobs.cancel(kind: .sourceDetection)
+            cancelCatalogFetch()
+        }
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
         recomputeContours()
+    }
+
+    func invalidateImageOperations() {
+        imageOperationEpoch &+= 1
+        jobs.cancel(kind: .imageOperation)
     }
 
     /// Apply persisted canvas and region state before the document is made

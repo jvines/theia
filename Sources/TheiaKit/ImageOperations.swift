@@ -5,24 +5,41 @@ public enum ImageOperations {
     private static let maximumFilterSize = 101
     private static let maximumGaussianSigma = 32.0
 
+    public static func validFilter(_ spec: FilterSpec) -> Bool {
+        switch spec {
+        case .boxcar(let size), .median(let size):
+            return size > 0 && size <= maximumFilterSize && size % 2 == 1
+        case .gaussian(let sigma):
+            return sigma.isFinite && sigma > 0 && sigma <= maximumGaussianSigma
+        }
+    }
+
     /// Apply a filter to the displayed pixels without changing their sky grid.
     public static func filter(_ image: FITSImage, wcs: WCS?,
                               spec: FilterSpec) -> DerivedImage? {
+        try! filterCheckingCancellation(image, wcs: wcs, spec: spec,
+                                        checkCancellation: {})
+    }
+
+    public static func filterCheckingCancellation(
+        _ image: FITSImage, wcs: WCS?, spec: FilterSpec,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> DerivedImage? {
+        guard validFilter(spec) else { return nil }
         let filtered: FITSImage
         let label: String
         switch spec {
         case .boxcar(let size):
-            guard size > 0, size <= maximumFilterSize, size % 2 == 1 else { return nil }
-            filtered = ImageFilters.boxcar(image, size: size)
+            filtered = try ImageFilters.boxcarCheckingCancellation(
+                image, size: size, checkCancellation: checkCancellation)
             label = "Boxcar \(size)×\(size)"
         case .median(let size):
-            guard size > 0, size <= maximumFilterSize, size % 2 == 1 else { return nil }
-            filtered = ImageFilters.median(image, size: size)
+            filtered = try ImageFilters.medianCheckingCancellation(
+                image, size: size, checkCancellation: checkCancellation)
             label = "Median \(size)×\(size)"
         case .gaussian(let sigma):
-            guard sigma.isFinite, sigma > 0,
-                  sigma <= maximumGaussianSigma else { return nil }
-            filtered = ImageFilters.gaussian(image, sigma: sigma)
+            filtered = try ImageFilters.gaussianCheckingCancellation(
+                image, sigma: sigma, checkCancellation: checkCancellation)
             label = String(format: "Gaussian σ=%.1f", sigma)
         }
         return DerivedImage(image: filtered, wcs: wcs, label: label)
@@ -30,31 +47,63 @@ public enum ImageOperations {
 
     public static func unary(_ image: FITSImage, wcs: WCS?,
                              op: ImageArithmetic.UnaryOp) -> DerivedImage {
-        DerivedImage(image: ImageArithmetic.unary(image, op: op), wcs: wcs,
-                     label: op.label)
+        try! unaryCheckingCancellation(image, wcs: wcs, op: op,
+                                       checkCancellation: {})
+    }
+
+    public static func unaryCheckingCancellation(
+        _ image: FITSImage, wcs: WCS?, op: ImageArithmetic.UnaryOp,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> DerivedImage {
+        DerivedImage(image: try ImageArithmetic.unaryCheckingCancellation(
+            image, op: op, checkCancellation: checkCancellation),
+            wcs: wcs, label: op.label)
     }
 
     public static func binary(_ image: FITSImage, wcs: WCS?, other: FITSImage,
                               op: ImageArithmetic.BinaryOp, otherHDU: Int) throws -> DerivedImage {
-        let combined = try ImageArithmetic.combined(image, other, op: op)
+        try binaryCheckingCancellation(image, wcs: wcs, other: other,
+                                       op: op, otherHDU: otherHDU,
+                                       checkCancellation: {})
+    }
+
+    public static func binaryCheckingCancellation(
+        _ image: FITSImage, wcs: WCS?, other: FITSImage,
+        op: ImageArithmetic.BinaryOp, otherHDU: Int,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> DerivedImage {
+        let combined = try ImageArithmetic.combinedCheckingCancellation(
+            image, other, op: op, checkCancellation: checkCancellation)
         return DerivedImage(image: combined, wcs: wcs,
                             label: "\(op.label) vs HDU \(otherHDU)")
     }
 
     public static func subtractBackground(_ image: FITSImage,
                                           wcs: WCS?) -> DerivedImage? {
-        let background = PixelStatistics.sigmaClipped(
-            image.physicalValues(), sigma: 3, iterations: 5
-        )
-        guard background.count > 0 else { return nil }
-        let backgroundImage = FITSImage.fromFloat32(
-            pixels: [Float](repeating: Float(background.mean),
-                            count: image.width * image.height),
-            width: image.width, height: image.height
-        )
-        guard let subtracted = try? ImageArithmetic.combined(
-            image, backgroundImage, op: .difference
+        try! subtractBackgroundCheckingCancellation(image, wcs: wcs,
+                                                    checkCancellation: {})
+    }
+
+    public static func subtractBackgroundCheckingCancellation(
+        _ image: FITSImage, wcs: WCS?,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> DerivedImage? {
+        let values = try image.physicalValuesCheckingCancellation(
+            checkCancellation: checkCancellation)
+        guard let background = try PixelStatistics.sigmaClippedOptionalCheckingCancellation(
+            values, sigma: 3, iterations: 5,
+            checkCancellation: checkCancellation
         ) else { return nil }
+        let pixels = try image.normalizedFloat32CheckingCancellation(
+            checkCancellation: checkCancellation)
+        let mean = Float(background.mean)
+        var output = [Float](repeating: .nan, count: pixels.count)
+        for index in pixels.indices {
+            if index % 256 == 0 { try checkCancellation() }
+            if !pixels[index].isNaN { output[index] = pixels[index] - mean }
+        }
+        let subtracted = FITSImage.fromFloat32(pixels: output,
+                                                width: image.width, height: image.height)
         let label = String(format: "BG sub (μ=%.3g, σ=%.3g, n=%d)",
                            background.mean, background.stddev, background.count)
         return DerivedImage(image: subtracted, wcs: wcs, label: label)
@@ -63,12 +112,23 @@ public enum ImageOperations {
     public static func reproject(_ image: FITSImage, sourceWCS: WCS,
                                  targetWCS: WCS, targetWidth: Int,
                                  targetHeight: Int, targetHDU: Int) -> DerivedImage? {
+        try! reprojectCheckingCancellation(
+            image, sourceWCS: sourceWCS, targetWCS: targetWCS,
+            targetWidth: targetWidth, targetHeight: targetHeight,
+            targetHDU: targetHDU, checkCancellation: {})
+    }
+
+    public static func reprojectCheckingCancellation(
+        _ image: FITSImage, sourceWCS: WCS, targetWCS: WCS,
+        targetWidth: Int, targetHeight: Int, targetHDU: Int,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> DerivedImage? {
         guard targetWidth > 0, targetHeight > 0,
               targetWidth <= Int.max / targetHeight else { return nil }
-        let projected = WCSReproject.reproject(
+        let projected = try WCSReproject.reprojectCheckingCancellation(
             source: image, sourceWCS: sourceWCS,
             targetWCS: targetWCS, targetWidth: targetWidth,
-            targetHeight: targetHeight
+            targetHeight: targetHeight, checkCancellation: checkCancellation
         )
         return DerivedImage(image: projected, wcs: targetWCS,
                             label: "Reprojected onto HDU \(targetHDU)")
