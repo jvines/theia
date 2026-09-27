@@ -330,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case .openURL(let url):
             NSWorkspace.shared.open(url)
+        case .copyToClipboard(let value):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
         case .tileWindows:
             WindowSyncCoordinator.shared.tileWindowsHorizontally()
         case .quit:

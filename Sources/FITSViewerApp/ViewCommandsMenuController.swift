@@ -20,7 +20,7 @@ import TheiaKit
     }
 }
 
-/// Adds shared view commands to the Mac menu bar. AppKit validates each item
+/// Adds shared document commands to the Mac menu bar. AppKit validates each item
 /// when the menu opens so commands always target the current document window.
 @MainActor
 final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
@@ -58,43 +58,49 @@ final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
             item.representedObject = ViewCommandBox(command)
             viewMenu.addItem(item)
         }
-        installImageMenu(in: mainMenu)
+        installDocumentMenu("Image", entries: CommandCatalog.imageMenu(for: nil), in: mainMenu)
+        installDocumentMenu("Region", entries: CommandCatalog.regionMenu(for: nil), in: mainMenu)
         installed = true
     }
 
-    private func installImageMenu(in mainMenu: NSMenu) {
-        let imageMenu: NSMenu
-        if let existing = mainMenu.item(withTitle: "Image") {
-            imageMenu = existing.submenu ?? NSMenu(title: "Image")
-            existing.submenu = imageMenu
-            if !imageMenu.items.isEmpty { imageMenu.addItem(.separator()) }
+    private func installDocumentMenu(
+        _ title: String, entries: [CommandMenuEntry], in mainMenu: NSMenu
+    ) {
+        let submenu: NSMenu
+        if let existing = mainMenu.item(withTitle: title) {
+            submenu = existing.submenu ?? NSMenu(title: title)
+            existing.submenu = submenu
+            if !submenu.items.isEmpty { submenu.addItem(.separator()) }
         } else {
-            let item = NSMenuItem(title: "Image", action: nil, keyEquivalent: "")
-            imageMenu = NSMenu(title: "Image")
-            item.submenu = imageMenu
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            submenu = NSMenu(title: title)
+            item.submenu = submenu
             let index = mainMenu.items.firstIndex { $0.title == "Window" || $0.title == "Help" }
                 ?? mainMenu.items.count
             mainMenu.insertItem(item, at: index)
         }
-        for entry in CommandCatalog.imageMenu(for: nil) {
+        for entry in entries {
             guard let descriptor = entry.item else {
-                imageMenu.addItem(.separator())
+                submenu.addItem(.separator())
                 continue
             }
             let item = NSMenuItem(title: descriptor.title,
-                                  action: #selector(performImageCommand(_:)), keyEquivalent: "")
+                                  action: #selector(performDocumentMenuCommand(_:)),
+                                  keyEquivalent: descriptor.shortcut?.key ?? "")
             item.identifier = NSUserInterfaceItemIdentifier(descriptor.identifier)
+            item.keyEquivalentModifierMask = descriptor.shortcut?.shift == true
+                ? [.command, .shift] : [.command]
             item.target = self
-            imageMenu.addItem(item)
+            submenu.addItem(item)
         }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let identifier = menuItem.identifier?.rawValue else { return false }
-        if identifier.hasPrefix("image.") {
-            guard let descriptor = CommandCatalog.imageMenu(
-                for: AppDelegate.shared?.activeSessionForMenu()
-            ).compactMap(\.item).first(where: { $0.identifier == identifier }) else { return false }
+        if identifier.hasPrefix("image.") || identifier.hasPrefix("region.") {
+            guard let descriptor = documentMenuItem(
+                identifier, for: AppDelegate.shared?.activeSessionForMenu()
+            ) else { return false }
             if case .checked(let checked) = descriptor.state {
                 menuItem.state = checked ? .on : .off
             }
@@ -111,11 +117,19 @@ final class ViewCommandsMenuController: NSObject, NSMenuItemValidation {
         _ = session.perform(box.command, origin: .user)
     }
 
-    @objc private func performImageCommand(_ sender: NSMenuItem) {
+    private func documentMenuItem(
+        _ identifier: String, for session: DocumentSession?
+    ) -> CommandMenuItem? {
+        let entries = identifier.hasPrefix("image.")
+            ? CommandCatalog.imageMenu(for: session)
+            : CommandCatalog.regionMenu(for: session)
+        return entries.compactMap(\.item).first { $0.identifier == identifier }
+    }
+
+    @objc private func performDocumentMenuCommand(_ sender: NSMenuItem) {
         guard let identifier = sender.identifier?.rawValue,
               let session = AppDelegate.shared?.activeSessionForMenu(),
-              let descriptor = CommandCatalog.imageMenu(for: session)
-                .compactMap(\.item).first(where: { $0.identifier == identifier }),
+              let descriptor = documentMenuItem(identifier, for: session),
               descriptor.enabled, let command = descriptor.command else { return }
         let outcome = session.perform(command, origin: .user)
         if outcome.failure == nil {

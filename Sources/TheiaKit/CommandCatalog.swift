@@ -213,6 +213,35 @@ public enum CommandMenuEntry: Sendable {
         ]
     }
 
+    public static func regionMenu(for session: DocumentSession?) -> [CommandMenuEntry] {
+        let selected = session?.selectedRegionIndex.flatMap { index in
+            session?.regions.indices.contains(index) == true ? index : nil
+        }
+        let hasRegions = !(session?.regions.isEmpty ?? true)
+        func item(
+            _ identifier: String, _ title: String, _ command: SessionCommand?,
+            enabled: Bool, shortcut: CommandShortcut? = nil
+        ) -> CommandMenuEntry {
+            .item(CommandMenuItem(identifier: identifier, title: title, enabled: enabled,
+                                  state: .none, command: command, shortcut: shortcut))
+        }
+        return [
+            item("region.delete", "Delete Selected Region", selected.map(SessionCommand.deleteRegion),
+                 enabled: selected != nil),
+            item("region.bringToFront", "Bring to Front", selected.map(SessionCommand.bringRegionToFront),
+                 enabled: selected != nil),
+            item("region.copy", "Copy as .reg Text", selected.map(SessionCommand.copyRegion),
+                 enabled: selected != nil),
+            .separator,
+            item("region.clear", "Clear All Regions", .clearRegions, enabled: hasRegions),
+            .separator,
+            item("region.undo", "Undo Region Edit", nil, enabled: false,
+                 shortcut: CommandShortcut(key: "z")),
+            item("region.redo", "Redo Region Edit", nil, enabled: false,
+                 shortcut: CommandShortcut(key: "z", shift: true)),
+        ]
+    }
+
     public static func sessionMenu(
         _ identifier: String, for session: DocumentSession
     ) -> [CommandMenuEntry]? {

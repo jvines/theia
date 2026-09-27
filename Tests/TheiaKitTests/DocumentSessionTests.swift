@@ -5,6 +5,78 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testRegionCommandsKeepSelectionAndRejectStaleIndices() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let first = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            let second = Region(shape: .point(.init(x: 4, y: 5)), frame: .image)
+            var events: [SessionEvent] = []
+            session.addEventObserver { events.append($0) }
+
+            XCTAssertNil(session.perform(.addRegion(first), origin: .user).failure)
+            XCTAssertEqual(session.regions, [first])
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertNil(session.perform(.addRegion(second), origin: .script).failure)
+            XCTAssertEqual(session.selectedRegionIndex, 1)
+
+            let replacement = Region(shape: .point(.init(x: 7, y: 8)), frame: .image)
+            XCTAssertNil(session.perform(.updateRegion(0, replacement), origin: .user).failure)
+            XCTAssertEqual(session.regions, [replacement, second])
+            let invalid = session.perform(.deleteRegion(9), origin: .script)
+            XCTAssertEqual(invalid.failure, .invalidRegionIndex(9))
+            XCTAssertEqual(session.regions, [replacement, second])
+
+            XCTAssertNil(session.perform(.deleteRegion(0), origin: .user).failure)
+            XCTAssertEqual(session.regions, [second])
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertNil(session.perform(.clearRegions, origin: .user).failure)
+            XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertNil(session.selectedRegionIndex)
+            XCTAssertTrue(events.contains { $0.kind == .regionsChanged && $0.origin == .script })
+        }
+    }
+
+    func testRegionCopyIsAnEffectAndRegionMenuFollowsSelection() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let region = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            _ = session.perform(.addRegion(region), origin: .user)
+            let menu = CommandCatalog.regionMenu(for: session)
+            XCTAssertEqual(menu.map { $0.item?.identifier ?? "separator" }, [
+                "region.delete", "region.bringToFront", "region.copy", "separator",
+                "region.clear", "separator", "region.undo", "region.redo",
+            ])
+            XCTAssertEqual(menu.first?.item?.enabled, true)
+            XCTAssertEqual(menu.last?.item?.enabled, false)
+            let copied = session.perform(.copyRegion(0), origin: .user)
+            XCTAssertEqual(copied.effects, [.copyToClipboard(RegionFile.format([region]))])
+            XCTAssertEqual(session.perform(.copyRegion(0), origin: .script).failure,
+                           .requiresUserInterface)
+            _ = session.perform(.clearRegions, origin: .user)
+            XCTAssertFalse(CommandCatalog.regionMenu(for: session).first?.item?.enabled ?? true)
+        }
+    }
+
+    func testRegionReorderingKeepsTheSameSelectedRegion() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let first = Region(shape: .point(.init(x: 1, y: 1)), frame: .image)
+            let second = Region(shape: .point(.init(x: 2, y: 2)), frame: .image)
+            let third = Region(shape: .point(.init(x: 3, y: 3)), frame: .image)
+            _ = session.perform(.replaceRegions([first, second, third]), origin: .user)
+            session.selectedRegionIndex = 2
+            XCTAssertNil(session.perform(.bringRegionToFront(0), origin: .user).failure)
+            XCTAssertEqual(session.regions, [second, third, first])
+            XCTAssertEqual(session.selectedRegionIndex, 1)
+            XCTAssertNil(session.perform(.bringRegionToFront(1), origin: .user).failure)
+            XCTAssertEqual(session.regions, [second, first, third])
+            XCTAssertEqual(session.selectedRegionIndex, 2)
+            _ = session.perform(.replaceRegions([first]), origin: .user)
+            XCTAssertNil(session.selectedRegionIndex)
+        }
+    }
+
+
     func testWorkspaceCommandsReturnPlatformEffectsAndSuppressScriptedWindows() async throws {
         await MainActor.run {
             let workspace = Workspace()

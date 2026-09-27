@@ -52,6 +52,13 @@ public enum SessionCommand: Sendable, Equatable {
     case setColorBarVisible(Bool)
     case setInspectorVisible(Bool)
     case setContourSpec(ContourSpec)
+    case addRegion(Region)
+    case updateRegion(Int, Region)
+    case deleteRegion(Int)
+    case bringRegionToFront(Int)
+    case clearRegions
+    case replaceRegions([Region])
+    case copyRegion(Int)
     case setPlaying(Bool)
     case setFPS(Double)
     case toggleBlink
@@ -77,6 +84,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case unavailableViewSize
     case invalidZoomFactor
     case invalidPanDelta
+    case invalidRegionIndex(Int)
 
     public var message: String {
         switch self {
@@ -91,6 +99,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .unavailableViewSize: "View size is unavailable"
         case .invalidZoomFactor: "Zoom factor or anchor is invalid"
         case .invalidPanDelta: "Pan delta is invalid"
+        case .invalidRegionIndex(let index): "Invalid region index \(index)"
         }
     }
 }
@@ -112,6 +121,7 @@ public enum Effect: Sendable, Equatable {
     case showPanel(PanelKind)
     case showAppWindow(AppWindowKind)
     case openURL(URL)
+    case copyToClipboard(String)
     case tileWindows
     case quit
 }
@@ -171,6 +181,48 @@ extension DocumentSession {
             case .setColorBarVisible(let value): showColorBar = value
             case .setInspectorVisible(let value): inspectorVisible = value
             case .setContourSpec(let spec): setContourSpec(spec)
+            case .addRegion(let region):
+                regions.append(region)
+                selectedRegionIndex = regions.count - 1
+            case .updateRegion(let index, let region):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                regions[index] = region
+            case .deleteRegion(let index):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                if let selectedRegionIndex {
+                    if selectedRegionIndex == index { self.selectedRegionIndex = nil }
+                    else if selectedRegionIndex > index { self.selectedRegionIndex = selectedRegionIndex - 1 }
+                }
+                regions.remove(at: index)
+            case .bringRegionToFront(let index):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                let selected = selectedRegionIndex
+                var reordered = regions
+                let region = reordered.remove(at: index)
+                reordered.append(region)
+                regions = reordered
+                if selected == index { selectedRegionIndex = regions.count - 1 }
+                else if let selected, selected > index { selectedRegionIndex = selected - 1 }
+            case .clearRegions:
+                selectedRegionIndex = nil
+                regions.removeAll()
+            case .replaceRegions(let replacement):
+                selectedRegionIndex = nil
+                regions = replacement
+            case .copyRegion(let index):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return CommandOutcome(effects: [.copyToClipboard(RegionFile.format([regions[index]]))])
             case .setPlaying(let value):
                 guard !value || facts[hdu].planeCount > 1 else {
                     return CommandOutcome(failure: .unavailablePlayback)

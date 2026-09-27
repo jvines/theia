@@ -158,6 +158,7 @@ struct DocumentView: View {
                     header: hdu.header,
                     tab: inspectorTabBinding,
                     regions: regionsBinding,
+                    session: session,
                     imageProvider: { currentImage() },
                     wcsProvider: { session.displayedWCS }
                 )
@@ -560,6 +561,7 @@ struct InspectorPanel: View {
     let header: FITSHeader
     @Binding var tab: InspectorTab
     @Binding var regions: [Region]
+    let session: DocumentSession
     let imageProvider: () -> FITSImage?
     let wcsProvider: () -> WCS?
 
@@ -572,7 +574,7 @@ struct InspectorPanel: View {
             .padding(8)
             switch tab {
             case .header: HeaderPanel(header: header, imageProvider: imageProvider)
-            case .regions: RegionListPanel(regions: $regions)
+            case .regions: RegionListPanel(regions: $regions, session: session)
             case .photometry: PhotometryPanel(regions: regions,
                                               imageProvider: imageProvider,
                                               wcsProvider: wcsProvider)
@@ -584,6 +586,7 @@ struct InspectorPanel: View {
 
 struct RegionListPanel: View {
     @Binding var regions: [Region]
+    let session: DocumentSession
     @State private var expanded: Set<Int> = []
     @State private var showLoadPanel = false
     @State private var showSavePanel = false
@@ -601,7 +604,7 @@ struct RegionListPanel: View {
                 Spacer()
                 if !regions.isEmpty {
                     Button(role: .destructive) {
-                        regions.removeAll()
+                        session.perform(.clearRegions, origin: .user)
                         expanded.removeAll()
                     } label: { Label("Clear", systemImage: "trash") }
                 }
@@ -650,7 +653,7 @@ struct RegionListPanel: View {
                                 .lineLimit(1)
                             Spacer()
                             Button(role: .destructive) {
-                                regions.remove(at: idx)
+                                session.perform(.deleteRegion(idx), origin: .user)
                                 expanded.remove(idx)
                             } label: {
                                 Image(systemName: "trash")
@@ -660,7 +663,7 @@ struct RegionListPanel: View {
                         if expanded.contains(idx) {
                             RegionEditor(region: Binding(
                                 get: { regions[idx] },
-                                set: { regions[idx] = $0 }
+                                set: { session.perform(.updateRegion(idx, $0), origin: .user) }
                             ))
                             .padding(.leading, 22)
                         }
@@ -706,7 +709,8 @@ struct RegionListPanel: View {
         defer { if needsStop { url.stopAccessingSecurityScopedResource() } }
         guard let text = try? String(contentsOf: url, encoding: .utf8),
               let loaded = try? RegionFile.parse(text) else { return }
-        regions = loaded
+        session.perform(.replaceRegions(loaded), origin: .user)
+        expanded.removeAll()
     }
 }
 
@@ -1079,13 +1083,11 @@ extension DocumentView {
             attrs["color"] = UserPreferences.shared.regionColor
         }
         let withColor = Region(shape: r.shape, frame: r.frame, attributes: attrs)
-        regions.append(withColor)
-        selectedRegionIndex = regions.count - 1
+        session.perform(.addRegion(withColor), origin: .user)
     }
 
     private func updateRegion(idx: Int, region: Region) {
-        guard regions.indices.contains(idx) else { return }
-        regions[idx] = region
+        session.perform(.updateRegion(idx, region), origin: .user)
     }
 
     fileprivate func showRegionContextMenu(index: Int, event: NSEvent) {
@@ -1096,29 +1098,26 @@ extension DocumentView {
             _ = duplicateSelectedRegion()
         })
         menu.addItem(makeMenuItem("Delete") {
-            regions.remove(at: index)
-            selectedRegionIndex = nil
+            performAndApply(.deleteRegion(index))
         })
         menu.addItem(makeMenuItem("Bring to front") {
-            let r = regions.remove(at: index)
-            regions.append(r)
-            selectedRegionIndex = regions.count - 1
+            performAndApply(.bringRegionToFront(index))
         })
         menu.addItem(.separator())
         // Copy as .reg text.
         menu.addItem(makeMenuItem("Copy as .reg text") {
-            let text = RegionFile.format([regions[index]])
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.setString(text, forType: .string)
+            performAndApply(.copyRegion(index))
         })
         // Submenu: color
         let colorMenu = NSMenu()
         for c in ["green", "red", "yellow", "cyan", "magenta", "blue", "white"] {
             colorMenu.addItem(makeMenuItem(c.capitalized) {
+                guard regions.indices.contains(index) else { return }
                 var attrs = regions[index].attributes
                 attrs["color"] = c
-                regions[index] = Region(shape: regions[index].shape, frame: regions[index].frame, attributes: attrs)
+                updateRegion(idx: index, region: Region(
+                    shape: regions[index].shape, frame: regions[index].frame, attributes: attrs
+                ))
             })
         }
         let colorItem = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
@@ -1132,10 +1131,9 @@ extension DocumentView {
     }
 
     fileprivate func deleteSelectedRegion() -> KeyPress.Result {
-        guard let idx = selectedRegionIndex, regions.indices.contains(idx) else { return .ignored }
-        regions.remove(at: idx)
-        selectedRegionIndex = nil
-        return .handled
+        guard let idx = selectedRegionIndex else { return .ignored }
+        return session.perform(.deleteRegion(idx), origin: .user).failure == nil
+            ? .handled : .ignored
     }
 
     fileprivate func nudgeSelected(dx: Int, dy: Int, shift: Bool) -> KeyPress.Result {
@@ -1712,7 +1710,7 @@ extension DocumentView {
                 attachedTo: NSApp.keyWindow
             )
         case .showPanel(.contourLevels): openContourLevelsPanel()
-        case .showAppWindow, .openURL, .tileWindows, .quit:
+        case .showAppWindow, .openURL, .copyToClipboard, .tileWindows, .quit:
             AppDelegate.shared?.applyEffect(effect)
         }
     }
