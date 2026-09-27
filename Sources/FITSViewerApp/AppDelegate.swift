@@ -107,41 +107,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   open "fitsviewer://open?path=/tmp/x.fits&stretch=asinh"
     private func handleFITSViewerURL(_ url: URL) {
         log("handling fitsviewer URL: \(url.absoluteString)")
-        guard url.host == "open",
-              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let items = comps.queryItems,
-              let pathItem = items.first(where: { $0.name == "path" })?.value
-        else {
-            log("URL missing required path parameter")
+        guard let request = FITSViewerURLParser.parse(url) else {
+            log("invalid fitsviewer open URL")
             return
         }
-        let fileURL = URL(fileURLWithPath: pathItem)
         let controller: DocumentWindowController
         do {
-            controller = try openDocumentThrowing(at: fileURL)
+            controller = try openDocumentThrowing(at: request.fileURL)
         } catch {
             log("fitsviewer URL open failed: \(error)")
             return
         }
-        // Apply query params to the document state before any view appears.
         let session = controller.documentModel.session
-        let viewport = session.view
-        if let raw = items.first(where: { $0.name == "stretch" })?.value,
-           let s = ImageStretch(rawValue: raw) {
-            viewport.stretch = s
-        }
-        if let raw = items.first(where: { $0.name == "colormap" })?.value,
-           let cm = ColorMap(rawValue: raw) {
-            viewport.colorMap = cm
-        }
-        if let raw = items.first(where: { $0.name == "vmin" })?.value, let v = Float(raw) {
-            viewport.vmin = v
-        }
-        if let raw = items.first(where: { $0.name == "vmax" })?.value, let v = Float(raw) {
-            viewport.vmax = v
-        }
-        if items.first(where: { $0.name == "zscale" })?.value == "1" {
-            session.resetLevels()
+        for command in request.commands(currentVmin: session.view.vmin,
+                                        currentVmax: session.view.vmax) {
+            _ = session.perform(command, origin: .script)
         }
     }
 

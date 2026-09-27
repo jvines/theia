@@ -39,6 +39,11 @@ extension AboutWindowController: NSWindowDelegate {
     static func showScriptingReference() {
         let port = ScriptingServer.shared.isRunning ? Int(ScriptingServer.shared.port) : 4321
         let tokenPath = ScriptingAuth.tokenURL().path
+        let endpoints = ScriptingHTTPRouter.routeTable.map { route in
+            let method = route.method.padding(toLength: 4, withPad: " ", startingAt: 0)
+            let path = route.path.padding(toLength: 37, withPad: " ", startingAt: 0)
+            return "  \(method) \(path) \(route.summary)"
+        }.joined(separator: "\n")
         let text = """
         HTTP Scripting (localhost only)
 
@@ -51,16 +56,7 @@ extension AboutWindowController: NSWindowDelegate {
             \(tokenPath)
 
         Endpoints
-          GET  /status                      → {version, beta, open: [{id, path}]}
-          POST /open                        → {id}            body: {path, stretch?, colormap?, vmin?, vmax?, zscale?}
-          GET  /document/<id>/info
-          POST /document/<id>/stretch       body: {name}
-          POST /document/<id>/colormap      body: {name}
-          POST /document/<id>/scale         body: {vmin, vmax}
-          POST /document/<id>/zscale
-          GET  /document/<id>/regions       → .reg text
-          POST /document/<id>/regions       body: .reg text
-          POST /quit
+        \(endpoints)
 
         Examples
           TOKEN=$(cat "\(tokenPath)")
