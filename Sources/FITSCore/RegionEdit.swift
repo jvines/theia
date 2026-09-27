@@ -220,6 +220,43 @@ private extension Double {
 
 
 public enum RegionEdit {
+    /// Translate a region by image pixels while keeping its coordinate frame and attributes.
+    /// Sky coordinates are projected through the displayed WCS for each point.
+    public static func translated(
+        _ region: Region, dx: Double, dy: Double, wcs: WCS?
+    ) -> Region? {
+        guard dx.isFinite, dy.isFinite else { return nil }
+        func moved(_ point: Region.Point) -> Region.Point? {
+            guard let start = imageCenter(of: point, frame: region.frame, wcs: wcs) else { return nil }
+            return movedCenter(point, frame: region.frame, wcs: wcs,
+                               dragStartImage: start,
+                               currentImage: SIMD2(start.x + dx, start.y + dy))
+        }
+        let shape: Region.Shape
+        switch region.shape {
+        case .circle(let center, let radius):
+            guard let center = moved(center) else { return nil }
+            shape = .circle(center: center, radius: radius)
+        case .box(let center, let width, let height, let angle):
+            guard let center = moved(center) else { return nil }
+            shape = .box(center: center, width: width, height: height, angle: angle)
+        case .ellipse(let center, let rx, let ry, let angle):
+            guard let center = moved(center) else { return nil }
+            shape = .ellipse(center: center, rx: rx, ry: ry, angle: angle)
+        case .annulus(let center, let inner, let outer):
+            guard let center = moved(center) else { return nil }
+            shape = .annulus(center: center, innerRadius: inner, outerRadius: outer)
+        case .polygon(let points):
+            let updated = points.compactMap(moved)
+            guard updated.count == points.count else { return nil }
+            shape = .polygon(points: updated)
+        case .point(let center):
+            guard let center = moved(center) else { return nil }
+            shape = .point(center)
+        }
+        return with(region, shape: shape)
+    }
+
     /// Apply a drag against `region`. `dragStartImage` is where the drag began (so we
     /// can compute a delta for moves), `currentImage` is where the cursor is now.
     public static func apply(

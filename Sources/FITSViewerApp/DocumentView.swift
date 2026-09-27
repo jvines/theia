@@ -1114,52 +1114,15 @@ extension DocumentView {
     fileprivate func nudgeSelected(dx: Int, dy: Int, shift: Bool) -> KeyPress.Result {
         guard let idx = selectedRegionIndex, regions.indices.contains(idx) else { return .ignored }
         let step = shift ? 10.0 : 1.0
-        let region = regions[idx]
-        let newShape: Region.Shape
-        switch region.shape {
-        case .circle(let c, let r):
-            newShape = .circle(center: .init(x: c.x + Double(dx) * step, y: c.y + Double(dy) * step), radius: r)
-        case .box(let c, let w, let h, let a):
-            newShape = .box(center: .init(x: c.x + Double(dx) * step, y: c.y + Double(dy) * step),
-                            width: w, height: h, angle: a)
-        case .ellipse(let c, let rx, let ry, let a):
-            newShape = .ellipse(center: .init(x: c.x + Double(dx) * step, y: c.y + Double(dy) * step),
-                                rx: rx, ry: ry, angle: a)
-        case .annulus(let c, let i, let o):
-            newShape = .annulus(center: .init(x: c.x + Double(dx) * step, y: c.y + Double(dy) * step),
-                                innerRadius: i, outerRadius: o)
-        case .polygon(let pts):
-            newShape = .polygon(points: pts.map {
-                .init(x: $0.x + Double(dx) * step, y: $0.y + Double(dy) * step)
-            })
-        case .point(let p):
-            newShape = .point(.init(x: p.x + Double(dx) * step, y: p.y + Double(dy) * step))
-        }
-        regions[idx] = Region(shape: newShape, frame: region.frame, attributes: region.attributes)
-        return .handled
+        return session.perform(.nudgeRegion(idx, dx: Double(dx) * step,
+                                            dy: Double(dy) * step), origin: .user).failure == nil
+            ? .handled : .ignored
     }
 
     fileprivate func duplicateSelectedRegion() -> KeyPress.Result {
         guard let idx = selectedRegionIndex, regions.indices.contains(idx) else { return .ignored }
-        let copy = regions[idx]
-        // Offset the duplicate by 5 px so it's visible.
-        let offset = nudgedRegion(copy, dx: 5, dy: 5)
-        regions.append(offset)
-        selectedRegionIndex = regions.count - 1
-        return .handled
-    }
-
-    private func nudgedRegion(_ r: Region, dx: Double, dy: Double) -> Region {
-        let shape: Region.Shape
-        switch r.shape {
-        case .circle(let c, let rad): shape = .circle(center: .init(x: c.x + dx, y: c.y + dy), radius: rad)
-        case .box(let c, let w, let h, let a): shape = .box(center: .init(x: c.x + dx, y: c.y + dy), width: w, height: h, angle: a)
-        case .ellipse(let c, let rx, let ry, let a): shape = .ellipse(center: .init(x: c.x + dx, y: c.y + dy), rx: rx, ry: ry, angle: a)
-        case .annulus(let c, let i, let o): shape = .annulus(center: .init(x: c.x + dx, y: c.y + dy), innerRadius: i, outerRadius: o)
-        case .polygon(let pts): shape = .polygon(points: pts.map { .init(x: $0.x + dx, y: $0.y + dy) })
-        case .point(let p): shape = .point(.init(x: p.x + dx, y: p.y + dy))
-        }
-        return Region(shape: shape, frame: r.frame, attributes: r.attributes)
+        return session.perform(.duplicateRegion(idx, dx: 5, dy: 5), origin: .user).failure == nil
+            ? .handled : .ignored
     }
 
     fileprivate func currentImage() -> FITSImage? {

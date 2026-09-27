@@ -55,6 +55,8 @@ public enum SessionCommand: Sendable, Equatable {
     case setContourSpec(ContourSpec)
     case addRegion(Region)
     case updateRegion(Int, Region)
+    case nudgeRegion(Int, dx: Double, dy: Double)
+    case duplicateRegion(Int, dx: Double, dy: Double)
     case deleteRegion(Int)
     case bringRegionToFront(Int)
     case clearRegions
@@ -95,6 +97,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidZoomFactor
     case invalidPanDelta
     case invalidRegionIndex(Int)
+    case unavailableRegionTransform
     case invalidPendingRequest
     case invalidAnswer
     case documentClosed
@@ -118,6 +121,7 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidZoomFactor: "Zoom factor or anchor is invalid"
         case .invalidPanDelta: "Pan delta is invalid"
         case .invalidRegionIndex(let index): "Invalid region index \(index)"
+        case .unavailableRegionTransform: "Region cannot be moved in the displayed coordinate frame"
         case .invalidPendingRequest: "Request is no longer pending"
         case .invalidAnswer: "Answer does not match the request"
         case .documentClosed: "Document is closed"
@@ -243,6 +247,25 @@ extension DocumentSession {
                     return CommandOutcome(failure: .invalidRegionIndex(index))
                 }
                 regions[index] = region
+            case .nudgeRegion(let index, let dx, let dy):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                guard let moved = RegionEdit.translated(regions[index], dx: dx, dy: dy,
+                                                        wcs: displayedWCS) else {
+                    return CommandOutcome(failure: .unavailableRegionTransform)
+                }
+                regions[index] = moved
+            case .duplicateRegion(let index, let dx, let dy):
+                guard regions.indices.contains(index) else {
+                    return CommandOutcome(failure: .invalidRegionIndex(index))
+                }
+                guard let copy = RegionEdit.translated(regions[index], dx: dx, dy: dy,
+                                                       wcs: displayedWCS) else {
+                    return CommandOutcome(failure: .unavailableRegionTransform)
+                }
+                regions.append(copy)
+                selectedRegionIndex = regions.count - 1
             case .deleteRegion(let index):
                 guard regions.indices.contains(index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))

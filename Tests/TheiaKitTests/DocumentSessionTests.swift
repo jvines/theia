@@ -5,6 +5,44 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testNudgeAndDuplicateMoveSkyRegionsInImagePixels() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let original = Region(shape: .circle(center: .init(x: 10, y: 0),
+                                                 radius: .init(value: 3, unit: .arcsecond)), frame: .fk5)
+            _ = session.perform(.addRegion(original), origin: .user)
+            XCTAssertNil(session.perform(.nudgeRegion(0, dx: 1, dy: 0), origin: .user).failure)
+            guard case .circle(let movedCenter, _) = session.regions[0].shape,
+                  let moved = session.displayedWCS?.skyToPixel(ra: movedCenter.x, dec: movedCenter.y) else {
+                return XCTFail("Nudged sky region should still project into the image")
+            }
+            XCTAssertEqual(moved.x, 1, accuracy: 1e-6)
+            XCTAssertEqual(moved.y, 0, accuracy: 1e-6)
+            XCTAssertEqual(session.regions[0].frame, .fk5)
+
+            XCTAssertNil(session.perform(.duplicateRegion(0, dx: 5, dy: 5), origin: .user).failure)
+            XCTAssertEqual(session.regions.count, 2)
+            XCTAssertEqual(session.selectedRegionIndex, 1)
+            guard case .circle(let duplicateCenter, _) = session.regions[1].shape,
+                  let duplicate = session.displayedWCS?.skyToPixel(ra: duplicateCenter.x,
+                                                                   dec: duplicateCenter.y) else {
+                return XCTFail("Duplicated sky region should still project into the image")
+            }
+            XCTAssertEqual(duplicate.x, 6, accuracy: 1e-6)
+            XCTAssertEqual(duplicate.y, 5, accuracy: 1e-6)
+
+            _ = session.perform(.selectHDU(3), origin: .user) // image without WCS
+            let before = session.regions[0]
+            XCTAssertEqual(session.perform(.nudgeRegion(0, dx: 1, dy: 0), origin: .user).failure,
+                           .unavailableRegionTransform)
+            XCTAssertEqual(session.regions[0], before)
+            let imagePoint = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            _ = session.perform(.addRegion(imagePoint), origin: .user)
+            XCTAssertNil(session.perform(.nudgeRegion(2, dx: 10, dy: -1), origin: .user).failure)
+            XCTAssertEqual(session.regions[2].shape, .point(.init(x: 12, y: 2)))
+        }
+    }
+
     func testSlabQuestionClampsRangeAndRejectsChangedCube() async throws {
         try await MainActor.run {
             let session = try makeSession()
