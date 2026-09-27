@@ -331,6 +331,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .exportCube(let snapshot, _):
             controllers.first { $0.documentModel.session.id == snapshot.documentID }?
                 .toolbarState.onEffect(effect)
+        case .saveRegions(let snapshot, _):
+            controllers.first { $0.documentModel.session.id == snapshot.documentID }?
+                .toolbarState.onEffect(effect)
+        case .loadRegions(let request, _):
+            controllers.first { $0.documentModel.session.id == request.documentID }?
+                .toolbarState.onEffect(effect)
         case .showPanel(let panel):
             guard let session = activeSessionForMenu(),
                   let controller = controllers.first(where: { $0.documentModel.session === session })

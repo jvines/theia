@@ -226,6 +226,9 @@ public enum CommandMenuEntry: Sendable {
                                   state: .none, command: command, shortcut: shortcut))
         }
         return [
+            item("region.load", "Load Regions…", .loadRegions, enabled: session != nil),
+            item("region.save", "Save Regions…", .saveRegions, enabled: hasRegions),
+            .separator,
             item("region.delete", "Delete Selected Region", selected.map(SessionCommand.deleteRegion),
                  enabled: selected != nil),
             item("region.bringToFront", "Bring to Front", selected.map(SessionCommand.bringRegionToFront),

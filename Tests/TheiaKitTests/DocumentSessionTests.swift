@@ -5,6 +5,97 @@ import FITSCore
 @testable import TheiaKit
 
 final class DocumentSessionTests: XCTestCase {
+    func testRegionSaveRequestRetainsTheRequestTimeRegions() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let first = Region(shape: .point(.init(x: 2, y: 3)), frame: .image)
+            _ = session.perform(.addRegion(first), origin: .user)
+            let asked = session.perform(.saveRegions, origin: .user)
+            guard case .ask(let question, let request) = asked.effects.first,
+                  case .saveRegions(let snapshot) = request else {
+                return XCTFail("Saving regions should ask for a path")
+            }
+            XCTAssertEqual(question, .savePath(suggestedName: "regions.reg", types: ["reg"]))
+            XCTAssertEqual(snapshot.regions, [first])
+            _ = session.perform(.clearRegions, origin: .user)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("theia-regions-\(UUID().uuidString).reg")
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let answered = session.perform(.answer(request, .path(destination)), origin: .user)
+            guard case .saveRegions(let saved, let url) = answered.effects.first else {
+                return XCTFail("Answer should carry the original regions")
+            }
+            XCTAssertEqual(url, destination)
+            XCTAssertEqual(saved.regions, [first])
+            try saved.write(to: destination)
+            XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8),
+                           RegionFile.format([first]))
+            XCTAssertEqual(session.perform(.answer(request, .path(destination)), origin: .user).failure,
+                           .invalidPendingRequest)
+        }
+    }
+
+    func testRegionLoadRequestAcceptsOnePathAndReplacementTracksGeneration() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let initialRevision = session.regionReplacementRevision
+            let asked = session.perform(.loadRegions, origin: .user)
+            guard case .ask(let question, let request) = asked.effects.first,
+                  case .loadRegions(let load) = request else {
+                return XCTFail("Loading regions should ask for one path")
+            }
+            XCTAssertEqual(question, .openPath(types: ["public.plain-text", "public.data"], multiple: false))
+            let invalid = session.perform(.answer(request, .paths([])), origin: .user)
+            XCTAssertEqual(invalid.failure, .invalidAnswer)
+            XCTAssertEqual(invalid.effects, [.alert(title: "Regions not loaded",
+                                                   message: "Answer does not match the request",
+                                                   style: .warning)])
+            let source = URL(fileURLWithPath: "/tmp/theia-regions.reg")
+            let answered = session.perform(.answer(request, .paths([source])), origin: .user)
+            XCTAssertEqual(answered.effects, [.loadRegions(load, source)])
+
+            let region = Region(shape: .point(.init(x: 9, y: 10)), frame: .image)
+            XCTAssertNil(session.perform(.completeRegionLoad(load, [region]), origin: .user).failure)
+            XCTAssertEqual(session.regionReplacementRevision, initialRevision + 1)
+            session.close()
+            XCTAssertEqual(session.perform(.completeRegionLoad(load, []), origin: .user).failure, .documentClosed)
+            XCTAssertEqual(session.regions, [region])
+        }
+    }
+
+    func testRegionLoadCompletionRejectsOlderLoadAndInterveningEdits() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            let source = URL(fileURLWithPath: "/tmp/theia-regions.reg")
+            @MainActor func acceptLoad() -> RegionLoadRequest {
+                let asked = session.perform(.loadRegions, origin: .user)
+                guard case .ask(_, let request) = asked.effects.first,
+                      case .loadRegions(let load) = request else {
+                    XCTFail("Expected region load request")
+                    fatalError("Expected region load request")
+                }
+                XCTAssertEqual(session.perform(.answer(request, .path(source)), origin: .user).effects,
+                               [.loadRegions(load, source)])
+                return load
+            }
+
+            let older = acceptLoad()
+            let newer = acceptLoad()
+            let first = Region(shape: .point(.init(x: 1, y: 2)), frame: .image)
+            let second = Region(shape: .point(.init(x: 3, y: 4)), frame: .image)
+            XCTAssertEqual(session.perform(.completeRegionLoad(older, [first]), origin: .user).failure,
+                           .supersededRegionLoad)
+            XCTAssertNil(session.perform(.completeRegionLoad(newer, [second]), origin: .user).failure)
+            XCTAssertEqual(session.regions, [second])
+
+            let stale = acceptLoad()
+            _ = session.perform(.addRegion(first), origin: .user)
+            XCTAssertEqual(session.perform(.completeRegionLoad(stale, []), origin: .user).failure,
+                           .supersededRegionLoad)
+            XCTAssertEqual(session.regions, [second, first])
+        }
+    }
+
     func testExportQuestionKeepsTheRequestTimeImageAndDisplayParameters() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -60,7 +151,7 @@ final class DocumentSessionTests: XCTestCase {
                                            origin: .user)
             XCTAssertEqual(replayed.failure, .invalidPendingRequest)
             XCTAssertEqual(replayed.effects, [.alert(title: "Export not saved",
-                                                    message: "Save request is no longer pending",
+                                                    message: "Request is no longer pending",
                                                     style: .warning)])
             guard case .ask(_, let pending) = session.perform(.exportImage, origin: .user).effects.first else {
                 return XCTFail("Second export should ask for a path")
@@ -199,17 +290,19 @@ final class DocumentSessionTests: XCTestCase {
             _ = session.perform(.addRegion(region), origin: .user)
             let menu = CommandCatalog.regionMenu(for: session)
             XCTAssertEqual(menu.map { $0.item?.identifier ?? "separator" }, [
+                "region.load", "region.save", "separator",
                 "region.delete", "region.bringToFront", "region.copy", "separator",
                 "region.clear", "separator", "region.undo", "region.redo",
             ])
-            XCTAssertEqual(menu.first?.item?.enabled, true)
+            XCTAssertEqual(menu.compactMap(\.item).first { $0.identifier == "region.save" }?.enabled, true)
             XCTAssertEqual(menu.last?.item?.enabled, false)
             let copied = session.perform(.copyRegion(0), origin: .user)
             XCTAssertEqual(copied.effects, [.copyToClipboard(RegionFile.format([region]))])
             XCTAssertEqual(session.perform(.copyRegion(0), origin: .script).failure,
                            .requiresUserInterface)
             _ = session.perform(.clearRegions, origin: .user)
-            XCTAssertFalse(CommandCatalog.regionMenu(for: session).first?.item?.enabled ?? true)
+            XCTAssertFalse(CommandCatalog.regionMenu(for: session).compactMap(\.item)
+                .first { $0.identifier == "region.save" }?.enabled ?? true)
         }
     }
 

@@ -59,6 +59,9 @@ public enum SessionCommand: Sendable, Equatable {
     case bringRegionToFront(Int)
     case clearRegions
     case replaceRegions([Region])
+    case completeRegionLoad(RegionLoadRequest, [Region])
+    case saveRegions
+    case loadRegions
     case copyRegion(Int)
     case setPlaying(Bool)
     case setFPS(Double)
@@ -94,6 +97,8 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case invalidAnswer
     case documentClosed
     case unavailableCube
+    case noRegions
+    case supersededRegionLoad
 
     public var message: String {
         switch self {
@@ -110,10 +115,12 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .invalidZoomFactor: "Zoom factor or anchor is invalid"
         case .invalidPanDelta: "Pan delta is invalid"
         case .invalidRegionIndex(let index): "Invalid region index \(index)"
-        case .invalidPendingRequest: "Save request is no longer pending"
-        case .invalidAnswer: "Answer does not match the save request"
+        case .invalidPendingRequest: "Request is no longer pending"
+        case .invalidAnswer: "Answer does not match the request"
         case .documentClosed: "Document is closed"
         case .unavailableCube: "Current HDU is not a three-dimensional cube"
+        case .noRegions: "There are no regions to save"
+        case .supersededRegionLoad: "A newer region load or edit has replaced this load"
         }
     }
 }
@@ -142,6 +149,8 @@ public enum Effect: Sendable, Equatable {
     case ask(Question, PendingRequest)
     case exportImage(RenderSnapshot, URL)
     case exportCube(CubeRenderSnapshot, URL)
+    case saveRegions(RegionSaveSnapshot, URL)
+    case loadRegions(RegionLoadRequest, URL)
     case showPanel(PanelKind)
     case showAppWindow(AppWindowKind)
     case openURL(URL)
@@ -252,8 +261,33 @@ extension DocumentSession {
                 selectedRegionIndex = nil
                 regions.removeAll()
             case .replaceRegions(let replacement):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
                 selectedRegionIndex = nil
                 regions = replacement
+                regionReplacementRevision &+= 1
+            case .completeRegionLoad(let request, let replacement):
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard request.documentID == id,
+                      let accepted = acceptedRegionLoad,
+                      accepted.requestID == request.id,
+                      accepted.regionRevision == regionRevision,
+                      accepted.replacementRevision == regionReplacementRevision else {
+                    return CommandOutcome(failure: .supersededRegionLoad)
+                }
+                acceptedRegionLoad = nil
+                selectedRegionIndex = nil
+                regions = replacement
+                regionReplacementRevision &+= 1
+            case .saveRegions:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestRegionSave()
+            case .loadRegions:
+                guard origin == .user else {
+                    return CommandOutcome(failure: .requiresUserInterface)
+                }
+                return requestRegionLoad()
             case .copyRegion(let index):
                 guard regions.indices.contains(index) else {
                     return CommandOutcome(failure: .invalidRegionIndex(index))

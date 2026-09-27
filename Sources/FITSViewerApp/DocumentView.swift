@@ -160,7 +160,8 @@ struct DocumentView: View {
                     regions: regionsBinding,
                     session: session,
                     imageProvider: { currentImage() },
-                    wcsProvider: { session.displayedWCS }
+                    wcsProvider: { session.displayedWCS },
+                    onEffect: { applyEffect($0) }
                 )
                     .frame(width: 340)
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -564,6 +565,7 @@ struct InspectorPanel: View {
     let session: DocumentSession
     let imageProvider: () -> FITSImage?
     let wcsProvider: () -> WCS?
+    let onEffect: (Effect) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -574,7 +576,7 @@ struct InspectorPanel: View {
             .padding(8)
             switch tab {
             case .header: HeaderPanel(header: header, imageProvider: imageProvider)
-            case .regions: RegionListPanel(regions: $regions, session: session)
+            case .regions: RegionListPanel(regions: $regions, session: session, onEffect: onEffect)
             case .photometry: PhotometryPanel(regions: regions,
                                               imageProvider: imageProvider,
                                               wcsProvider: wcsProvider)
@@ -587,18 +589,17 @@ struct InspectorPanel: View {
 struct RegionListPanel: View {
     @Binding var regions: [Region]
     let session: DocumentSession
+    let onEffect: (Effect) -> Void
     @State private var expanded: Set<Int> = []
-    @State private var showLoadPanel = false
-    @State private var showSavePanel = false
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Button {
-                    showLoadPanel = true
+                    performAndApply(.loadRegions)
                 } label: { Label("Load…", systemImage: "tray.and.arrow.down") }
                 Button {
-                    showSavePanel = true
+                    performAndApply(.saveRegions)
                 } label: { Label("Save…", systemImage: "tray.and.arrow.up") }
                     .disabled(regions.isEmpty)
                 Spacer()
@@ -616,15 +617,7 @@ struct RegionListPanel: View {
             Divider()
             content
         }
-        .fileImporter(isPresented: $showLoadPanel,
-                      allowedContentTypes: [.plainText, .data],
-                      allowsMultipleSelection: false) { result in
-            handleLoad(result)
-        }
-        .fileExporter(isPresented: $showSavePanel,
-                      document: RegionDocument(regions: regions),
-                      contentType: .plainText,
-                      defaultFilename: "regions.reg") { _ in }
+        .onChange(of: session.regionReplacementRevision) { _, _ in expanded.removeAll() }
     }
 
     @ViewBuilder
@@ -703,14 +696,9 @@ struct RegionListPanel: View {
 
     private func fmt(_ d: Double) -> String { String(format: "%.1f", d) }
 
-    private func handleLoad(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let url = urls.first else { return }
-        let needsStop = url.startAccessingSecurityScopedResource()
-        defer { if needsStop { url.stopAccessingSecurityScopedResource() } }
-        guard let text = try? String(contentsOf: url, encoding: .utf8),
-              let loaded = try? RegionFile.parse(text) else { return }
-        session.perform(.replaceRegions(loaded), origin: .user)
-        expanded.removeAll()
+    private func performAndApply(_ command: SessionCommand) {
+        let outcome = session.perform(command, origin: .user)
+        for effect in outcome.effects { onEffect(effect) }
     }
 }
 
@@ -1654,7 +1642,9 @@ extension DocumentView {
         switch effect {
         case .ask(.savePath(let suggestedName, let types), let request):
             let panel = NSSavePanel()
-            panel.allowedContentTypes = types.compactMap { UTType(filenameExtension: $0) }
+            panel.allowedContentTypes = types.compactMap {
+                UTType($0) ?? UTType(filenameExtension: $0)
+            }
             panel.nameFieldStringValue = suggestedName
             panel.canCreateDirectories = true
             let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
@@ -1665,6 +1655,24 @@ extension DocumentView {
                 for next in outcome.effects { applyEffect(next) }
             }
             if case .exportCube = request, let parent = NSApp.keyWindow {
+                panel.beginSheetModal(for: parent, completionHandler: handleResponse)
+            } else {
+                panel.begin(completionHandler: handleResponse)
+            }
+        case .ask(.openPath(let types, let multiple), let request):
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = types.compactMap {
+                UTType($0) ?? UTType(filenameExtension: $0)
+            }
+            panel.allowsMultipleSelection = multiple
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
+                let answer: Answer = response == .OK ? .paths(panel.urls) : .cancelled
+                let outcome = session.perform(.answer(request, answer), origin: .user)
+                for next in outcome.effects { applyEffect(next) }
+            }
+            if let parent = NSApp.keyWindow {
                 panel.beginSheetModal(for: parent, completionHandler: handleResponse)
             } else {
                 panel.begin(completionHandler: handleResponse)
@@ -1693,6 +1701,39 @@ extension DocumentView {
                     }
                 } catch {
                     DispatchQueue.main.async { NSAlert(error: error).runModal() }
+                }
+            }
+        case .saveRegions(let snapshot, let url):
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try snapshot.write(to: url)
+                } catch {
+                    DispatchQueue.main.async {
+                        applyEffect(.alert(title: "Regions not saved",
+                                           message: error.localizedDescription, style: .warning))
+                    }
+                }
+            }
+        case .loadRegions(let request, let url):
+            guard request.documentID == session.id else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    let loaded = try RegionFile.parse(text)
+                    DispatchQueue.main.async {
+                        let outcome = session.perform(.completeRegionLoad(request, loaded), origin: .user)
+                        if let failure = outcome.failure, failure != .supersededRegionLoad {
+                            applyEffect(.alert(title: "Regions not loaded",
+                                               message: failure.message, style: .warning))
+                        }
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        applyEffect(.alert(title: "Regions not loaded",
+                                           message: error.localizedDescription, style: .warning))
+                    }
                 }
             }
         case .showPanel(.scaleParameters): openScaleParametersPanel()

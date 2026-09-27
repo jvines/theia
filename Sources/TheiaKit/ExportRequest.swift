@@ -88,11 +88,15 @@ public enum Question: Sendable, Equatable {
 public enum PendingRequest: Sendable, Equatable {
     case exportImage(RenderSnapshot)
     case exportCube(CubeRenderSnapshot)
+    case saveRegions(RegionSaveSnapshot)
+    case loadRegions(RegionLoadRequest)
 
     public var id: UUID {
         switch self {
         case .exportImage(let snapshot): snapshot.id
         case .exportCube(let snapshot): snapshot.id
+        case .saveRegions(let snapshot): snapshot.id
+        case .loadRegions(let request): request.id
         }
     }
 
@@ -100,6 +104,8 @@ public enum PendingRequest: Sendable, Equatable {
         switch self {
         case .exportImage(let snapshot): snapshot.documentID
         case .exportCube(let snapshot): snapshot.documentID
+        case .saveRegions(let snapshot): snapshot.documentID
+        case .loadRegions(let request): request.documentID
         }
     }
 }
@@ -112,9 +118,15 @@ public enum Answer: Sendable, Equatable {
 }
 
 extension DocumentSession {
-    private func rejectedAnswer(_ failure: CommandFailure) -> CommandOutcome {
-        CommandOutcome(effects: [
-            .alert(title: "Export not saved", message: failure.message, style: .warning)
+    private func rejectedAnswer(_ failure: CommandFailure, for request: PendingRequest) -> CommandOutcome {
+        let title: String
+        switch request {
+        case .exportImage, .exportCube: title = "Export not saved"
+        case .saveRegions: title = "Regions not saved"
+        case .loadRegions: title = "Regions not loaded"
+        }
+        return CommandOutcome(effects: [
+            .alert(title: title, message: failure.message, style: .warning)
         ], failure: failure)
     }
 
@@ -143,31 +155,70 @@ extension DocumentSession {
         ])
     }
 
+    func requestRegionSave() -> CommandOutcome {
+        guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+        guard !regions.isEmpty else { return CommandOutcome(failure: .noRegions) }
+        let snapshot = RegionSaveSnapshot(session: self)
+        let request = PendingRequest.saveRegions(snapshot)
+        pendingRequests[snapshot.id] = request
+        return CommandOutcome(effects: [
+            .ask(.savePath(suggestedName: "regions.reg", types: ["reg"]), request)
+        ])
+    }
+
+    func requestRegionLoad() -> CommandOutcome {
+        guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+        let load = RegionLoadRequest(session: self)
+        let request = PendingRequest.loadRegions(load)
+        pendingRequests[load.id] = request
+        return CommandOutcome(effects: [
+            .ask(.openPath(types: ["public.plain-text", "public.data"], multiple: false), request)
+        ])
+    }
+
     func answer(_ request: PendingRequest, with answer: Answer) -> CommandOutcome {
-        guard !isClosed else { return rejectedAnswer(.documentClosed) }
+        guard !isClosed else { return rejectedAnswer(.documentClosed, for: request) }
         guard let stored = pendingRequests[request.id], stored.documentID == id else {
-            return rejectedAnswer(.invalidPendingRequest)
+            return rejectedAnswer(.invalidPendingRequest, for: request)
         }
         switch answer {
         case .cancelled:
             pendingRequests[request.id] = nil
             return CommandOutcome()
         case .path(let url):
-            guard url.isFileURL else { return rejectedAnswer(.invalidAnswer) }
+            guard url.isFileURL else { return rejectedAnswer(.invalidAnswer, for: stored) }
             pendingRequests[request.id] = nil
             switch stored {
             case .exportImage(let snapshot):
                 return CommandOutcome(effects: [.exportImage(snapshot, url)])
             case .exportCube(let snapshot):
                 return CommandOutcome(effects: [.exportCube(snapshot, url)])
+            case .saveRegions(let snapshot):
+                return CommandOutcome(effects: [.saveRegions(snapshot, url)])
+            case .loadRegions(let load):
+                acceptRegionLoad(load)
+                return CommandOutcome(effects: [.loadRegions(load, url)])
             }
-        case .paths, .numbers:
-            return rejectedAnswer(.invalidAnswer)
+        case .paths(let urls):
+            guard case .loadRegions(let load) = stored,
+                  urls.count == 1, let url = urls.first, url.isFileURL else {
+                return rejectedAnswer(.invalidAnswer, for: stored)
+            }
+            pendingRequests[request.id] = nil
+            acceptRegionLoad(load)
+            return CommandOutcome(effects: [.loadRegions(load, url)])
+        case .numbers:
+            return rejectedAnswer(.invalidAnswer, for: stored)
         }
+    }
+
+    private func acceptRegionLoad(_ request: RegionLoadRequest) {
+        acceptedRegionLoad = (request.id, regionRevision, regionReplacementRevision)
     }
 
     public func close() {
         isClosed = true
         pendingRequests.removeAll()
+        acceptedRegionLoad = nil
     }
 }

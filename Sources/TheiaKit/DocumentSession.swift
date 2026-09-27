@@ -70,11 +70,15 @@ public struct HDUFacts {
             }
             if regions.isEmpty { previewRegion = nil }
             if regions != oldValue {
+                regionRevision &+= 1
                 emit(.regionsChanged)
                 emit(.persistedFieldChanged)
             }
         }
     }
+    public internal(set) var regionReplacementRevision = 0
+    @ObservationIgnored var regionRevision = 0
+    @ObservationIgnored var acceptedRegionLoad: (requestID: UUID, regionRevision: Int, replacementRevision: Int)?
     public var selectedRegionIndex: Int? {
         didSet {
             if let selectedRegionIndex, !regions.indices.contains(selectedRegionIndex) {
