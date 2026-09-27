@@ -30,7 +30,7 @@ final class XPACommandBridge: XPAServerDelegate {
     private func getMain(command: String, params: String) -> String? {
         switch command {
         case "version":
-            return "Theia \(appVersion)"
+            return "Theia \(AppVersion.string)\(AppVersion.isBeta ? " (Beta)" : "")"
         case "file":
             return frontController()?.documentModel.url.path
         case "frame":
@@ -134,10 +134,6 @@ final class XPACommandBridge: XPAServerDelegate {
         let controllers = AppDelegate.shared?.allControllersForScripting() ?? []
         if let key = controllers.first(where: { $0.window?.isKeyWindow == true }) { return key }
         return AppDelegate.shared?.currentController ?? controllers.last
-    }
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
     private func stringFrom(_ data: Data?) -> String? {

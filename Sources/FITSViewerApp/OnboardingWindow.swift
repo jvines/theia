@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import TheiaKit
 
 /// Shown once on first launch to introduce the app's capabilities.
 /// After dismissal, the flag `hasSeenOnboarding` is set in UserDefaults
@@ -122,7 +123,7 @@ private struct OnboardingView: View {
 
             // Footer
             HStack {
-                Text("Version \(appVersion)")
+                Text("Version \(AppVersion.string)\(AppVersion.isBeta ? " · Beta" : "")")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -138,10 +139,6 @@ private struct OnboardingView: View {
             .padding(.vertical, 14)
         }
         .frame(width: 640, height: 480)
-    }
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 }
 

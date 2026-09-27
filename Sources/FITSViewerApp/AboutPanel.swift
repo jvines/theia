@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import TheiaKit
 
 /// Custom About panel — big icon, version, author credit, short description.
 /// Less corporate than NSApp.orderFrontStandardAboutPanel.
@@ -50,7 +51,7 @@ extension AboutWindowController: NSWindowDelegate {
             \(tokenPath)
 
         Endpoints
-          GET  /status                      → {open: [{id, path}]}
+          GET  /status                      → {version, beta, open: [{id, path}]}
           POST /open                        → {id}            body: {path, stretch?, colormap?, vmin?, vmax?, zscale?}
           GET  /document/<id>/info
           POST /document/<id>/stretch       body: {name}
@@ -132,9 +133,8 @@ private struct AboutView: View {
 
     private var versionLine: String {
         let info = Bundle.main.infoDictionary ?? [:]
-        let v = info["CFBundleShortVersionString"] as? String ?? "0.0"
         let b = info["CFBundleVersion"] as? String ?? "1"
-        let betaSuffix = AppConfig.isBeta ? " · Beta" : ""
-        return "version \(v) (\(b))\(betaSuffix)"
+        let betaSuffix = AppVersion.isBeta ? " · Beta" : ""
+        return "version \(AppVersion.string) (\(b))\(betaSuffix)"
     }
 }

@@ -10,7 +10,7 @@ import TheiaKit
 /// reachable from the network.
 ///
 /// Routes (all JSON):
-///   GET  /status                            → {open: [{path, id}]}
+///   GET  /status                            → {version, beta, open: [{path, id}]}
 ///   POST /open  {path, stretch?, …}         → {id}
 ///   GET  /document/<id>/info                → {path, stretch, colormap, vmin, vmax, ...}
 ///   POST /document/<id>/stretch  {name}     → {ok}
@@ -255,7 +255,11 @@ final class ScriptingServer {
         let docs: [[String: Any]] = controllers.map { c in
             ["id": AppDelegate.shared?.scriptingID(of: c) ?? -1, "path": c.documentModel.url.path]
         }
-        return httpResponse(200, json: ["open": docs])
+        return httpResponse(200, json: [
+            "version": AppVersion.string,
+            "beta": AppVersion.isBeta,
+            "open": docs,
+        ])
     }
 
     private func openResponse(body: Data) -> Data {
