@@ -124,6 +124,7 @@ struct DocumentView: View {
         self.interaction = InteractionController(view: document.session.view, mode: .full,
                                                  session: document.session)
         self._session = State(initialValue: document.session)
+        self.interaction.regionColorProvider = { UserPreferences.shared.regionColor }
     }
 
     var body: some View {
@@ -435,8 +436,6 @@ struct FITSImageView: View {
     let selectedRegionIndex: Int?
     let previewRegion: Region?
     let onCursorChange: (CursorInfo?) -> Void
-    let onRegionCreated: (Region) -> Void
-    let onRegionPreview: (Region?) -> Void
     let onLineProfile: (SIMD2<Double>, SIMD2<Double>) -> Void
     let onRadialProfile: (SIMD2<Double>, Double) -> Void
     let onGrowthCurve: (SIMD2<Double>, Double) -> Void
@@ -462,8 +461,6 @@ struct FITSImageView: View {
                     regions: regions,
                     wcs: wcs,
                     onCursorChange: onCursorChange,
-                    onRegionCreated: onRegionCreated,
-                    onRegionPreview: onRegionPreview,
                     onLineProfile: onLineProfile,
                     onRadialProfile: onRadialProfile,
                     onGrowthCurve: onGrowthCurve,
@@ -857,8 +854,6 @@ extension DocumentView {
             selectedRegionIndex: selectedRegionIndex,
             previewRegion: previewRegion,
             onCursorChange: handleCursor,
-            onRegionCreated: appendRegion,
-            onRegionPreview: { previewRegion = $0 },
             onLineProfile: { from, to in handleLineProfile(from: from, to: to) },
             onRadialProfile: { center, r in handleRadialProfile(center: center, radius: r) },
             onGrowthCurve: { center, r in handleGrowthCurve(center: center, radius: r) },
@@ -1003,17 +998,6 @@ extension DocumentView {
                 from: parent, sourceWCS: session.displayedWCS
             )
         }
-    }
-
-    private func appendRegion(_ r: Region) {
-        // Apply the user's default colour preference when the region was created
-        // without any explicit attributes (drag-on-canvas path).
-        var attrs = r.attributes
-        if attrs["color"] == nil {
-            attrs["color"] = UserPreferences.shared.regionColor
-        }
-        let withColor = Region(shape: r.shape, frame: r.frame, attributes: attrs)
-        session.perform(.addRegion(withColor), origin: .user)
     }
 
     private func updateRegion(idx: Int, region: Region) {

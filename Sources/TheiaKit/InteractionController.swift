@@ -82,6 +82,7 @@ public struct KeyEvent: Sendable, Equatable {
         didSet {
             if mode != oldValue {
                 cancelActiveRegionEdit()
+                cancelActiveDrawing()
                 activePan = nil
                 levelsDrag = nil
             }
@@ -91,6 +92,7 @@ public struct KeyEvent: Sendable, Equatable {
         didSet {
             if drawMode != oldValue {
                 cancelActiveRegionEdit()
+                cancelActiveDrawing()
                 if activePan?.button == .primary { activePan = nil }
             }
         }
@@ -119,6 +121,9 @@ public struct KeyEvent: Sendable, Equatable {
     private var levelsDrag: LevelsDrag?
     private var regionDrag: RegionDrag?
     private var ignorePrimaryUntilUp = false
+    private var drawStartImage: SIMD2<Double>?
+    private var polygonVertices: [SIMD2<Double>] = []
+    public var regionColorProvider: @MainActor () -> String = { RegionList.defaultColor }
 
     public init(view: ImageViewState, mode: Mode, session: DocumentSession? = nil) {
         self.view = view
@@ -175,6 +180,7 @@ public struct KeyEvent: Sendable, Equatable {
             guard event.modifiers.isEmpty, let selected = session.selectedRegionIndex else { return false }
             return session.perform(.deleteRegion(selected), origin: .user).failure == nil
         case .escape:
+            if cancelActiveDrawing() { return true }
             guard event.modifiers.isEmpty else { return false }
             if cancelActiveRegionEdit() { return true }
             if session.selectedRegionIndex != nil { session.selectedRegionIndex = nil; return true }
@@ -193,7 +199,10 @@ public struct KeyEvent: Sendable, Equatable {
             default: return false
             }
         case .return:
-            return false
+            guard drawMode == .drawPolygon,
+                  !polygonVertices.isEmpty else { return false }
+            completePolygon()
+            return true
         }
     }
 
@@ -203,6 +212,25 @@ public struct KeyEvent: Sendable, Equatable {
         case .down:
             if event.button == .primary {
                 ignorePrimaryUntilUp = false
+                if mode == .full, let session, let image = imagePoint(at: event.location) {
+                    if drawMode == .drawPolygon {
+                        if event.clickCount >= 2 {
+                            completePolygon()
+                        } else {
+                            polygonVertices.append(image)
+                            if polygonVertices.count >= 2 {
+                                session.previewRegion = RegionDrawing.makePolygon(polygonVertices)
+                            }
+                        }
+                        // Polygon mode still permits panning between clicks.
+                        activePan = Pan(button: .primary, previous: event.location)
+                        return false
+                    }
+                    if isRegionDrawingMode {
+                        drawStartImage = image
+                        return false
+                    }
+                }
                 if mode == .full, drawMode == .pan, let session,
                    let image = imagePoint(at: event.location) {
                     let tolerance = 4 / max(view.transform.scale, 1e-6)
@@ -230,6 +258,11 @@ public struct KeyEvent: Sendable, Equatable {
         case .dragged:
             if event.button == .primary {
                 if ignorePrimaryUntilUp { return false }
+                if let start = drawStartImage, let current = imagePoint(at: event.location),
+                   let session, let preview = drawnRegion(start: start, end: current) {
+                    session.previewRegion = preview
+                    return true
+                }
                 if let drag = regionDrag {
                     guard let session, let current = imagePoint(at: event.location) else { return false }
                     let updated = RegionEdit.apply(to: drag.baseRegion, handle: drag.handle,
@@ -256,6 +289,14 @@ public struct KeyEvent: Sendable, Equatable {
             return false
         case .up:
             if event.button == .primary {
+                if let start = drawStartImage {
+                    if let end = imagePoint(at: event.location),
+                       let region = drawnRegion(start: start, end: end) {
+                        addDrawnRegion(region)
+                    }
+                    drawStartImage = nil
+                    session?.previewRegion = nil
+                }
                 if let drag = regionDrag {
                     session?.perform(.commitRegionEdit(drag.id), origin: .user)
                     regionDrag = nil
@@ -276,6 +317,46 @@ public struct KeyEvent: Sendable, Equatable {
         regionDrag = nil
         ignorePrimaryUntilUp = true
         return true
+    }
+
+    @discardableResult public func cancelActiveDrawing() -> Bool {
+        guard drawStartImage != nil || !polygonVertices.isEmpty else { return false }
+        drawStartImage = nil
+        polygonVertices.removeAll()
+        session?.previewRegion = nil
+        return true
+    }
+
+    private var isRegionDrawingMode: Bool {
+        switch drawMode {
+        case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus: true
+        default: false
+        }
+    }
+
+    private func drawnRegion(start: SIMD2<Double>, end: SIMD2<Double>) -> Region? {
+        switch drawMode {
+        case .drawCircle: RegionDrawing.makeCircle(startImage: start, endImage: end)
+        case .drawBox: RegionDrawing.makeBox(startImage: start, endImage: end)
+        case .drawEllipse: RegionDrawing.makeEllipse(startImage: start, endImage: end)
+        case .drawAnnulus: RegionDrawing.makeAnnulus(startImage: start, endImage: end)
+        default: nil
+        }
+    }
+
+    private func completePolygon() {
+        if polygonVertices.count >= 3 {
+            addDrawnRegion(RegionDrawing.makePolygon(polygonVertices))
+        }
+        polygonVertices.removeAll()
+        session?.previewRegion = nil
+    }
+
+    private func addDrawnRegion(_ region: Region) {
+        var attributes = region.attributes
+        attributes["color"] = RegionList.color(regionColorProvider())
+        let colored = Region(shape: region.shape, frame: region.frame, attributes: attributes)
+        session?.perform(.addRegion(colored), origin: .user)
     }
 
     private func imagePoint(at location: SIMD2<Double>) -> SIMD2<Double>? {

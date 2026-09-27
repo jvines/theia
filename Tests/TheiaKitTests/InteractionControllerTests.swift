@@ -186,6 +186,114 @@ final class InteractionControllerTests: XCTestCase {
         }
     }
 
+    func testShapeDragPreviewsAndCreatesRegionWithConfiguredColor() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 2, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawCircle
+            controller.regionColorProvider = { "red" }
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(56, 50)))
+            XCTAssertEqual(session.regions.count, 0)
+            XCTAssertEqual(session.previewRegion?.shape,
+                           .circle(center: .init(x: 1, y: 1), radius: .init(value: 3, unit: .pixel)))
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(56, 50)))
+            XCTAssertNil(session.previewRegion)
+            XCTAssertEqual(session.regions.count, 1)
+            XCTAssertEqual(session.regions[0].attributes["color"], "red")
+            XCTAssertEqual(session.regions[0].shape,
+                           .circle(center: .init(x: 1, y: 1), radius: .init(value: 3, unit: .pixel)))
+        }
+    }
+
+    func testPolygonClickReturnAndEscapePrecedence() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawPolygon
+            for location in [SIMD2(50.0, 50.0), SIMD2(60, 50), SIMD2(60, 40)] {
+                controller.pointer(.init(phase: .down, button: .primary, location: location))
+                controller.pointer(.init(phase: .up, button: .primary, location: location))
+            }
+            XCTAssertNotNil(session.previewRegion)
+            XCTAssertTrue(controller.key(.init(key: .escape)))
+            XCTAssertNil(session.previewRegion)
+            XCTAssertEqual(session.regions.count, 0)
+            for location in [SIMD2(50.0, 50.0), SIMD2(60, 50), SIMD2(60, 40)] {
+                controller.pointer(.init(phase: .down, button: .primary, location: location))
+                controller.pointer(.init(phase: .up, button: .primary, location: location))
+            }
+            XCTAssertTrue(controller.key(.init(key: .return)))
+            XCTAssertEqual(session.regions.count, 1)
+            XCTAssertNil(session.previewRegion)
+            XCTAssertEqual(session.regions[0].attributes["color"], RegionList.defaultColor)
+        }
+    }
+
+    func testChangingModeCancelsInProgressDrawing() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawBox
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(60, 40)))
+            XCTAssertNotNil(session.previewRegion)
+            controller.drawMode = .pan
+            XCTAssertNil(session.previewRegion)
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(60, 40)))
+            XCTAssertTrue(session.regions.isEmpty)
+        }
+    }
+
+    func testPolygonDoubleClickClosesWithoutAddingDuplicateVertex() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawPolygon
+            for location in [SIMD2(50.0, 50.0), SIMD2(60, 50), SIMD2(60, 40)] {
+                controller.pointer(.init(phase: .down, button: .primary, location: location))
+                controller.pointer(.init(phase: .up, button: .primary, location: location))
+            }
+            controller.pointer(.init(phase: .down, button: .primary,
+                                     location: SIMD2(60, 40), clickCount: 2))
+            XCTAssertEqual(session.regions.count, 1)
+            XCTAssertEqual(session.regions[0].shape,
+                           .polygon(points: [.init(x: 1, y: 1), .init(x: 11, y: 1), .init(x: 11, y: 11)]))
+            XCTAssertNil(session.previewRegion)
+        }
+    }
+
+    func testModifiedReturnAndEscapePreservePolygonKeys() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 1, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            controller.drawMode = .drawPolygon
+            for location in [SIMD2(50.0, 50.0), SIMD2(60, 50), SIMD2(60, 40)] {
+                controller.pointer(.init(phase: .down, button: .primary, location: location))
+                controller.pointer(.init(phase: .up, button: .primary, location: location))
+            }
+            XCTAssertTrue(controller.key(.init(key: .escape, modifiers: [.shift])))
+            XCTAssertNil(session.previewRegion)
+            XCTAssertTrue(session.regions.isEmpty)
+            for location in [SIMD2(50.0, 50.0), SIMD2(60, 50), SIMD2(60, 40)] {
+                controller.pointer(.init(phase: .down, button: .primary, location: location))
+                controller.pointer(.init(phase: .up, button: .primary, location: location))
+            }
+            XCTAssertTrue(controller.key(.init(key: .return, modifiers: [.shift])))
+            XCTAssertEqual(session.regions.count, 1)
+        }
+    }
+
     @MainActor private func makeCubeSession() throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",

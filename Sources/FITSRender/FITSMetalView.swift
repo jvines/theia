@@ -16,8 +16,6 @@ public struct FITSMetalView: NSViewRepresentable {
     public let interactionMode: InteractionController.Mode
     public let interactionController: InteractionController?
     public let onCursorChange: ((CursorInfo?) -> Void)?
-    public let onRegionCreated: ((Region) -> Void)?
-    public let onRegionPreview: ((Region?) -> Void)?
     public let regions: [Region]
     public let wcs: WCS?
     public let onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
@@ -38,8 +36,6 @@ public struct FITSMetalView: NSViewRepresentable {
         regions: [Region] = [],
         wcs: WCS? = nil,
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
-        onRegionCreated: ((Region) -> Void)? = nil,
-        onRegionPreview: ((Region?) -> Void)? = nil,
         onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)? = nil,
         onRadialProfile: ((SIMD2<Double>, Double) -> Void)? = nil,
         onGrowthCurve: ((SIMD2<Double>, Double) -> Void)? = nil,
@@ -64,8 +60,6 @@ public struct FITSMetalView: NSViewRepresentable {
         self.onRegionContextMenu = onRegionContextMenu
         self.onProfileDragPreview = onProfileDragPreview
         self.onCursorChange = onCursorChange
-        self.onRegionCreated = onRegionCreated
-        self.onRegionPreview = onRegionPreview
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -84,8 +78,6 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.delegate = renderer
                 view.fitsRenderer = renderer
                 view.onCursorChange = onCursorChange
-                view.onRegionCreated = onRegionCreated
-                view.onRegionPreview = onRegionPreview
                 view.onLineProfile = onLineProfile
                 view.onRadialProfile = onRadialProfile
                 view.onGrowthCurve = onGrowthCurve
@@ -111,12 +103,10 @@ public struct FITSMetalView: NSViewRepresentable {
     }
 
     public func updateNSView(_ view: InteractiveMTKView, context: Context) {
-        guard let renderer = context.coordinator.renderer else { return }
+        guard context.coordinator.renderer != nil else { return }
         context.coordinator.observeCanvas(viewport, view: view)
         context.coordinator.requestDisplay(image, revision: imageRevision, view: view)
         view.onCursorChange = onCursorChange
-        view.onRegionCreated = onRegionCreated
-        view.onRegionPreview = onRegionPreview
         view.onLineProfile = onLineProfile
         view.onRadialProfile = onRadialProfile
         view.onGrowthCurve = onGrowthCurve
@@ -214,8 +204,6 @@ public final class InteractiveMTKView: MTKView {
     public weak var fitsRenderer: FITSRenderer?
     public var interaction: InteractionController?
     public var onCursorChange: ((CursorInfo?) -> Void)?
-    public var onRegionCreated: ((Region) -> Void)?
-    public var onRegionPreview: ((Region?) -> Void)?
     public var onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public var onRadialProfile: ((SIMD2<Double>, Double) -> Void)?
     public var onGrowthCurve: ((SIMD2<Double>, Double) -> Void)?
@@ -236,7 +224,10 @@ public final class InteractiveMTKView: MTKView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { interaction?.cancelActiveRegionEdit() }
+        if window == nil {
+            interaction?.cancelActiveRegionEdit()
+            interaction?.cancelActiveDrawing()
+        }
         // Without this, mouseMoved events don't reach the view in some hosting setups.
         window?.acceptsMouseMovedEvents = true
         window?.makeFirstResponder(self)
@@ -244,7 +235,6 @@ public final class InteractiveMTKView: MTKView {
 
     private var trackingArea: NSTrackingArea?
     private var dragStartImage: SIMD2<Double>?
-    private var polygonVertices: [SIMD2<Double>] = []
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -312,13 +302,8 @@ public final class InteractiveMTKView: MTKView {
 
     public override func mouseDown(with event: NSEvent) {
         guard let r = fitsRenderer, r.image != nil else { return }
-        if drawMode.isDrag {
+        if drawMode.isDrag && !isRegionDrawingMode {
             dragStartImage = imagePoint(at: event.locationInWindow, renderer: r)
-            return
-        }
-        if drawMode == .drawPolygon {
-            handlePolygonClick(event: event, renderer: r)
-            interaction?.pointer(pointerEvent(.down, .primary, event))
             return
         }
         if drawMode == .cubeSpectrum,
@@ -326,50 +311,10 @@ public final class InteractiveMTKView: MTKView {
             onCubeSpectrumAt?(p)
             return
         }
-        if drawMode == .pan { interaction?.pointer(pointerEvent(.down, .primary, event)) }
-    }
-
-    /// Polygon UX:
-    ///   - single click adds a vertex
-    ///   - double-click (or pressing return) closes the polygon
-    private func handlePolygonClick(event: NSEvent, renderer r: FITSRenderer) {
-        guard let p = imagePoint(at: event.locationInWindow, renderer: r) else { return }
-        if event.clickCount >= 2 {
-            if polygonVertices.count >= 3 {
-                let region = RegionDrawing.makePolygon(polygonVertices)
-                onRegionCreated?(region)
-            }
-            polygonVertices.removeAll()
-            onRegionPreview?(nil)
-            return
-        }
-        polygonVertices.append(p)
-        if polygonVertices.count >= 2 {
-            // Preview shows the in-progress open polyline (close visually with cursor).
-            let preview = RegionDrawing.makePolygon(polygonVertices)
-            onRegionPreview?(preview)
-        }
+        interaction?.pointer(pointerEvent(.down, .primary, event))
     }
 
     public override func keyDown(with event: NSEvent) {
-        if drawMode == .drawPolygon,
-           (event.keyCode == 36 || event.keyCode == 76)  // return / enter
-        {
-            if polygonVertices.count >= 3 {
-                let region = RegionDrawing.makePolygon(polygonVertices)
-                onRegionCreated?(region)
-            }
-            polygonVertices.removeAll()
-            onRegionPreview?(nil)
-            return
-        }
-        if event.keyCode == 53 {  // escape clears an in-progress polygon first
-            if !polygonVertices.isEmpty {
-                polygonVertices.removeAll()
-                onRegionPreview?(nil)
-                return
-            }
-        }
         if let key = keyEvent(event), interaction?.key(key) == true { return }
         super.keyDown(with: event)
     }
@@ -422,7 +367,6 @@ public final class InteractiveMTKView: MTKView {
         defer {
             interaction?.pointer(pointerEvent(.up, .primary, event))
             dragStartImage = nil
-            if drawMode != .drawPolygon { onRegionPreview?(nil) }
             onProfileDragPreview(nil)
         }
         guard drawMode.isDrag,
@@ -450,24 +394,16 @@ public final class InteractiveMTKView: MTKView {
             onGrowthCurve?(start, radius < 2 ? 0 : radius)
             return
         }
-        if let region = buildDragRegion(start: start, end: end) {
-            onRegionCreated?(region)
-        }
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        guard let r = fitsRenderer else { return }
         switch drawMode {
-        case .pan, .drawPolygon:
+        case .pan, .drawPolygon, .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
             if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {
                 setNeedsDisplay(bounds)
             }
-        case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus:
-            guard let start = dragStartImage,
-                  let current = imagePoint(at: event.locationInWindow, renderer: r),
-                  let preview = buildDragRegion(start: start, end: current) else { return }
-            onRegionPreview?(preview)
         case .radialProfile, .growthCurve:
+            guard let r = fitsRenderer else { return }
             guard let start = dragStartImage,
                   let current = imagePoint(at: event.locationInWindow, renderer: r) else { return }
             let dx = current.x - start.x, dy = current.y - start.y
@@ -478,13 +414,10 @@ public final class InteractiveMTKView: MTKView {
         }
     }
 
-    private func buildDragRegion(start: SIMD2<Double>, end: SIMD2<Double>) -> Region? {
+    private var isRegionDrawingMode: Bool {
         switch drawMode {
-        case .drawCircle:  return RegionDrawing.makeCircle(startImage: start, endImage: end)
-        case .drawBox:     return RegionDrawing.makeBox(startImage: start, endImage: end)
-        case .drawEllipse: return RegionDrawing.makeEllipse(startImage: start, endImage: end)
-        case .drawAnnulus: return RegionDrawing.makeAnnulus(startImage: start, endImage: end)
-        default: return nil
+        case .drawCircle, .drawBox, .drawEllipse, .drawAnnulus: true
+        default: false
         }
     }
 
