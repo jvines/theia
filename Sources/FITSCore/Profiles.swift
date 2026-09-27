@@ -87,33 +87,97 @@ public enum Profiles {
     /// pixels). Bins are `[k*binWidth, (k+1)*binWidth)`; the returned `radius` is
     /// the bin centre. NaN pixels are skipped.
     public static func radialProfile(image: FITSImage, center: (Double, Double), maxRadius: Double, binWidth: Double) -> [RadialBin] {
+        (try? radialProfileCheckingCancellation(image: image, center: center,
+                                                maxRadius: maxRadius, binWidth: binWidth,
+                                                checkCancellation: {})) ?? []
+    }
+
+    /// Cancellable variant used by analysis jobs. Cancellation is checked during
+    /// image traversal and while reducing the occupied radial bins.
+    public static func radialProfileCheckingCancellation(
+        image: FITSImage, center: (Double, Double), maxRadius: Double, binWidth: Double,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [RadialBin] {
         precondition(binWidth > 0, "binWidth must be > 0")
-        let nBins = Int((maxRadius / binWidth).rounded(.up))
-        var buckets = [[Double]](repeating: [], count: nBins)
+        guard maxRadius.isFinite, maxRadius > 0,
+              center.0.isFinite, center.1.isFinite else { return [] }
+        // Store only occupied bins. A dragged radius may be much larger than
+        // the image, so allocating maxRadius/binWidth empty buckets is unsafe.
+        var buckets: [Int: [Double]] = [:]
         let cx = center.0, cy = center.1
         for y in 0..<image.height {
+            try checkCancellation()
             for x in 0..<image.width {
+                if x & 8_191 == 0 { try checkCancellation() }
                 let v = image.physicalValue(x: x, y: y)
                 if v.isNaN { continue }
                 let r = ((Double(x) - cx).squared + (Double(y) - cy).squared).squareRoot()
                 if r >= maxRadius { continue }
-                let bin = Int(r / binWidth)
-                buckets[bin].append(v)
+                let scaled = r / binWidth
+                guard scaled.isFinite, scaled < Double(Int.max) else { continue }
+                buckets[Int(scaled), default: []].append(v)
             }
         }
-        return buckets.enumerated().compactMap { idx, values in
-            guard !values.isEmpty else { return nil }
+        var result: [RadialBin] = []
+        for idx in buckets.keys.sorted() {
+            try checkCancellation()
+            guard let values = buckets[idx], !values.isEmpty else { continue }
             let r = (Double(idx) + 0.5) * binWidth
-            let sum = values.reduce(0, +)
+            var sum = 0.0
+            for (index, value) in values.enumerated() {
+                if index & 8_191 == 0 { try checkCancellation() }
+                sum += value
+            }
             let mean = sum / Double(values.count)
-            var sorted = values; sorted.sort()
-            let median: Double
-            if sorted.count % 2 == 1 { median = sorted[sorted.count / 2] }
-            else { median = (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2 }
-            let variance = values.count <= 1 ? 0 : values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count - 1)
-            return RadialBin(radius: r, count: values.count, sum: sum, mean: mean,
-                             median: median, stddev: variance.squareRoot())
+            let median = try medianCheckingCancellation(values, checkCancellation: checkCancellation)
+            var varianceSum = 0.0
+            for (index, value) in values.enumerated() {
+                if index & 8_191 == 0 { try checkCancellation() }
+                varianceSum += (value - mean) * (value - mean)
+            }
+            let variance = values.count <= 1 ? 0 : varianceSum / Double(values.count - 1)
+            result.append(RadialBin(radius: r, count: values.count, sum: sum, mean: mean,
+                                    median: median, stddev: variance.squareRoot()))
         }
+        return result
+    }
+
+    private static func medianCheckingCancellation(
+        _ input: [Double], checkCancellation: () throws -> Void
+    ) throws -> Double {
+        var values = input
+        func select(_ rank: Int) throws -> Double {
+            var left = 0, right = values.count - 1
+            while left <= right {
+                try checkCancellation()
+                let middle = left + (right - left) / 2
+                let pivot = [values[left], values[middle], values[right]].sorted()[1]
+                var lower = left, cursor = left, upper = right
+                var visited = 0
+                while cursor <= upper {
+                    if visited & 8_191 == 0 { try checkCancellation() }
+                    visited += 1
+                    if values[cursor] < pivot {
+                        values.swapAt(lower, cursor)
+                        lower += 1
+                        cursor += 1
+                    } else if values[cursor] > pivot {
+                        values.swapAt(cursor, upper)
+                        upper -= 1
+                    } else {
+                        cursor += 1
+                    }
+                }
+                if rank < lower { right = lower - 1 }
+                else if rank > upper { left = upper + 1 }
+                else { return values[rank] }
+            }
+            preconditionFailure("median rank was not found")
+        }
+        let upper = try select(values.count / 2)
+        guard values.count.isMultiple(of: 2) else { return upper }
+        let lower = try select(values.count / 2 - 1)
+        return (lower + upper) / 2
     }
 
     /// Aperture growth curve: cumulative flux inside a circle of radius r, swept from
@@ -121,38 +185,72 @@ public enum Profiles {
     /// source flux is collected — the natural aperture-correction radius.
     public static func growthCurve(image: FITSImage, center: (Double, Double),
                                    maxRadius: Double, step: Double) -> [GrowthPoint] {
+        (try? growthCurveCheckingCancellation(image: image, center: center,
+                                              maxRadius: maxRadius, step: step,
+                                              checkCancellation: {})) ?? []
+    }
+
+    /// Cancellable variant used by the growth-curve analysis job.
+    public static func growthCurveCheckingCancellation(
+        image: FITSImage, center: (Double, Double), maxRadius: Double, step: Double,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> [GrowthPoint] {
         precondition(step > 0, "step must be > 0")
+        guard maxRadius.isFinite, maxRadius > 0,
+              center.0.isFinite, center.1.isFinite else { return [] }
         let cx = center.0, cy = center.1
-        // Pre-compute distances for every pixel in a bounding box and bin them.
-        let bound = Int(maxRadius.rounded(.up))
-        let xLo = max(0, Int(cx) - bound), xHi = min(image.width - 1, Int(cx) + bound)
-        let yLo = max(0, Int(cy) - bound), yHi = min(image.height - 1, Int(cy) + bound)
-        var sortedByRadius: [(Double, Double)] = []
-        sortedByRadius.reserveCapacity((xHi - xLo + 1) * (yHi - yLo + 1))
-        for y in yLo...yHi {
-            for x in xLo...xHi {
-                let v = image.physicalValue(x: x, y: y)
-                if v.isNaN { continue }
-                let dx = Double(x) - cx, dy = Double(y) - cy
-                let r = (dx * dx + dy * dy).squareRoot()
-                if r > maxRadius { continue }
-                sortedByRadius.append((r, v))
+        // Each bin represents the first plotted aperture that includes a pixel.
+        // This avoids sorting every pixel by distance and lets cancellation stop
+        // the scan promptly when the controls change.
+        var radii: [Double] = []
+        var radius = step
+        while radius <= maxRadius + 1e-12 {
+            if radii.count & 8_191 == 0 { try checkCancellation() }
+            radii.append(radius)
+            let next = radius + step
+            guard next > radius else { break }
+            radius = next
+        }
+        guard !radii.isEmpty else { return [] }
+        var binFlux = [Double](repeating: 0, count: radii.count)
+        var binCount = [Int](repeating: 0, count: radii.count)
+        let xLo = Int(max(0, min(Double(image.width), (cx - maxRadius).rounded(.down))))
+        let xHi = Int(max(-1, min(Double(image.width - 1), (cx + maxRadius).rounded(.up))))
+        let yLo = Int(max(0, min(Double(image.height), (cy - maxRadius).rounded(.down))))
+        let yHi = Int(max(-1, min(Double(image.height - 1), (cy + maxRadius).rounded(.up))))
+        if xLo <= xHi, yLo <= yHi {
+            for y in yLo...yHi {
+                try checkCancellation()
+                for x in xLo...xHi {
+                    if x & 8_191 == 0 { try checkCancellation() }
+                    let v = image.physicalValue(x: x, y: y)
+                    if v.isNaN { continue }
+                    let dx = Double(x) - cx, dy = Double(y) - cy
+                    let distance = (dx * dx + dy * dy).squareRoot()
+                    if distance > maxRadius { continue }
+                    var low = 0, high = radii.count
+                    while low < high {
+                        let middle = low + (high - low) / 2
+                        if radii[middle] < distance { low = middle + 1 }
+                        else { high = middle }
+                    }
+                    if low < radii.count {
+                        binFlux[low] += v
+                        binCount[low] += 1
+                    }
+                }
             }
         }
-        sortedByRadius.sort { $0.0 < $1.0 }
         var out: [GrowthPoint] = []
         var cumulative = 0.0
         var cumulativeCount = 0
-        var pixelIdx = 0
-        var r = step
-        while r <= maxRadius + 1e-12 {
-            while pixelIdx < sortedByRadius.count && sortedByRadius[pixelIdx].0 <= r {
-                cumulative += sortedByRadius[pixelIdx].1
-                cumulativeCount += 1
-                pixelIdx += 1
-            }
-            out.append(GrowthPoint(radius: r, cumulativeFlux: cumulative, cumulativeCount: cumulativeCount))
-            r += step
+        out.reserveCapacity(radii.count)
+        for index in radii.indices {
+            if index & 8_191 == 0 { try checkCancellation() }
+            cumulative += binFlux[index]
+            cumulativeCount += binCount[index]
+            out.append(GrowthPoint(radius: radii[index], cumulativeFlux: cumulative,
+                                   cumulativeCount: cumulativeCount))
         }
         return out
     }

@@ -843,15 +843,23 @@ extension DocumentView {
     private func handleRadialProfile(center: SIMD2<Double>, radius: Double) {
         guard let image = currentImage() else { return }
         let maxR = radius > 0 ? radius : Double(min(image.width, image.height)) / 2
-        profileGeometry = .radial(center: center, maxRadius: maxR)
         RadialProfileWindowController.show(
             image: image,
             center: center,
             initialRadius: maxR,
             imageName: document.url.lastPathComponent,
             attachedTo: NSApp.keyWindow,
-            onRadiusChange: { newR in profileGeometry = .radial(center: center, maxRadius: newR) }
+            onRadiusChange: { newR in
+                _ = session.perform(.setProfileRadius(newR), origin: .user)
+            },
+            onClose: {
+                if case .radial(let markerCenter, _) = session.profileMarker,
+                   markerCenter == center {
+                    session.profileMarker = nil
+                }
+            }
         )
+        profileGeometry = .radial(center: center, maxRadius: maxR)
     }
 
     private func handleMeasure(from: SIMD2<Double>, to: SIMD2<Double>) {
@@ -866,15 +874,23 @@ extension DocumentView {
     private func handleGrowthCurve(center: SIMD2<Double>, radius: Double) {
         guard let image = currentImage() else { return }
         let maxR = radius > 0 ? radius : min(Double(image.width), Double(image.height)) / 2
-        profileGeometry = .growth(center: center, maxRadius: maxR)
         GrowthCurveWindowController.show(
             image: image,
             center: center,
             initialRadius: maxR,
             imageName: document.url.lastPathComponent,
             attachedTo: NSApp.keyWindow,
-            onRadiusChange: { newR in profileGeometry = .growth(center: center, maxRadius: newR) }
+            onRadiusChange: { newR in
+                _ = session.perform(.setProfileRadius(newR), origin: .user)
+            },
+            onClose: {
+                if case .growth(let markerCenter, _) = session.profileMarker,
+                   markerCenter == center {
+                    session.profileMarker = nil
+                }
+            }
         )
+        profileGeometry = .growth(center: center, maxRadius: maxR)
     }
 
     private func handleCubeSpectrum(at p: SIMD2<Double>) {

@@ -89,6 +89,38 @@ final class ProfilesTests: XCTestCase {
         for b in bins { XCTAssertEqual(b.mean, 1, accuracy: 1e-6) }
     }
 
+    func testRadialProfileStoresOnlyOccupiedBinsForLargeRadius() {
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 4), width: 2, height: 2)
+        let bins = Profiles.radialProfile(image: img, center: (0, 0),
+                                          maxRadius: 1_000_000, binWidth: 0.4)
+        XCTAssertEqual(bins.count, 3)
+        XCTAssertEqual(bins.map(\.count), [1, 2, 1])
+    }
+
+    func testRadialProfileMedianMatchesSortedReferenceWithRepeatedValues() {
+        let pixels = (0..<400).map { Float(($0 * 37) % 29 - 14) }
+        let img = FITSImage.fromFloat32(pixels: pixels, width: 20, height: 20)
+        let bins = Profiles.radialProfile(image: img, center: (10, 10),
+                                          maxRadius: 100, binWidth: 100)
+        XCTAssertEqual(bins.count, 1)
+        let sorted = pixels.map(Double.init).sorted()
+        XCTAssertEqual(bins[0].median, (sorted[199] + sorted[200]) / 2)
+    }
+
+    func testProfileTraversalChecksCancellation() {
+        enum Stop: Error { case requested }
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 10_000), width: 100, height: 100)
+        var checks = 0
+        XCTAssertThrowsError(try Profiles.radialProfileCheckingCancellation(
+            image: img, center: (50, 50), maxRadius: 30, binWidth: 1,
+            checkCancellation: {
+                checks += 1
+                if checks == 4 { throw Stop.requested }
+            }
+        )) { XCTAssertTrue($0 is Stop) }
+        XCTAssertEqual(checks, 4)
+    }
+
     // MARK: - Growth curve
 
     func testGrowthCurveIsMonotonicallyIncreasing() {
@@ -115,6 +147,33 @@ final class ProfilesTests: XCTestCase {
         let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 121), width: 11, height: 11)
         let curve = Profiles.growthCurve(image: img, center: (5, 5), maxRadius: 4, step: 1)
         XCTAssertEqual(curve.last!.radius, 4, accuracy: 1e-9)
+    }
+
+    func testGrowthCurveOutsideImageReturnsZeroFlux() {
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 9), width: 3, height: 3)
+        let curve = Profiles.growthCurve(image: img, center: (100, 100), maxRadius: 4, step: 1)
+        XCTAssertEqual(curve.map(\.cumulativeFlux), [0, 0, 0, 0])
+    }
+
+    func testGrowthCurveIncludesBoundaryPixelsAndSkipsNaN() {
+        let img = FITSImage.fromFloat32(pixels: [1, 1, 1, 1, .nan, 1, 1, 1, 1], width: 3, height: 3)
+        let curve = Profiles.growthCurve(image: img, center: (1, 1), maxRadius: 2, step: 1)
+        XCTAssertEqual(curve.map(\.cumulativeCount), [4, 8])
+        XCTAssertEqual(curve.map(\.cumulativeFlux), [4, 8])
+    }
+
+    func testGrowthCurveScanChecksCancellation() {
+        enum Stop: Error { case requested }
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 10_000), width: 100, height: 100)
+        var checks = 0
+        XCTAssertThrowsError(try Profiles.growthCurveCheckingCancellation(
+            image: img, center: (50, 50), maxRadius: 40, step: 1,
+            checkCancellation: {
+                checks += 1
+                if checks == 6 { throw Stop.requested }
+            }
+        )) { XCTAssertTrue($0 is Stop) }
+        XCTAssertEqual(checks, 6)
     }
 
     // MARK: - Cube spectrum

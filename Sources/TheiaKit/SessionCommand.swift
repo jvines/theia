@@ -53,6 +53,7 @@ public enum SessionCommand: Sendable, Equatable {
     case setInspectorVisible(Bool)
     case showInspectorTab(InspectorTab)
     case setContourSpec(ContourSpec)
+    case setProfileRadius(Double)
     case addRegion(Region)
     case updateRegion(Int, Region)
     case updateRegionDuringEdit(UUID, Int, Region)
@@ -114,6 +115,8 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case noRegions
     case supersededRegionLoad
     case staleRequest
+    case unavailableProfileMarker
+    case invalidProfileRadius
 
     public var message: String {
         switch self {
@@ -141,6 +144,8 @@ public enum CommandFailure: Error, Sendable, Equatable {
         case .noRegions: "There are no regions to save"
         case .supersededRegionLoad: "A newer region load or edit has replaced this load"
         case .staleRequest: "Source image changed before the request was answered"
+        case .unavailableProfileMarker: "No radial or growth profile marker is active"
+        case .invalidProfileRadius: "Profile radius must be finite and positive"
         }
     }
 }
@@ -251,6 +256,18 @@ extension DocumentSession {
                 inspectorTab = tab
                 inspectorVisible = true
             case .setContourSpec(let spec): setContourSpec(spec)
+            case .setProfileRadius(let radius):
+                guard radius.isFinite, radius > 0 else {
+                    return CommandOutcome(failure: .invalidProfileRadius)
+                }
+                switch profileMarker {
+                case .radial(let center, _):
+                    profileMarker = .radial(center: center, maxRadius: radius)
+                case .growth(let center, _):
+                    profileMarker = .growth(center: center, maxRadius: radius)
+                default:
+                    return CommandOutcome(failure: .unavailableProfileMarker)
+                }
             case .addRegion(let region):
                 regionList.add(region)
             case .updateRegion(let index, let region):

@@ -1300,6 +1300,23 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testProfileRadiusCommandMovesCurrentMarkerAndRejectsInvalidRadius() async throws {
+        try await MainActor.run {
+            let session = try makeSession()
+            XCTAssertEqual(session.perform(.setProfileRadius(3), origin: .user).failure,
+                           .unavailableProfileMarker)
+            session.profileMarker = .radial(center: SIMD2(2, 3), maxRadius: 4)
+            XCTAssertNil(session.perform(.setProfileRadius(5), origin: .user).failure)
+            XCTAssertEqual(session.profileMarker, .radial(center: SIMD2(2, 3), maxRadius: 5))
+            XCTAssertEqual(session.perform(.setProfileRadius(.nan), origin: .user).failure,
+                           .invalidProfileRadius)
+            XCTAssertEqual(session.profileMarker, .radial(center: SIMD2(2, 3), maxRadius: 5))
+            session.profileMarker = .growth(center: SIMD2(1, 1), maxRadius: 2)
+            XCTAssertNil(session.perform(.setProfileRadius(6), origin: .user).failure)
+            XCTAssertEqual(session.profileMarker, .growth(center: SIMD2(1, 1), maxRadius: 6))
+        }
+    }
+
     func testInspectorSelectionAndCatalogStatusStayWithDocument() async throws {
         try await MainActor.run {
             let session = try makeSession()

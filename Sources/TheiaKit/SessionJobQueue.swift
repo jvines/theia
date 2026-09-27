@@ -6,13 +6,15 @@ public enum SessionJobKind: Hashable, Sendable {
     case contours
     case photometry
     case statistics
+    case radialProfile
+    case growthCurve
     case sourceDetection
     case catalog
     case export
 
     var latestWins: Bool {
         switch self {
-        case .displayImage, .contours, .photometry, .statistics: true
+        case .displayImage, .contours, .photometry, .statistics, .radialProfile, .growthCurve: true
         case .sourceDetection, .catalog, .export: false
         }
     }
