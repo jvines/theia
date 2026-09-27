@@ -12,22 +12,16 @@ struct ScaleParametersPanel: View {
     let physicalValuesProvider: () -> [Double]
     let onApplyPreset: (ScalePreset) -> Void
 
-    @State private var vminText: String = ""
-    @State private var vmaxText: String = ""
-    @State private var lowerPctText: String = "1"
-    @State private var upperPctText: String = "99"
-    @State private var dataMin: Double = .nan
-    @State private var dataMax: Double = .nan
-    @State private var cachedValues: [Double] = []
+    @State private var model = ScaleParametersModel(values: [], vmin: 0, vmax: 1)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Scale Parameters")
                 .font(.headline)
 
-            if !cachedValues.isEmpty {
+            if model.valueCount > 0 {
                 section(title: "Histogram") {
-                    HistogramView(physicalValues: cachedValues, viewport: viewport)
+                    HistogramView(model: model, viewport: viewport)
                 }
             }
 
@@ -35,22 +29,22 @@ struct ScaleParametersPanel: View {
                 Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
                     GridRow {
                         Text("vmin").frame(width: 50, alignment: .trailing)
-                        TextField("", text: $vminText, onCommit: commitVmin)
+                        TextField("", text: $model.vminText, onCommit: commitVmin)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 140)
-                        Stepper("", value: vminBinding, step: stepSize)
+                        Stepper("", value: vminBinding, step: model.stepSize)
                             .labelsHidden()
                     }
                     GridRow {
                         Text("vmax").frame(width: 50, alignment: .trailing)
-                        TextField("", text: $vmaxText, onCommit: commitVmax)
+                        TextField("", text: $model.vmaxText, onCommit: commitVmax)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 140)
-                        Stepper("", value: vmaxBinding, step: stepSize)
+                        Stepper("", value: vmaxBinding, step: model.stepSize)
                             .labelsHidden()
                     }
                 }
-                Text(dataRangeLabel)
+                Text(model.dataRangeLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -60,18 +54,18 @@ struct ScaleParametersPanel: View {
                     GridRow {
                         Text("Percentile")
                             .frame(width: 70, alignment: .trailing)
-                        TextField("lo", text: $lowerPctText)
+                        TextField("lo", text: $model.lowerPctText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 60)
                         Text("–")
-                        TextField("hi", text: $upperPctText)
+                        TextField("hi", text: $model.upperPctText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 60)
                         Button("Apply") { applyPercentile() }
                     }
                 }
                 HStack(spacing: 6) {
-                    ForEach(ScalePreset.toolbarPresets, id: \.self) { preset in
+                    ForEach(ScaleParametersModel.presets, id: \.self) { preset in
                         presetButton(preset)
                     }
                 }
@@ -80,7 +74,7 @@ struct ScaleParametersPanel: View {
             if viewport.stretch.usesParameter {
                 section(title: "Power exponent") {
                     HStack(spacing: 8) {
-                        Slider(value: powerExponentBinding, in: 0.1...8.0)
+                        Slider(value: powerExponentBinding, in: ScaleParametersModel.powerExponentRange)
                             .frame(width: 200)
                         Text(String(format: "%.2f", viewport.stretchParameter))
                             .font(.system(.body, design: .monospaced))
@@ -94,9 +88,10 @@ struct ScaleParametersPanel: View {
         }
         .padding(16)
         .frame(minWidth: 380)
-        .onAppear { refreshFromViewport(); refreshDataRange() }
+        .onAppear { refreshDataRange() }
         .onChange(of: viewport.vmin) { _, _ in refreshFromViewport() }
         .onChange(of: viewport.vmax) { _, _ in refreshFromViewport() }
+        .onChange(of: viewport.imageRevision) { _, _ in refreshDataRange() }
     }
 
     // MARK: - Helpers
@@ -111,17 +106,6 @@ struct ScaleParametersPanel: View {
     private func presetButton(_ preset: ScalePreset) -> some View {
         Button(preset.label) { onApplyPreset(preset) }
             .buttonStyle(.bordered)
-    }
-
-    private var dataRangeLabel: String {
-        guard dataMin.isFinite, dataMax.isFinite else { return "Data range: —" }
-        return String(format: "Data range: %.6g … %.6g", dataMin, dataMax)
-    }
-
-    private var stepSize: Double {
-        guard dataMin.isFinite, dataMax.isFinite else { return 1 }
-        let span = max(abs(dataMax - dataMin), 1e-9)
-        return span / 200.0
     }
 
     private var vminBinding: Binding<Double> {
@@ -141,48 +125,34 @@ struct ScaleParametersPanel: View {
     private var powerExponentBinding: Binding<Double> {
         Binding(
             get: { Double(viewport.stretchParameter) },
-            set: { viewport.stretchParameter = Float($0) }
+            set: { viewport.stretchParameter = Float(model.clampedPowerExponent($0)) }
         )
     }
 
     private func refreshFromViewport() {
-        vminText = formatLevel(Double(viewport.vmin))
-        vmaxText = formatLevel(Double(viewport.vmax))
+        model.refreshLevels(vmin: Double(viewport.vmin), vmax: Double(viewport.vmax))
     }
 
     private func refreshDataRange() {
-        let values = physicalValuesProvider()
-        cachedValues = values
-        if let r = PixelStatistics.minMax(values) {
-            dataMin = r.min
-            dataMax = r.max
-        } else {
-            dataMin = .nan
-            dataMax = .nan
-        }
+        model = ScaleParametersModel(
+            values: physicalValuesProvider(),
+            vmin: Double(viewport.vmin), vmax: Double(viewport.vmax),
+            lowerPctText: model.lowerPctText, upperPctText: model.upperPctText
+        )
     }
 
     private func commitVmin() {
-        if let v = Double(vminText) { viewport.vmin = Float(v) }
+        if let value = model.parsedVmin { viewport.vmin = Float(value) }
         refreshFromViewport()
     }
 
     private func commitVmax() {
-        if let v = Double(vmaxText) { viewport.vmax = Float(v) }
+        if let value = model.parsedVmax { viewport.vmax = Float(value) }
         refreshFromViewport()
     }
 
     private func applyPercentile() {
-        guard let lo = Double(lowerPctText), let hi = Double(upperPctText) else { return }
-        onApplyPreset(.percentile(lower: lo, upper: hi))
-    }
-
-    private func formatLevel(_ v: Double) -> String {
-        if !v.isFinite { return "—" }
-        let abs = Swift.abs(v)
-        if abs == 0 { return "0" }
-        if abs >= 1000 || abs < 0.01 { return String(format: "%.4g", v) }
-        return String(format: "%.4f", v)
+        if let preset = model.percentilePreset { onApplyPreset(preset) }
     }
 }
 

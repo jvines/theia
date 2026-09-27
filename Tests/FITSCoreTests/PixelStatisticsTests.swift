@@ -22,6 +22,14 @@ final class PixelStatisticsTests: XCTestCase {
         XCTAssertEqual(h.counts, [1, 1])
     }
 
+    func testHistogramClampsRoundedMaximumToLastBin() {
+        let high = Double.leastNonzeroMagnitude * 257
+        let histogram = PixelStatistics.histogram([0, high], bins: 256, range: 0...high)
+        XCTAssertEqual(histogram.counts[0], 1)
+        XCTAssertEqual(histogram.counts[255], 1)
+        XCTAssertEqual(histogram.counts.reduce(0, +), 2)
+    }
+
     func testHistogramSkipsNaN() {
         let values: [Double] = [1, .nan, 2]
         let h = PixelStatistics.histogram(values, bins: 3, range: 0...3)

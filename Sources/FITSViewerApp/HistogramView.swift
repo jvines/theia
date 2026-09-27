@@ -3,18 +3,14 @@ import FITSCore
 import FITSRender
 import TheiaKit
 
-/// Histogram of physical pixel values with two draggable vertical handles wired to
-/// `viewport.vmin` and `viewport.vmax`. Computed lazily from the supplied values.
+/// Histogram with two draggable vertical handles wired to the displayed levels.
 struct HistogramView: View {
-    let physicalValues: [Double]
+    let model: ScaleParametersModel
     let viewport: ImageViewState
 
-    private static let bins = 256
     private static let handleWidth: CGFloat = 8
-
-    @State private var dataMin: Double = .nan
-    @State private var dataMax: Double = .nan
-    @State private var histogram: Histogram?
+    @State private var dragStartVmin: Double?
+    @State private var dragStartVmax: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -24,16 +20,19 @@ struct HistogramView: View {
                 ZStack(alignment: .bottomLeading) {
                     Rectangle()
                         .fill(Color.black.opacity(0.85))
-                    if let histogram, let maxCount = histogram.counts.max(), maxCount > 0,
-                       dataMax > dataMin {
-                        bars(geo: geo, histogram: histogram, maxCount: maxCount)
+                    if model.histogram != nil, model.dataMax > model.dataMin {
+                        bars(geo: geo)
                         shadedRegion(width: w, height: h)
                         handle(x: xForValue(Double(viewport.vmin), width: w),
-                               height: h, label: "vmin") { dx in moveVmin(dx, width: w) }
+                               height: h, label: "vmin",
+                               onDrag: { dx in moveVmin(dx, width: w) },
+                               onEnd: { dragStartVmin = nil })
                         handle(x: xForValue(Double(viewport.vmax), width: w),
-                               height: h, label: "vmax") { dx in moveVmax(dx, width: w) }
+                               height: h, label: "vmax",
+                               onDrag: { dx in moveVmax(dx, width: w) },
+                               onEnd: { dragStartVmax = nil })
                     } else {
-                        Text("Computing…")
+                        Text(model.histogramPlaceholder)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(6)
@@ -43,30 +42,26 @@ struct HistogramView: View {
             .frame(height: 120)
             .cornerRadius(4)
             HStack {
-                Text(format(Double(viewport.vmin)))
+                Text(ScaleParametersModel.formatHistogramValue(Double(viewport.vmin)))
                 Spacer()
-                Text(rangeLabel)
+                Text(model.histogramRangeLabel)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(format(Double(viewport.vmax)))
+                Text(ScaleParametersModel.formatHistogramValue(Double(viewport.vmax)))
             }
             .font(.system(.caption, design: .monospaced))
         }
-        .onAppear(perform: rebuild)
     }
 
     @ViewBuilder
-    private func bars(geo: GeometryProxy, histogram: Histogram, maxCount: Int) -> some View {
+    private func bars(geo: GeometryProxy) -> some View {
         let w = geo.size.width
         let h = geo.size.height
-        let scale = Double(maxCount)
-        let barW = w / CGFloat(histogram.counts.count)
-        // Log-scaled height: faint bins still visible.
+        let barW = w / CGFloat(model.barHeights.count)
         Canvas { context, _ in
-            for (i, c) in histogram.counts.enumerated() {
-                guard c > 0 else { continue }
-                let nh = log10(Double(c) + 1) / log10(scale + 1)
-                let barH = CGFloat(nh) * h
+            for (i, height) in model.barHeights.enumerated() {
+                guard height > 0 else { continue }
+                let barH = CGFloat(height) * h
                 let rect = CGRect(
                     x: CGFloat(i) * barW,
                     y: h - barH,
@@ -87,7 +82,9 @@ struct HistogramView: View {
         .fill(Color.accentColor.opacity(0.18))
     }
 
-    private func handle(x: CGFloat, height h: CGFloat, label: String, onDrag: @escaping (CGFloat) -> Void) -> some View {
+    private func handle(x: CGFloat, height h: CGFloat, label: String,
+                        onDrag: @escaping (CGFloat) -> Void,
+                        onEnd: @escaping () -> Void) -> some View {
         Rectangle()
             .fill(Color.accentColor)
             .frame(width: Self.handleWidth, height: h)
@@ -95,54 +92,30 @@ struct HistogramView: View {
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in onDrag(value.translation.width) }
+                    .onEnded { _ in onEnd() }
             )
             .help(label)
     }
 
-    private func rebuild() {
-        guard let r = PixelStatistics.minMax(physicalValues) else {
-            dataMin = .nan; dataMax = .nan; histogram = nil; return
-        }
-        dataMin = r.min; dataMax = r.max
-        if r.min < r.max {
-            histogram = PixelStatistics.histogram(physicalValues, bins: Self.bins, range: r.min...r.max)
-        } else {
-            histogram = nil
-        }
-    }
-
     private func xForValue(_ v: Double, width w: CGFloat) -> CGFloat {
-        guard dataMax > dataMin else { return 0 }
-        let t = (v - dataMin) / (dataMax - dataMin)
-        return CGFloat(max(0, min(1, t))) * w
-    }
-
-    private func valueForX(_ x: CGFloat, width w: CGFloat) -> Double {
-        guard w > 0, dataMax > dataMin else { return dataMin }
-        let t = Double(max(0, min(w, x)) / w)
-        return dataMin + t * (dataMax - dataMin)
+        CGFloat(model.xForValue(v, width: Double(w)))
     }
 
     private func moveVmin(_ dx: CGFloat, width w: CGFloat) {
-        let curX = xForValue(Double(viewport.vmin), width: w)
-        let newV = valueForX(curX + dx, width: w)
-        viewport.vmin = Float(min(newV, Double(viewport.vmax) - 1e-9))
+        let start = dragStartVmin ?? Double(viewport.vmin)
+        dragStartVmin = start
+        viewport.vmin = Float(model.movedVmin(
+            current: start, vmax: Double(viewport.vmax),
+            deltaX: Double(dx), width: Double(w)
+        ))
     }
 
     private func moveVmax(_ dx: CGFloat, width w: CGFloat) {
-        let curX = xForValue(Double(viewport.vmax), width: w)
-        let newV = valueForX(curX + dx, width: w)
-        viewport.vmax = Float(max(newV, Double(viewport.vmin) + 1e-9))
-    }
-
-    private var rangeLabel: String {
-        guard dataMin.isFinite, dataMax.isFinite else { return "" }
-        return "data \(format(dataMin)) … \(format(dataMax))"
-    }
-
-    private func format(_ v: Double) -> String {
-        if !v.isFinite { return "—" }
-        if abs(v) >= 1e4 || (v != 0 && abs(v) < 0.01) { return String(format: "%.3e", v) }
-        return String(format: "%.4g", v)
+        let start = dragStartVmax ?? Double(viewport.vmax)
+        dragStartVmax = start
+        viewport.vmax = Float(model.movedVmax(
+            current: start, vmin: Double(viewport.vmin),
+            deltaX: Double(dx), width: Double(w)
+        ))
     }
 }

@@ -230,10 +230,13 @@ public enum PixelStatistics {
         let hi = range.upperBound
         let width = (hi - lo) / Double(bins)
         var counts = [Int](repeating: 0, count: bins)
-        for v in values where !v.isNaN {
+        guard width.isFinite, width > 0 else {
+            return Histogram(counts: counts, edges: [Double](repeating: lo, count: bins + 1))
+        }
+        for v in values where v.isFinite {
             if v < lo || v > hi { continue }
             var idx = Int((v - lo) / width)
-            if idx == bins { idx = bins - 1 }  // hi falls into last bin
+            if idx >= bins { idx = bins - 1 }  // rounded hi falls into the last bin
             counts[idx] += 1
         }
         var edges = [Double](repeating: 0, count: bins + 1)
