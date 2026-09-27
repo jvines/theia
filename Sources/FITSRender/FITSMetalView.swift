@@ -20,11 +20,6 @@ public struct FITSMetalView: NSViewRepresentable {
     public let onRegionPreview: ((Region?) -> Void)?
     public let regions: [Region]
     public let wcs: WCS?
-    public let onRegionEdited: ((UUID, Int, Region) -> Bool)?
-    public let onRegionEditBegan: ((Int) -> UUID?)?
-    public let onRegionEditCommitted: ((UUID) -> Void)?
-    public let onRegionEditCancelled: ((UUID) -> Void)?
-    public let onRegionSelected: ((Int?) -> Void)?
     public let onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public let onRadialProfile: ((SIMD2<Double>, Double) -> Void)?
     public let onGrowthCurve: ((SIMD2<Double>, Double) -> Void)?
@@ -45,11 +40,6 @@ public struct FITSMetalView: NSViewRepresentable {
         onCursorChange: ((CursorInfo?) -> Void)? = nil,
         onRegionCreated: ((Region) -> Void)? = nil,
         onRegionPreview: ((Region?) -> Void)? = nil,
-        onRegionEdited: ((UUID, Int, Region) -> Bool)? = nil,
-        onRegionEditBegan: ((Int) -> UUID?)? = nil,
-        onRegionEditCommitted: ((UUID) -> Void)? = nil,
-        onRegionEditCancelled: ((UUID) -> Void)? = nil,
-        onRegionSelected: ((Int?) -> Void)? = nil,
         onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)? = nil,
         onRadialProfile: ((SIMD2<Double>, Double) -> Void)? = nil,
         onGrowthCurve: ((SIMD2<Double>, Double) -> Void)? = nil,
@@ -76,11 +66,6 @@ public struct FITSMetalView: NSViewRepresentable {
         self.onCursorChange = onCursorChange
         self.onRegionCreated = onRegionCreated
         self.onRegionPreview = onRegionPreview
-        self.onRegionEdited = onRegionEdited
-        self.onRegionEditBegan = onRegionEditBegan
-        self.onRegionEditCommitted = onRegionEditCommitted
-        self.onRegionEditCancelled = onRegionEditCancelled
-        self.onRegionSelected = onRegionSelected
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -101,11 +86,6 @@ public struct FITSMetalView: NSViewRepresentable {
                 view.onCursorChange = onCursorChange
                 view.onRegionCreated = onRegionCreated
                 view.onRegionPreview = onRegionPreview
-                view.onRegionEdited = onRegionEdited
-                view.onRegionEditBegan = onRegionEditBegan
-                view.onRegionEditCommitted = onRegionEditCommitted
-                view.onRegionEditCancelled = onRegionEditCancelled
-                view.onRegionSelected = onRegionSelected
                 view.onLineProfile = onLineProfile
                 view.onRadialProfile = onRadialProfile
                 view.onGrowthCurve = onGrowthCurve
@@ -137,11 +117,6 @@ public struct FITSMetalView: NSViewRepresentable {
         view.onCursorChange = onCursorChange
         view.onRegionCreated = onRegionCreated
         view.onRegionPreview = onRegionPreview
-        view.onRegionEdited = onRegionEdited
-        view.onRegionEditBegan = onRegionEditBegan
-        view.onRegionEditCommitted = onRegionEditCommitted
-        view.onRegionEditCancelled = onRegionEditCancelled
-        view.onRegionSelected = onRegionSelected
         view.onLineProfile = onLineProfile
         view.onRadialProfile = onRadialProfile
         view.onGrowthCurve = onGrowthCurve
@@ -241,11 +216,6 @@ public final class InteractiveMTKView: MTKView {
     public var onCursorChange: ((CursorInfo?) -> Void)?
     public var onRegionCreated: ((Region) -> Void)?
     public var onRegionPreview: ((Region?) -> Void)?
-    public var onRegionEdited: ((UUID, Int, Region) -> Bool)?
-    public var onRegionEditBegan: ((Int) -> UUID?)?
-    public var onRegionEditCommitted: ((UUID) -> Void)?
-    public var onRegionEditCancelled: ((UUID) -> Void)?
-    public var onRegionSelected: ((Int?) -> Void)?
     public var onLineProfile: ((SIMD2<Double>, SIMD2<Double>) -> Void)?
     public var onRadialProfile: ((SIMD2<Double>, Double) -> Void)?
     public var onGrowthCurve: ((SIMD2<Double>, Double) -> Void)?
@@ -257,26 +227,7 @@ public final class InteractiveMTKView: MTKView {
     public var regions: [Region] = []
     public var wcs: WCS?
     public var drawMode: DrawMode = .pan {
-        didSet {
-            interaction?.drawMode = drawMode
-            if drawMode != oldValue, let edit = activeEdit {
-                onRegionEditCancelled?(edit.id)
-                activeEdit = nil
-                ignoreDragUntilMouseUp = true
-            }
-        }
-    }
-
-    /// In-flight pan-mode edit (set on mouseDown if click lands on a region handle).
-    private var activeEdit: ActiveEdit?
-    private var ignoreDragUntilMouseUp = false
-
-    private struct ActiveEdit {
-        let id: UUID
-        let regionIndex: Int
-        let handle: RegionEditHandle
-        let baseRegion: Region
-        let dragStartImage: SIMD2<Double>
+        didSet { interaction?.drawMode = drawMode }
     }
 
     public override var acceptsFirstResponder: Bool { true }
@@ -285,10 +236,7 @@ public final class InteractiveMTKView: MTKView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil, let edit = activeEdit {
-            onRegionEditCancelled?(edit.id)
-            activeEdit = nil
-        }
+        if window == nil { interaction?.cancelActiveRegionEdit() }
         // Without this, mouseMoved events don't reach the view in some hosting setups.
         window?.acceptsMouseMovedEvents = true
         window?.makeFirstResponder(self)
@@ -363,7 +311,6 @@ public final class InteractiveMTKView: MTKView {
     }
 
     public override func mouseDown(with event: NSEvent) {
-        ignoreDragUntilMouseUp = false
         guard let r = fitsRenderer, r.image != nil else { return }
         if drawMode.isDrag {
             dragStartImage = imagePoint(at: event.locationInWindow, renderer: r)
@@ -379,31 +326,7 @@ public final class InteractiveMTKView: MTKView {
             onCubeSpectrumAt?(p)
             return
         }
-        // Pan mode: try to grab a region handle first so the user can resize/move
-        // existing regions without leaving Pan.
-        if drawMode == .pan, let click = imagePoint(at: event.locationInWindow, renderer: r) {
-            let tol = 4.0 / max(r.transform.scale, 1e-6)
-            if let hit = RegionHitTest.hit(in: regions, atImagePoint: click, toleranceImagePixels: tol, wcs: wcs) {
-                let id: UUID
-                if let onRegionEditBegan {
-                    guard let started = onRegionEditBegan(hit.regionIndex) else { return }
-                    id = started
-                } else {
-                    id = UUID()
-                }
-                activeEdit = ActiveEdit(
-                    id: id,
-                    regionIndex: hit.regionIndex,
-                    handle: hit.handle,
-                    baseRegion: regions[hit.regionIndex],
-                    dragStartImage: click
-                )
-                onRegionSelected?(hit.regionIndex)
-            } else {
-                onRegionSelected?(nil)
-                interaction?.pointer(pointerEvent(.down, .primary, event))
-            }
-        }
+        if drawMode == .pan { interaction?.pointer(pointerEvent(.down, .primary, event)) }
     }
 
     /// Polygon UX:
@@ -440,13 +363,7 @@ public final class InteractiveMTKView: MTKView {
             onRegionPreview?(nil)
             return
         }
-        if event.keyCode == 53 {  // escape clears an in-progress edit or polygon
-            if let edit = activeEdit {
-                onRegionEditCancelled?(edit.id)
-                activeEdit = nil
-                ignoreDragUntilMouseUp = true
-                return
-            }
+        if event.keyCode == 53 {  // escape clears an in-progress polygon first
             if !polygonVertices.isEmpty {
                 polygonVertices.removeAll()
                 onRegionPreview?(nil)
@@ -505,15 +422,8 @@ public final class InteractiveMTKView: MTKView {
         defer {
             interaction?.pointer(pointerEvent(.up, .primary, event))
             dragStartImage = nil
-            activeEdit = nil
-            ignoreDragUntilMouseUp = false
             if drawMode != .drawPolygon { onRegionPreview?(nil) }
             onProfileDragPreview(nil)
-        }
-        if ignoreDragUntilMouseUp { return }
-        if let edit = activeEdit {
-            onRegionEditCommitted?(edit.id)
-            return
         }
         guard drawMode.isDrag,
               let r = fitsRenderer,
@@ -546,26 +456,7 @@ public final class InteractiveMTKView: MTKView {
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        if ignoreDragUntilMouseUp { return }
         guard let r = fitsRenderer else { return }
-        if let edit = activeEdit,
-           let current = imagePoint(at: event.locationInWindow, renderer: r) {
-            let updated = RegionEdit.apply(
-                to: edit.baseRegion,
-                handle: edit.handle,
-                dragStartImage: edit.dragStartImage,
-                currentImage: current,
-                wcs: wcs
-            )
-            if onRegionEdited?(edit.id, edit.regionIndex, updated) == false {
-                onRegionEditCancelled?(edit.id)
-                activeEdit = nil
-                ignoreDragUntilMouseUp = true
-                return
-            }
-            setNeedsDisplay(bounds)
-            return
-        }
         switch drawMode {
         case .pan, .drawPolygon:
             if interaction?.pointer(pointerEvent(.dragged, .primary, event)) == true {

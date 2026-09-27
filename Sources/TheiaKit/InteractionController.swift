@@ -1,4 +1,5 @@
 import Foundation
+import FITSCore
 
 /// Native adapters provide view points with a top-left origin and Y increasing down.
 public struct ScrollEvent: Sendable, Equatable {
@@ -78,10 +79,21 @@ public struct KeyEvent: Sendable, Equatable {
     public let view: ImageViewState
     private weak var session: DocumentSession?
     public var mode: Mode {
-        didSet { if mode != oldValue { activePan = nil; levelsDrag = nil } }
+        didSet {
+            if mode != oldValue {
+                cancelActiveRegionEdit()
+                activePan = nil
+                levelsDrag = nil
+            }
+        }
     }
     public var drawMode: DrawMode = .pan {
-        didSet { if drawMode != oldValue, activePan?.button == .primary { activePan = nil } }
+        didSet {
+            if drawMode != oldValue {
+                cancelActiveRegionEdit()
+                if activePan?.button == .primary { activePan = nil }
+            }
+        }
     }
 
     private struct Pan {
@@ -95,8 +107,18 @@ public struct KeyEvent: Sendable, Equatable {
         let vmax: Float
     }
 
+    private struct RegionDrag {
+        let id: UUID
+        let index: Int
+        let handle: RegionEditHandle
+        let baseRegion: Region
+        let startImage: SIMD2<Double>
+    }
+
     private var activePan: Pan?
     private var levelsDrag: LevelsDrag?
+    private var regionDrag: RegionDrag?
+    private var ignorePrimaryUntilUp = false
 
     public init(view: ImageViewState, mode: Mode, session: DocumentSession? = nil) {
         self.view = view
@@ -154,6 +176,7 @@ public struct KeyEvent: Sendable, Equatable {
             return session.perform(.deleteRegion(selected), origin: .user).failure == nil
         case .escape:
             guard event.modifiers.isEmpty else { return false }
+            if cancelActiveRegionEdit() { return true }
             if session.selectedRegionIndex != nil { session.selectedRegionIndex = nil; return true }
             if session.profileMarker != nil { session.profileMarker = nil; return true }
             return false
@@ -178,6 +201,25 @@ public struct KeyEvent: Sendable, Equatable {
     @discardableResult public func pointer(_ event: PointerEvent) -> Bool {
         switch event.phase {
         case .down:
+            if event.button == .primary {
+                ignorePrimaryUntilUp = false
+                if mode == .full, drawMode == .pan, let session,
+                   let image = imagePoint(at: event.location) {
+                    let tolerance = 4 / max(view.transform.scale, 1e-6)
+                    if let hit = RegionHitTest.hit(in: session.regions, atImagePoint: image,
+                                                   toleranceImagePixels: tolerance,
+                                                   wcs: session.displayedWCS) {
+                        if session.perform(.beginRegionEdit(hit.regionIndex), origin: .user).failure == nil,
+                           let id = session.regionList.activeEditID {
+                            regionDrag = RegionDrag(id: id, index: hit.regionIndex, handle: hit.handle,
+                                                    baseRegion: session.regions[hit.regionIndex],
+                                                    startImage: image)
+                        }
+                        return false
+                    }
+                    session.selectedRegionIndex = nil
+                }
+            }
             if event.button == .secondary {
                 levelsDrag = LevelsDrag(start: event.location, vmin: view.vmin, vmax: view.vmax)
             } else if event.button == .middle ||
@@ -186,6 +228,22 @@ public struct KeyEvent: Sendable, Equatable {
             }
             return false
         case .dragged:
+            if event.button == .primary {
+                if ignorePrimaryUntilUp { return false }
+                if let drag = regionDrag {
+                    guard let session, let current = imagePoint(at: event.location) else { return false }
+                    let updated = RegionEdit.apply(to: drag.baseRegion, handle: drag.handle,
+                                                   dragStartImage: drag.startImage, currentImage: current,
+                                                   wcs: session.displayedWCS)
+                    if session.perform(.updateRegionDuringEdit(drag.id, drag.index, updated),
+                                       origin: .user).failure != nil {
+                        regionDrag = nil
+                        ignorePrimaryUntilUp = true
+                        return false
+                    }
+                    return true
+                }
+            }
             if var pan = activePan, pan.button == event.button {
                 let delta = event.location - pan.previous
                 pan.previous = event.location
@@ -197,12 +255,36 @@ public struct KeyEvent: Sendable, Equatable {
             }
             return false
         case .up:
+            if event.button == .primary {
+                if let drag = regionDrag {
+                    session?.perform(.commitRegionEdit(drag.id), origin: .user)
+                    regionDrag = nil
+                }
+                ignorePrimaryUntilUp = false
+            }
             if activePan?.button == event.button { activePan = nil }
             if event.button == .secondary { levelsDrag = nil }
             return false
         case .moved, .exited:
             return false
         }
+    }
+
+    @discardableResult public func cancelActiveRegionEdit() -> Bool {
+        guard let drag = regionDrag else { return false }
+        session?.perform(.cancelRegionEdit(drag.id), origin: .user)
+        regionDrag = nil
+        ignorePrimaryUntilUp = true
+        return true
+    }
+
+    private func imagePoint(at location: SIMD2<Double>) -> SIMD2<Double>? {
+        let size = SIMD2(Double(view.viewSizePoints.width), Double(view.viewSizePoints.height))
+        guard size.x.isFinite, size.y.isFinite, size.x > 0, size.y > 0,
+              location.x.isFinite, location.y.isFinite,
+              view.transform.scale.isFinite, view.transform.scale > 0 else { return nil }
+        return ViewMapping(transform: view.transform, viewSize: size,
+                           backingScale: view.backingScale).viewToImage(location)
     }
 
     private func adjustLevels(from drag: LevelsDrag, to location: SIMD2<Double>) -> Bool {

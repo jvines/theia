@@ -130,6 +130,62 @@ final class InteractionControllerTests: XCTestCase {
         }
     }
 
+    func testRegionHandleDragCommitsOneUndoStepAndEscapeCancels() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 2, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            let original = Region(shape: .circle(center: .init(x: 1, y: 1),
+                                                 radius: .init(value: 10, unit: .pixel)), frame: .image)
+            session.perform(.addRegion(original), origin: .user)
+
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            XCTAssertNotNil(session.regionList.activeEditID)
+            XCTAssertTrue(controller.pointer(.init(phase: .dragged, button: .primary,
+                                                   location: SIMD2(54, 50))))
+            XCTAssertTrue(controller.pointer(.init(phase: .dragged, button: .primary,
+                                                   location: SIMD2(56, 50))))
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(56, 50)))
+            XCTAssertNil(session.regionList.activeEditID)
+            XCTAssertEqual(session.regions[0].shape,
+                           .circle(center: .init(x: 4, y: 1), radius: .init(value: 10, unit: .pixel)))
+            session.perform(.undoRegions, origin: .user)
+            guard session.regions.indices.contains(0) else {
+                return XCTFail("Undo removed the region instead of restoring its drag")
+            }
+            XCTAssertEqual(session.regions[0], original)
+
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(60, 50)))
+            XCTAssertTrue(controller.key(.init(key: .escape)))
+            XCTAssertEqual(session.regions[0], original)
+            XCTAssertNil(session.regionList.activeEditID)
+        }
+    }
+
+    func testScriptReplacementInvalidatesCanvasDragUntilMouseUp() async throws {
+        try await MainActor.run {
+            let session = try makeCubeSession()
+            session.view.transform = ViewTransform(scale: 2, centre: .zero)
+            session.view.viewSizePoints = CGSize(width: 100, height: 100)
+            let controller = InteractionController(view: session.view, mode: .full, session: session)
+            let original = Region(shape: .circle(center: .init(x: 1, y: 1),
+                                                 radius: .init(value: 10, unit: .pixel)), frame: .image)
+            let scripted = Region(shape: .point(.init(x: 9, y: 9)), frame: .image)
+            session.perform(.addRegion(original), origin: .user)
+            controller.pointer(.init(phase: .down, button: .primary, location: SIMD2(50, 50)))
+            controller.pointer(.init(phase: .dragged, button: .primary, location: SIMD2(54, 50)))
+            session.perform(.replaceRegions([scripted]), origin: .script)
+            XCTAssertFalse(controller.pointer(.init(phase: .dragged, button: .primary,
+                                                    location: SIMD2(60, 50))))
+            XCTAssertEqual(session.regions, [scripted])
+            controller.pointer(.init(phase: .up, button: .primary, location: SIMD2(60, 50)))
+            XCTAssertEqual(session.regions, [scripted])
+        }
+    }
+
     @MainActor private func makeCubeSession() throws -> DocumentSession {
         let cards = [
             "SIMPLE  =                    T", "BITPIX  =                    8",
