@@ -26,6 +26,7 @@ public enum SessionJobKind: Hashable, Sendable {
     private var nextID: UInt64 = 0
     private var tail: Task<Void, Never>?
     private var active: [UInt64: Task<Void, Never>] = [:]
+    private var activeKinds: [UInt64: SessionJobKind] = [:]
     private var latest: [SessionJobKind: UInt64] = [:]
 
     public init() {}
@@ -59,12 +60,15 @@ public enum SessionJobKind: Hashable, Sendable {
                          currentRevision: currentRevision, apply: apply)
         }
         active[id] = task
+        activeKinds[id] = kind
         tail = task
     }
 
     public func cancel(kind: SessionJobKind) {
-        guard kind.latestWins, let id = latest.removeValue(forKey: kind) else { return }
-        active[id]?.cancel()
+        if kind.latestWins { latest[kind] = nil }
+        for (id, activeKind) in activeKinds where activeKind == kind {
+            active[id]?.cancel()
+        }
     }
 
     public func idle() async {
@@ -85,6 +89,7 @@ public enum SessionJobKind: Hashable, Sendable {
             apply(value)
         }
         active[id] = nil
+        activeKinds[id] = nil
         if latest[kind] == id { latest[kind] = nil }
     }
 }

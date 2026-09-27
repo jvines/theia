@@ -205,6 +205,15 @@ struct DocumentView: View {
             .onChange(of: imageRevision) { _, revision in
                 pixelTableBridge.imageRevision = revision
             }
+            .onChange(of: session.sourceDetectionNoticeID) { _, _ in
+                guard let title = session.sourceDetectionNoticeTitle,
+                      let message = session.sourceDetectionNoticeMessage else { return }
+                let alert = NSAlert()
+                alert.messageText = title
+                alert.informativeText = message
+                alert.alertStyle = .informational
+                alert.runModal()
+            }
     }
 
     private func handleKey(_ key: KeyEvent.Key, modifiers: EventModifiers) -> KeyPress.Result {
@@ -1227,51 +1236,7 @@ extension DocumentView {
     }
 
     fileprivate func detectSourcesAndAddRegions() {
-        guard let image = currentImage() else { return }
-        let detections = SourceExtractor.detect(image: image,
-                                                threshold: nil,
-                                                minSeparation: 3,
-                                                backgroundBoxSize: 21,
-                                                nSigma: 5)
-        var newRegions: [Region] = []
-        var fwhms: [Double] = []
-        for d in detections {
-            let near = (Int(d.x.rounded()), Int(d.y.rounded()))
-            if let fit = GaussianFit.fit(image: image, near: near, boxRadius: 7), fit.sigmaX > 0.5 {
-                let radius = max(2.0 * fit.sigmaX, 2.5)
-                let label = String(format: "FWHM %.2f", fit.fwhm)
-                fwhms.append(fit.fwhm)
-                newRegions.append(Region(
-                    shape: .circle(center: .init(x: fit.x + 1, y: fit.y + 1),
-                                   radius: .init(value: radius, unit: .pixel)),
-                    frame: .image,
-                    attributes: ["color": "yellow", "text": label, "tag": "sources"]
-                ))
-            } else {
-                newRegions.append(Region(
-                    shape: .circle(center: .init(x: d.x + 1, y: d.y + 1),
-                                   radius: .init(value: 4, unit: .pixel)),
-                    frame: .image,
-                    attributes: ["color": "yellow", "tag": "sources"]
-                ))
-            }
-        }
-        regions.append(contentsOf: newRegions)
-        if !fwhms.isEmpty {
-            let sorted = fwhms.sorted()
-            let median = sorted[sorted.count / 2]
-            let mean = fwhms.reduce(0, +) / Double(fwhms.count)
-            let mn = sorted.first!, mx = sorted.last!
-            let alert = NSAlert()
-            alert.messageText = "Detected \(newRegions.count) sources (\(fwhms.count) Gaussian-fitted)"
-            alert.informativeText = String(
-                format: "FWHM (px) — median %.2f, mean %.2f, min %.2f, max %.2f",
-                median, mean, mn, mx
-            )
-            alert.alertStyle = .informational
-            alert.runModal()
-        }
-        NSLog("Detected \(newRegions.count) sources")
+        _ = session.perform(.detectSources, origin: .user)
     }
 
     fileprivate func cropToSelectedRegion() {

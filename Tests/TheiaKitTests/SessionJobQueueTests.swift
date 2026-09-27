@@ -60,6 +60,23 @@ final class SessionJobQueueTests: XCTestCase {
         let applied = await MainActor.run { probe.applied }
         XCTAssertTrue(applied.isEmpty)
     }
+
+    func testExplicitCancelStopsNonSupersedingDetectionJob() async {
+        let (jobs, probe) = await MainActor.run { (SessionJobQueue(), JobProbe()) }
+        let gate = JobGate()
+        await MainActor.run {
+            jobs.enqueue(kind: .sourceDetection, imageRevision: 0,
+                         currentRevision: { probe.revision },
+                         work: { await gate.wait(); return 1 },
+                         apply: { probe.applied.append($0) })
+        }
+        await gate.untilStarted()
+        await MainActor.run { jobs.cancel(kind: .sourceDetection) }
+        await gate.open()
+        await jobs.idle()
+        let applied = await MainActor.run { probe.applied }
+        XCTAssertTrue(applied.isEmpty)
+    }
 }
 
 @MainActor private final class JobProbe {

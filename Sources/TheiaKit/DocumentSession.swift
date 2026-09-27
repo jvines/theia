@@ -117,6 +117,9 @@ public struct HDUFacts {
     public var catalogFetchInProgress = false {
         didSet { if catalogFetchInProgress != oldValue { emit(.jobStatusChanged) } }
     }
+    public private(set) var sourceDetectionNoticeID = 0
+    public private(set) var sourceDetectionNoticeTitle: String?
+    public private(set) var sourceDetectionNoticeMessage: String?
     public private(set) var playing = false
     public private(set) var fps: Double = 5
     public private(set) var blink: BlinkState?
@@ -318,6 +321,36 @@ public struct HDUFacts {
         )
     }
 
+    public func detectSources() {
+        guard !isClosed, let image = displayed else { return }
+        let revision = imageRevision
+        let origin = eventOrigin
+        let echoTag = eventEchoTag
+        jobs.enqueue(
+            kind: .sourceDetection, imageRevision: revision,
+            currentRevision: { [weak self] in
+                guard let self, !self.isClosed else { return -1 }
+                return self.imageRevision
+            },
+            work: { try? SourceDetectionResult.analyze(image: image) },
+            apply: { [weak self] (result: SourceDetectionResult) in
+                guard let self else { return }
+                self.withEventContext(origin: origin, echoTag: echoTag) {
+                    if !result.regions.isEmpty {
+                        self.regionList.replace(self.regions + result.regions,
+                                                selection: self.selectedRegionIndex)
+                    }
+                    self.sourceDetectionNoticeTitle = result.noticeTitle
+                    self.sourceDetectionNoticeMessage = result.noticeMessage
+                    self.sourceDetectionNoticeID &+= 1
+                    self.emit(.jobStatusChanged)
+                }
+            }
+        )
+    }
+
+    func cancelSourceDetection() { jobs.cancel(kind: .sourceDetection) }
+
     public func idle() async { await jobs.idle() }
 
     /// The next image HDU of the same width and height, wrapping at the end.
@@ -382,6 +415,7 @@ public struct HDUFacts {
 
     public func selectHDU(_ index: Int) {
         guard facts.indices.contains(index), index != hdu else { return }
+        jobs.cancel(kind: .sourceDetection)
         if playing {
             playing = false
             emit(.playbackChanged)
@@ -400,6 +434,7 @@ public struct HDUFacts {
         guard facts.indices.contains(hdu), facts[hdu].isDisplayableImage,
               index >= 0, index < facts[hdu].planeCount,
               index != plane || derived != nil else { return }
+        jobs.cancel(kind: .sourceDetection)
         plane = index
         derived = nil
         view.display(sourceImage(), revision: imageRevision &+ 1)
@@ -417,6 +452,7 @@ public struct HDUFacts {
 
     public func setDerived(_ image: DerivedImage?) {
         guard derived != image else { return }
+        jobs.cancel(kind: .sourceDetection)
         derived = image
         view.display(image?.image ?? sourceImage(), revision: imageRevision &+ 1)
         recomputeContours()

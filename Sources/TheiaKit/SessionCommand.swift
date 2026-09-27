@@ -54,6 +54,7 @@ public enum SessionCommand: Sendable, Equatable {
     case showInspectorTab(InspectorTab)
     case setContourSpec(ContourSpec)
     case setProfileRadius(Double)
+    case detectSources
     case addRegion(Region)
     case updateRegion(Int, Region)
     case updateRegionDuringEdit(UUID, Int, Region)
@@ -268,6 +269,10 @@ extension DocumentSession {
                 default:
                     return CommandOutcome(failure: .unavailableProfileMarker)
                 }
+            case .detectSources:
+                guard !isClosed else { return CommandOutcome(failure: .documentClosed) }
+                guard displayed != nil else { return CommandOutcome(failure: .noDisplayedImage) }
+                detectSources()
             case .addRegion(let region):
                 regionList.add(region)
             case .updateRegion(let index, let region):

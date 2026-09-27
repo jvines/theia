@@ -48,6 +48,13 @@ final class SourceExtractorTests: XCTestCase {
         XCTAssertEqual(sources.count, 0)
     }
 
+    func testUniformBackgroundDoesNotBecomeSourcesAtItsOwnThreshold() {
+        let img = FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 21 * 21),
+                                         width: 21, height: 21)
+        XCTAssertTrue(SourceExtractor.detect(image: img, threshold: nil).isEmpty)
+        XCTAssertTrue(SourceExtractor.detect(image: img, threshold: 1).isEmpty)
+    }
+
     func testMinSeparationDeduplicatesAdjacent() {
         // Two extremely close peaks → should yield one detection with minSeparation > spacing.
         let img = gaussianImage(width: 21, height: 21,

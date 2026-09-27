@@ -1317,6 +1317,44 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testSourceDetectionCommandAddsOneUndoableBatchAndDiscardsStaleImage() async throws {
+        let session = try await MainActor.run { try makeDetectionSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.detectSources, origin: .user).failure)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertFalse(session.regions.isEmpty)
+            XCTAssertEqual(session.sourceDetectionNoticeID, 1)
+            XCTAssertNil(session.perform(.undoRegions, origin: .user).failure)
+            XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertNil(session.perform(.detectSources, origin: .user).failure)
+            session.selectHDU(0)
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertEqual(session.sourceDetectionNoticeID, 1)
+            XCTAssertEqual(session.perform(.detectSources, origin: .user).failure,
+                           .noDisplayedImage)
+        }
+    }
+
+    func testSourceDetectionDoesNotApplyAfterDocumentCloses() async throws {
+        let session = try await MainActor.run { try makeDetectionSession() }
+        await MainActor.run {
+            XCTAssertNil(session.perform(.detectSources, origin: .user).failure)
+            session.close()
+        }
+        await session.idle()
+        await MainActor.run {
+            XCTAssertTrue(session.regions.isEmpty)
+            XCTAssertEqual(session.sourceDetectionNoticeID, 0)
+            XCTAssertEqual(session.perform(.detectSources, origin: .user).failure,
+                           .documentClosed)
+        }
+    }
+
     func testInspectorSelectionAndCatalogStatusStayWithDocument() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -1452,6 +1490,20 @@ final class DocumentSessionTests: XCTestCase {
         appendHDU(&data, cards: ["XTENSION= 'BINTABLE'", "BITPIX  =                    8", "NAXIS   =                    2", "NAXIS1  =                    0", "NAXIS2  =                    0", "PCOUNT  =                    0", "GCOUNT  =                    1", "TFIELDS =                    0"], pixels: [])
         appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2, fourthAxis: 2), pixels: Array(0..<16).map(UInt8.init))
         return DocumentSession(url: URL(fileURLWithPath: "/tmp/session.fits"), file: try FITSFile(data: data))
+    }
+
+    @MainActor
+    private func makeDetectionSession() throws -> DocumentSession {
+        var data = Data()
+        appendHDU(&data, cards: ["SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    0"], pixels: [])
+        let pixels = (0..<(21 * 21)).map { index -> UInt8 in
+            let dx = Double(index % 21) - 10
+            let dy = Double(index / 21) - 10
+            return UInt8((1 + 100 * exp(-(dx * dx + dy * dy) / 4.5)).rounded())
+        }
+        appendHDU(&data, cards: imageCards(width: 21, height: 21), pixels: pixels)
+        return DocumentSession(url: URL(fileURLWithPath: "/tmp/detection.fits"),
+                               file: try FITSFile(data: data))
     }
 
     private func imageCards(width: Int, height: Int, depth: Int? = nil, fourthAxis: Int? = nil) -> [String] {
