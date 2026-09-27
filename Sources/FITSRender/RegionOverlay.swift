@@ -28,7 +28,8 @@ public struct RegionOverlay: View {
             )
             for (idx, region) in regions.enumerated() {
                 guard let path = path(for: region, mapping: mapping) else { continue }
-                let colour = Color(hex: region.attributes["color"]) ?? .green
+                let rgb = OverlayColor.parse(region.attributes["color"]) ?? .defaultRegion
+                let colour = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
                 let isSelected = (idx == selectedIndex)
                 let lineWidth: Double = isSelected ? 2.4 : 1.2
                 let strokeColour = isSelected ? Color.yellow : colour.opacity(0.85)
@@ -194,33 +195,6 @@ public struct RegionOverlay: View {
             let pixelScaleDegPerPix = sqrt(abs(wcs.cd11 * wcs.cd22 - wcs.cd12 * wcs.cd21))
             guard pixelScaleDegPerPix > 0 else { return nil }
             return degrees / pixelScaleDegPerPix
-        }
-    }
-}
-
-private extension Color {
-    init?(hex string: String?) {
-        guard let s = string?.lowercased() else { return nil }
-        switch s {
-        case "red": self = .red
-        case "green": self = .green
-        case "blue": self = .blue
-        case "yellow": self = .yellow
-        case "cyan": self = .cyan
-        case "magenta": self = .pink
-        case "white": self = .white
-        case "black": self = .black
-        case "violet", "purple": self = Color(red: 0.42, green: 0.32, blue: 0.78)
-        default:
-            // Accept "#rrggbb" hex codes too.
-            if s.hasPrefix("#"), s.count == 7,
-               let r = UInt8(s.dropFirst().prefix(2), radix: 16),
-               let g = UInt8(s.dropFirst(3).prefix(2), radix: 16),
-               let b = UInt8(s.dropFirst(5).prefix(2), radix: 16) {
-                self = Color(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255)
-                return
-            }
-            return nil
         }
     }
 }

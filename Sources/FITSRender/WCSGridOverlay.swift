@@ -8,6 +8,7 @@ public struct WCSGridOverlay: View {
     public let image: FITSImage
     public let wcs: WCS
     public let viewport: ImageViewState
+    @State private var gridCache = WCSGridCache()
 
     public init(image: FITSImage, wcs: WCS, viewport: ImageViewState) {
         self.image = image
@@ -17,12 +18,8 @@ public struct WCSGridOverlay: View {
 
     public var body: some View {
         let transform = viewport.transform
+        let lines = gridCache.gridlines(wcs: wcs, imageWidth: image.width, imageHeight: image.height)
         Canvas { context, size in
-            let lines = WCSGridGenerator.gridlines(
-                wcs: wcs,
-                imageWidth: image.width,
-                imageHeight: image.height
-            )
             let mapping = ViewMapping(
                 transform: transform,
                 viewSize: SIMD2(Double(size.width), Double(size.height)),
