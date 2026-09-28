@@ -60,8 +60,11 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var lineProfileWindow: GTKPlotWindow?
     private(set) var radialProfileWindow: GTKPlotWindow?
     private(set) var growthCurveWindow: GTKPlotWindow?
+    private(set) var cubeSpectrumWindow: GTKPlotWindow?
+    private(set) var pvWindow: GTKPVWindow?
     private(set) var radialProfileModel: RadialProfileModel?
     private(set) var growthCurveModel: GrowthCurveModel?
+    private(set) var cubeSpectrumModel: CubeSpectrumModel?
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
     private(set) var activeNumberDialog: GTKNumberDialog?
@@ -92,6 +95,10 @@ private final class RenderCancellation: @unchecked Sendable {
     private var cachedDisplay: DisplayImage?
     private var renderTask: Task<Void, Never>?
     private var lineProfileTask: Task<Void, Never>?
+    private var cubeSpectrumTask: Task<Void, Never>?
+    private var cubeSpectrumGeneration = 0
+    private var pvTask: Task<Void, Never>?
+    private var pvGeneration = 0
     private var renderGeneration = 0
     private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
@@ -646,8 +653,8 @@ private final class RenderCancellation: @unchecked Sendable {
         switch request {
         case .lineProfile(let from, let to):
             guard let image = session.displayed else { return }
-            guard session.file.hdus[session.hdu].naxis != 3 else {
-                showAlert(title: "Theia", message: "Cube PV diagrams are not available in the Linux app yet")
+            if session.file.hdus[session.hdu].naxis == 3 {
+                openPVDiagram(from: from, to: to)
                 return
             }
             lineProfileTask?.cancel()
@@ -742,9 +749,131 @@ private final class RenderCancellation: @unchecked Sendable {
                 from: from, to: to, wcs: session.displayedWCS
             )
             showAlert(title: "Measurement", message: measurement.lines.joined(separator: "\n"))
-        case .cubeSpectrum:
-            showAlert(title: "Theia", message: "This analysis view is not available in the Linux app yet")
+        case .cubeSpectrum(let point):
+            guard session.file.hdus.indices.contains(session.hdu) else { return }
+            let hdu = session.file.hdus[session.hdu]
+            guard hdu.naxis == 3 else { return }
+            cubeSpectrumTask?.cancel()
+            if let cubeSpectrumWindow { gtk_window_destroy(cubeSpectrumWindow.widget) }
+            cubeSpectrumGeneration &+= 1
+            let generation = cubeSpectrumGeneration
+            let marker = ProfileGeometry.point(point)
+            session.profileMarker = marker
+            let wcs = session.displayedWCS
+            let hit = RegionHitTest.hit(in: session.regions, atImagePoint: point,
+                                        toleranceImagePixels: 4, wcs: wcs)
+            let region = hit.flatMap { session.regions.indices.contains($0.regionIndex)
+                ? session.regions[$0.regionIndex] : nil }
+            let label: String
+            if let hit, region != nil { label = "region #\(hit.regionIndex) (sum)" }
+            else { label = "pixel (\(Int(point.x.rounded())), \(Int(point.y.rounded())))" }
+            let pixel = (Int(point.x.rounded()), Int(point.y.rounded()))
+            let currentPlane = session.plane
+            let axis = SpectralAxis(header: hdu.header)
+            let xs = axis?.values(planeCount: hdu.planeCount)
+            let xLabel = axis?.axisLabel ?? "plane"
+            cubeSpectrumTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let values: [Double]?
+                if let region {
+                    values = try? Profiles.cubeSpectrum(hdu: hdu, region: region, wcs: wcs,
+                                                         combine: .sum)
+                } else {
+                    values = try? Profiles.cubeSpectrum(hdu: hdu, atPixel: pixel)
+                }
+                guard !Task.isCancelled else { return }
+                await self?.presentCubeSpectrum(values: values, currentPlane: currentPlane,
+                                                label: label, xValues: xs, xLabel: xLabel,
+                                                marker: marker, generation: generation)
+            }
         }
+    }
+
+    private func openPVDiagram(from: SIMD2<Double>, to: SIMD2<Double>) {
+        let hdu = session.file.hdus[session.hdu]
+        pvTask?.cancel()
+        if let pvWindow { gtk_window_destroy(pvWindow.widget) }
+        pvGeneration &+= 1
+        let generation = pvGeneration
+        let marker = ProfileGeometry.line(from: from, to: to)
+        session.profileMarker = marker
+        let samples = LineProfileModel.sampleCount(from: from, to: to)
+        pvTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let image = try? Profiles.pvDiagram(hdu: hdu, from: (from.x, from.y),
+                                                to: (to.x, to.y), samples: samples)
+            guard !Task.isCancelled else { return }
+            await self?.presentPVDiagram(image: image, marker: marker, generation: generation)
+        }
+    }
+
+    private func presentPVDiagram(image: FITSImage?, marker: ProfileGeometry,
+                                  generation: Int) {
+        guard !destroyed, generation == pvGeneration else { return }
+        pvTask = nil
+        guard let image else {
+            if session.profileMarker == marker { session.profileMarker = nil }
+            showAlert(title: "PV diagram unavailable", message: "Could not extract the selected cube line")
+            return
+        }
+        let window = GTKPVWindow(
+            application: gtk_window_get_application(widget)!, sourceSession: session,
+            image: image
+        ) { [weak self] in
+            guard let self else { return }
+            self.pvWindow = nil
+            if self.session.profileMarker == marker { self.session.profileMarker = nil }
+        }
+        pvWindow = window
+        window.present()
+    }
+
+    private func presentCubeSpectrum(values: [Double]?, currentPlane: Int, label: String,
+                                     xValues: [Double]?, xLabel: String,
+                                     marker: ProfileGeometry, generation: Int) {
+        guard !destroyed, generation == cubeSpectrumGeneration else { return }
+        cubeSpectrumTask = nil
+        guard let values else {
+            if session.profileMarker == marker { session.profileMarker = nil }
+            showAlert(title: "Spectrum unavailable", message: "Could not read the selected cube spectrum")
+            return
+        }
+        let model = CubeSpectrumModel(values: values, currentPlane: currentPlane,
+                                      label: label, xValues: xValues, xLabel: xLabel)
+        cubeSpectrumModel = model
+        let plot = GTKPlotWindow(
+            application: gtk_window_get_application(widget)!, sourceSession: session,
+            title: model.title, xLabel: model.xLabel, yLabel: "value"
+        ) { [weak self] in
+            guard let self else { return }
+            self.cubeSpectrumWindow = nil
+            self.cubeSpectrumModel = nil
+            if self.session.profileMarker == marker { self.session.profileMarker = nil }
+        }
+        cubeSpectrumWindow = plot
+        plot.setSeries(x: model.xs, y: model.ys, highlightX: model.plotHighlight)
+        let center = plot.addEntry(label: "Fit center", placeholder: model.xLabel)
+        let width = plot.addEntry(label: "± width", placeholder: "width")
+        let fitLabel = plot.addStatusLabel()
+        plot.addButton("Fit Gaussian") { [weak self, weak plot] in
+            guard let self, let plot, self.cubeSpectrumWindow === plot,
+                  var model = self.cubeSpectrumModel else { return }
+            model.fitCenterText = String(cString: gtk_editable_get_text(center))
+            model.fitHalfWidthText = String(cString: gtk_editable_get_text(width))
+            model.runFit()
+            self.cubeSpectrumModel = model
+            plot.setSeries(x: model.xs, y: model.ys, highlightX: model.plotHighlight)
+            gtk_label_set_text(fitLabel, model.fitText ?? "No fit for these values")
+        }
+        plot.addButton("Auto") { [weak self, weak plot] in
+            guard let self, let plot, self.cubeSpectrumWindow === plot,
+                  var model = self.cubeSpectrumModel else { return }
+            model.autoFit()
+            self.cubeSpectrumModel = model
+            gtk_editable_set_text(center, model.fitCenterText)
+            gtk_editable_set_text(width, model.fitHalfWidthText)
+            plot.setSeries(x: model.xs, y: model.ys, highlightX: model.plotHighlight)
+            gtk_label_set_text(fitLabel, model.fitText ?? "No fit for these values")
+        }
+        plot.present()
     }
 
     private static func updateRadialPlot(_ model: RadialProfileModel, in plot: GTKPlotWindow?) {
@@ -905,6 +1034,10 @@ private final class RenderCancellation: @unchecked Sendable {
         dismissRegionPopover()
         lineProfileTask?.cancel()
         lineProfileTask = nil
+        cubeSpectrumTask?.cancel()
+        cubeSpectrumTask = nil
+        pvTask?.cancel()
+        pvTask = nil
         if let lineProfileWindow {
             self.lineProfileWindow = nil
             gtk_window_destroy(lineProfileWindow.widget)
@@ -916,6 +1049,14 @@ private final class RenderCancellation: @unchecked Sendable {
         if let growthCurveWindow {
             self.growthCurveWindow = nil
             gtk_window_destroy(growthCurveWindow.widget)
+        }
+        if let cubeSpectrumWindow {
+            self.cubeSpectrumWindow = nil
+            gtk_window_destroy(cubeSpectrumWindow.widget)
+        }
+        if let pvWindow {
+            self.pvWindow = nil
+            gtk_window_destroy(pvWindow.widget)
         }
         if let pixelTableWindow {
             self.pixelTableWindow = nil

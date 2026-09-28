@@ -123,6 +123,30 @@ import TheiaKit
         return spin
     }
 
+    @discardableResult func addEntry(label: String, placeholder: String) -> OpaquePointer {
+        gtk_box_append(controls, gtk_label_new(label))
+        let entry = OpaquePointer(gtk_entry_new()!)
+        gtk_entry_set_placeholder_text(UnsafeMutablePointer<GtkEntry>(entry), placeholder)
+        gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(entry), 80, -1)
+        gtk_box_append(controls, UnsafeMutablePointer<GtkWidget>(entry))
+        return entry
+    }
+
+    @discardableResult func addButton(_ label: String,
+                                      onClick: @escaping @MainActor () -> Void) -> OpaquePointer {
+        let button = gtk_button_new_with_label(label)!
+        GTKButtonAction(onClick).connect(to: button)
+        gtk_box_append(controls, button)
+        return OpaquePointer(button)
+    }
+
+    @discardableResult func addStatusLabel() -> OpaquePointer {
+        let label = OpaquePointer(gtk_label_new("")!)
+        gtk_label_set_xalign(label, 0)
+        gtk_box_append(controls, UnsafeMutablePointer<GtkWidget>(label))
+        return label
+    }
+
     func setSeries(x: [Double], y: [Double], highlightX: Double? = nil) {
         guard !destroyed else { return }
         xs = x

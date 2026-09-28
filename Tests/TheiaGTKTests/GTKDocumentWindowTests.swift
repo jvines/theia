@@ -100,6 +100,94 @@ import XCTest
 }
 
 final class GTKDocumentWindowTests: XCTestCase {
+    @MainActor func testCubeLineDragOpensRenderedPVDiagram() async throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let bridge = GTKMainLoopBridge()
+        XCTAssertTrue(bridge.install())
+        defer { bridge.remove() }
+        let window = GTKDocumentWindow(application: application, session: session)
+        window.present()
+        let id = try documentWindowID(matching: "theia-gtk-cube.fits — Theia")
+        for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+        _ = session.perform(.setDrawMode(.lineProfile), origin: .user)
+        let (x, y) = canvasCenter(in: window)
+        let drag = Process()
+        drag.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+        drag.arguments = [
+            "mousemove", "--window", id, String(x), String(y), "sleep", "0.1",
+            "mousedown", "1", "sleep", "0.1",
+            "mousemove", "--window", id, String(x + 30), String(y),
+            "sleep", "0.1", "mouseup", "1",
+        ]
+        try drag.run()
+        let deadline = Date().addingTimeInterval(3)
+        while (drag.isRunning || window.pvWindow == nil ||
+               window.pvWindow.flatMap({ gtk_picture_get_paintable($0.picture) }) == nil)
+                && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        drag.waitUntilExit()
+        XCTAssertEqual(drag.terminationStatus, 0)
+        let pv = try XCTUnwrap(window.pvWindow)
+        XCTAssertGreaterThanOrEqual(pv.image.width, 64)
+        XCTAssertEqual(pv.image.height, 3)
+        XCTAssertNotNil(gtk_picture_get_paintable(pv.picture))
+        XCTAssertNil(gtk_window_get_transient_for(pv.widget))
+        gtk_window_destroy(window.widget)
+        XCTAssertNil(window.pvWindow)
+        XCTAssertNil(session.profileMarker)
+    }
+
+    @MainActor func testCubeSpectrumClickOpensPlotWithPlaneValues() async throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let bridge = GTKMainLoopBridge()
+        XCTAssertTrue(bridge.install())
+        defer { bridge.remove() }
+        let window = GTKDocumentWindow(application: application, session: session)
+        window.present()
+        let id = try documentWindowID(matching: "theia-gtk-cube.fits — Theia")
+        for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+        _ = session.perform(.setDrawMode(.cubeSpectrum), origin: .user)
+        let (x, y) = canvasCenter(in: window)
+        let click = Process()
+        click.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+        click.arguments = ["mousemove", "--window", id, String(x), String(y),
+                           "sleep", "0.1", "click", "1"]
+        try click.run()
+        let deadline = Date().addingTimeInterval(3)
+        while (click.isRunning || window.cubeSpectrumWindow == nil) && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        click.waitUntilExit()
+        XCTAssertEqual(click.terminationStatus, 0)
+        let plot = try XCTUnwrap(window.cubeSpectrumWindow)
+        XCTAssertEqual(plot.sampleCount, 3)
+        XCTAssertEqual(window.cubeSpectrumModel?.ys, [2, 3, 5])
+        XCTAssertEqual(window.cubeSpectrumModel?.xs, [0, 1, 2])
+        XCTAssertNil(gtk_window_get_transient_for(plot.widget))
+        guard case .point = session.profileMarker else {
+            return XCTFail("Expected cube spectrum point marker")
+        }
+        gtk_window_destroy(window.widget)
+        XCTAssertNil(window.cubeSpectrumWindow)
+        XCTAssertNil(window.cubeSpectrumModel)
+        XCTAssertNil(session.profileMarker)
+    }
+
     @MainActor func testCircularProfileDragsAndControlsUpdateSharedModels() async throws {
         gtk_init()
         let fixture = try XCTUnwrap(Bundle.module.url(
