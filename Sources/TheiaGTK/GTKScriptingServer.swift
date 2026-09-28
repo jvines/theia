@@ -6,6 +6,7 @@ import TheiaKit
 @MainActor final class GTKScriptingServer {
     private weak var controller: GTKApplicationController?
     private let paths: AppPaths
+    private let runtimeDirectory: URL?
     private let portRange: ClosedRange<UInt16>
     private var token: String?
     private var transport: ScriptingSocketServer?
@@ -13,18 +14,24 @@ import TheiaKit
 
     init(controller: GTKApplicationController, token: String? = nil,
          paths: AppPaths = AppPaths(platform: .linux),
+         runtimeDirectory: URL? = nil,
          portRange: ClosedRange<UInt16> = 4321...4399) {
         self.controller = controller
         self.token = token
         self.paths = paths
+        self.runtimeDirectory = runtimeDirectory
         self.portRange = portRange
     }
 
     @discardableResult func start() throws -> UInt16 {
         if let transport { return transport.port }
-        let token = try token ?? ScriptingTokenStore(url: paths.tokenFile()).loadOrCreate()
+        let tokenFile = try runtimeDirectory?.appendingPathComponent("scripting-token")
+            ?? paths.tokenFile()
+        let portFile = try runtimeDirectory?.appendingPathComponent("scripting-port")
+            ?? paths.portFile()
+        let token = try token ?? ScriptingTokenStore(url: tokenFile).loadOrCreate()
         self.token = token
-        let server = ScriptingSocketServer(portFileURL: try paths.portFile(), portRange: portRange) {
+        let server = ScriptingSocketServer(portFileURL: portFile, portRange: portRange) {
             [weak self] bytes in self?.response(for: bytes)
         }
         let port = try server.start()

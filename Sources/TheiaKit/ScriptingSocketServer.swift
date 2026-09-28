@@ -112,7 +112,10 @@ public final class ScriptingSocketServer: @unchecked Sendable {
                 return (fd, UInt16(bigEndian: actual.sin_port), addressString)
             } catch {
                 _ = close(fd)
-                if case ScriptingSocketError.posix("bind", _) = error { continue }
+                if case ScriptingSocketError.posix(let operation, let code) = error,
+                   code == EADDRINUSE, (operation == "bind" || operation == "listen") {
+                    continue
+                }
                 throw error
             }
         }

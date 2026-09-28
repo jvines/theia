@@ -100,6 +100,107 @@ import XCTest
 }
 
 final class GTKDocumentWindowTests: XCTestCase {
+    func testRegionRightClickOpensSharedContextActions() async throws {
+        try await MainActor.run {
+            gtk_init()
+            let fixture = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fixture,
+                                          file: try FITSFile(data: Data(contentsOf: fixture)))
+            let image = try XCTUnwrap(session.displayed)
+            let target = SIMD2((Double(image.width) - 1) / 2,
+                               (Double(image.height) - 1) / 2)
+            session.regions = [Region(
+                shape: .circle(center: .init(x: target.x + 1, y: target.y + 1),
+                               radius: .init(value: 0.4, unit: .pixel)), frame: .image
+            )]
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(
+                UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+            ), 1)
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            window.present()
+            let id = try documentWindowID()
+            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            let picture = UnsafeMutablePointer<GtkWidget>(window.picture)
+            let mapping = ViewMapping(
+                transform: session.view.transform,
+                viewSize: SIMD2(Double(gtk_widget_get_width(picture)),
+                                Double(gtk_widget_get_height(picture))), backingScale: 1
+            )
+            let point = mapping.imageToView(target)
+            _ = window.interaction.pointer(PointerEvent(
+                phase: .down, button: .secondary, location: point
+            ))
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            _ = window.interaction.takeEffects()
+            _ = window.interaction.pointer(PointerEvent(
+                phase: .up, button: .secondary, location: point
+            ))
+            session.selectedRegionIndex = nil
+            var x = 0.0, y = 0.0
+            XCTAssertEqual(gtk_widget_translate_coordinates(
+                picture, UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)),
+                point.x, point.y, &x, &y
+            ), 1)
+            let click = Process()
+            click.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            click.arguments = ["mousemove", "--window", id, String(Int(x)), String(Int(y)),
+                               "sleep", "0.1", "click", "3"]
+            try click.run()
+            let deadline = Date().addingTimeInterval(2)
+            while (click.isRunning || window.regionPopover == nil) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+            }
+            click.waitUntilExit()
+            XCTAssertEqual(click.terminationStatus, 0)
+            XCTAssertEqual(session.selectedRegionIndex, 0)
+            let popover = try XCTUnwrap(window.regionPopover)
+            let content = try XCTUnwrap(gtk_popover_get_child(popover))
+            let duplicate = try XCTUnwrap(gtk_widget_get_first_child(content))
+            XCTAssertEqual(String(cString: gtk_button_get_label(
+                UnsafeMutablePointer<GtkButton>(OpaquePointer(duplicate))
+            )), "Duplicate")
+            XCTAssertEqual(gtk_widget_activate(duplicate), 1)
+            let actionDeadline = Date().addingTimeInterval(1)
+            while session.regions.count == 1 && Date() < actionDeadline {
+                _ = g_main_context_iteration(nil, 0)
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            XCTAssertEqual(session.regions.count, 2)
+            XCTAssertNil(window.regionPopover)
+        }
+    }
+
+    @MainActor func testClosingDocumentCancelsPrintPreparation() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fixture,
+                                      file: try FITSFile(data: Data(contentsOf: fixture)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        window.commandMenus.activate("file.print")
+        XCTAssertNotNil(window.activePrintJob)
+        gtk_window_destroy(window.widget)
+        XCTAssertNil(window.activePrintJob)
+        let bridge = GTKMainLoopBridge()
+        XCTAssertTrue(bridge.install())
+        defer { bridge.remove() }
+        for _ in 0..<20 {
+            _ = g_main_context_iteration(nil, 0)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     @MainActor func testPixelTableMenuTracksCursorAndClosesWithDocument() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(
@@ -558,7 +659,20 @@ final class GTKDocumentWindowTests: XCTestCase {
         }
         let windowID = try XCTUnwrap(identifier)
         let pictureWidget = UnsafeMutablePointer<GtkWidget>(window.picture)
+        let initialSyncDeadline = Date().addingTimeInterval(2)
+        while Date() < initialSyncDeadline {
+            _ = g_main_context_iteration(nil, 0)
+            if session.view.viewSizePoints.width == Double(gtk_widget_get_width(pictureWidget)) {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         let initialWidth = gtk_widget_get_width(pictureWidget)
+        let initialHeight = gtk_widget_get_height(pictureWidget)
+        let image = try XCTUnwrap(session.displayed)
+        XCTAssertEqual(session.view.transform.scale,
+                       min(Double(initialWidth) / Double(image.width),
+                           Double(initialHeight) / Double(image.height)), accuracy: 1e-6)
         let resize = Process()
         resize.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
         resize.arguments = ["windowsize", windowID, "1200", "780"]

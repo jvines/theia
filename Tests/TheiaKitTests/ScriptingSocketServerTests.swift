@@ -26,6 +26,26 @@ final class ScriptingSocketServerTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testOccupiedListeningPortIsSkipped() throws {
+        let (directory, portFile) = try temporaryPortFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = ScriptingSocketServer(portFileURL: portFile, portRange: 0...0) { _ in
+            ScriptingSocketReply(data: Data("first".utf8))
+        }
+        defer { first.stop() }
+        let occupied = try first.start()
+        let second = ScriptingSocketServer(
+            portFileURL: directory.appendingPathComponent("second-port"),
+            portRange: occupied...occupied
+        ) { _ in ScriptingSocketReply(data: Data("second".utf8)) }
+        defer { second.stop() }
+        XCTAssertThrowsError(try second.start()) { error in
+            guard case ScriptingSocketError.noAvailablePort = error else {
+                return XCTFail("Expected occupied port to be skipped, got \(error)")
+            }
+        }
+    }
+
     func testSlowReaderReceivesEntireLargeResponse() async throws {
         let (directory, portFile) = try temporaryPortFile()
         defer { try? FileManager.default.removeItem(at: directory) }

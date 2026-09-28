@@ -60,6 +60,8 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
     private(set) var activeNumberDialog: GTKNumberDialog?
+    private(set) var activePrintJob: GTKPrintJob?
+    private(set) var regionPopover: UnsafeMutablePointer<GtkPopover>?
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private let onOpenRecent: @MainActor (URL) -> Void
@@ -76,6 +78,7 @@ private final class RenderCancellation: @unchecked Sendable {
     private var framePulseSourceID: guint = 0
     private var frameDriver: SessionFrameDriver?
     private var tableHDUIndex: Int?
+    private var initialFitTransform: ViewTransform?
     private var dragStart: SIMD2<Double>?
     private var dragButton: PointerEvent.Button = .primary
     private let overlayScene = OverlayScene()
@@ -234,6 +237,7 @@ private final class RenderCancellation: @unchecked Sendable {
         session.view.viewSizePoints = CGSize(width: 640, height: 480)
         session.view.backingScale = 1
         session.view.fitDisplayedImage()
+        initialFitTransform = session.view.transform
         renderCanvas()
         refreshOverlay()
         observerID = session.addEventObserver { [weak self] event in
@@ -309,6 +313,7 @@ private final class RenderCancellation: @unchecked Sendable {
         }
         commandMenus.onOpenRecent = { [weak self] url in self?.onOpenRecent(url) }
         commandMenus.onSettings = { [weak self] in self?.onSettings() }
+        commandMenus.onPrint = { [weak self] in self?.startPrint() }
         commandMenus.onWorkspaceCommand = { [weak self] command in
             self?.onWorkspaceCommand(command)
         }
@@ -596,6 +601,7 @@ private final class RenderCancellation: @unchecked Sendable {
         _ = interaction.pointer(PointerEvent(
             phase: .down, button: dragButton, location: SIMD2(localX, localY)
         ))
+        handleInteractionEffects()
     }
 
     private func updateDrag(offsetX: Double, offsetY: Double) {
@@ -612,7 +618,86 @@ private final class RenderCancellation: @unchecked Sendable {
             phase: .up, button: dragButton,
             location: dragStart + SIMD2(offsetX, offsetY)
         ))
+        handleInteractionEffects()
         self.dragStart = nil
+    }
+
+    private func handleInteractionEffects() {
+        for effect in interaction.takeEffects() {
+            switch effect {
+            case .showContextMenu(let index, let point):
+                showRegionContextMenu(index: index, at: point)
+            case .openAnalysis:
+                showAlert(title: "Theia", message: "This analysis view is not available in the Linux app yet")
+            }
+        }
+    }
+
+    private func showRegionContextMenu(index: Int, at point: SIMD2<Double>) {
+        guard session.regions.indices.contains(index) else { return }
+        dismissRegionPopover()
+        let widget = gtk_popover_new()!
+        let popover = UnsafeMutablePointer<GtkPopover>(OpaquePointer(widget))
+        let box = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
+        ))
+        gtk_widget_set_margin_top(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 6)
+        gtk_widget_set_margin_bottom(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 6)
+        gtk_widget_set_margin_start(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 6)
+        gtk_widget_set_margin_end(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 6)
+
+        func button(_ title: String, action: @escaping @MainActor () -> Void) {
+            let control = gtk_button_new_with_label(title)!
+            GTKButtonAction { [weak self] in
+                action()
+                self?.dismissRegionPopover()
+            }.connect(to: control)
+            gtk_box_append(box, control)
+        }
+        button("Duplicate") { [weak self] in
+            guard let self else { return }
+            self.handleOutcome(self.session.perform(
+                .duplicateRegion(index, dx: 5, dy: 5), origin: .user
+            ))
+        }
+        button("Delete") { [weak self] in
+            guard let self else { return }
+            self.handleOutcome(self.session.perform(.deleteRegion(index), origin: .user))
+        }
+        button("Bring to front") { [weak self] in
+            guard let self else { return }
+            self.handleOutcome(self.session.perform(.bringRegionToFront(index), origin: .user))
+        }
+        button("Copy as .reg text") { [weak self] in
+            guard let self else { return }
+            self.handleOutcome(self.session.perform(.copyRegion(index), origin: .user))
+        }
+        let heading = gtk_label_new("Color")!
+        gtk_label_set_xalign(OpaquePointer(heading), 0)
+        gtk_box_append(box, heading)
+        for color in RegionList.colors {
+            button(color.capitalized) { [weak self] in
+                guard let self, self.session.regions.indices.contains(index) else { return }
+                let updated = RegionList.settingAttribute(
+                    .color, to: color, in: self.session.regions[index]
+                )
+                self.handleOutcome(self.session.perform(.updateRegion(index, updated), origin: .user))
+            }
+        }
+        gtk_popover_set_child(popover, UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)))
+        gtk_widget_set_parent(widget, UnsafeMutablePointer<GtkWidget>(picture))
+        var rectangle = GdkRectangle(x: Int32(point.x.rounded()),
+                                     y: Int32(point.y.rounded()), width: 1, height: 1)
+        gtk_popover_set_pointing_to(popover, &rectangle)
+        regionPopover = popover
+        gtk_popover_popup(popover)
+    }
+
+    private func dismissRegionPopover() {
+        guard let popover = regionPopover else { return }
+        regionPopover = nil
+        gtk_popover_popdown(popover)
+        gtk_widget_unparent(UnsafeMutablePointer<GtkWidget>(OpaquePointer(popover)))
     }
 
     private func installScrollController() {
@@ -685,6 +770,9 @@ private final class RenderCancellation: @unchecked Sendable {
         activePathDialog = nil
         activeNumberDialog?.dismiss()
         activeNumberDialog = nil
+        activePrintJob?.cancel()
+        activePrintJob = nil
+        dismissRegionPopover()
         if let pixelTableWindow {
             self.pixelTableWindow = nil
             gtk_window_destroy(pixelTableWindow.widget)
@@ -974,6 +1062,17 @@ private final class RenderCancellation: @unchecked Sendable {
         if outcome.failure != .supersededRegionLoad { handleOutcome(outcome) }
     }
 
+    private func startPrint() {
+        guard activePrintJob == nil else { return }
+        guard let snapshot = GTKPrintSnapshot(session: session) else { return }
+        let job = GTKPrintJob(snapshot: snapshot, parent: widget) { [weak self] error in
+            self?.activePrintJob = nil
+            if let error { self?.showAlert(title: "Image not printed", message: error) }
+        }
+        activePrintJob = job
+        job.start()
+    }
+
     private func showAlert(title: String, message: String) {
         guard !destroyed else { return }
         let alert = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_window_new()!))
@@ -1043,8 +1142,11 @@ private final class RenderCancellation: @unchecked Sendable {
 
     func updateCanvasSize(width: Int, height: Int, scale: Double) {
         guard width > 0, height > 0, scale.isFinite, scale > 0 else { return }
+        let refit = initialFitTransform == session.view.transform
+        initialFitTransform = nil
         session.view.viewSizePoints = CGSize(width: width, height: height)
         session.view.backingScale = scale
+        if refit { _ = session.view.fitDisplayedImage() }
         renderCanvas()
         refreshOverlay()
     }

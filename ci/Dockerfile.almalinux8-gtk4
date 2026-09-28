@@ -3,7 +3,7 @@
 ARG SWIFT_BASE=theia-ci-almalinux8-swift63:latest
 FROM ${SWIFT_BASE}
 
-RUN dnf install -y epel-release dnf-plugins-core \
+RUN dnf install -y dnf-plugins-core \
     && dnf config-manager --set-enabled powertools \
     && dnf install -y \
         gcc-toolset-13 gcc-toolset-13-gcc-c++ \
@@ -16,13 +16,23 @@ RUN dnf install -y epel-release dnf-plugins-core \
         libXcomposite-devel libXtst-devel libXinerama-devel libxml2-devel \
         mesa-libGL-devel mesa-libEGL-devel \
         fontconfig-devel freetype-devel \
-        cairo-devel pixman-devel \
+        cairo-devel pixman-devel cups-devel \
         libcurl-devel \
         glib2-devel pango-devel harfbuzz-devel fribidi-devel \
         wayland-devel libxkbcommon-devel \
-        shared-mime-info xorg-x11-server-Xvfb xorg-x11-utils xdotool \
+        shared-mime-info xorg-x11-server-Xvfb xorg-x11-utils \
         mesa-dri-drivers \
     && dnf clean all
+
+# Pin the X11 input driver used only by integration tests without depending on
+# EPEL mirror metadata during the much larger GTK dependency transaction.
+RUN git clone --branch v3.20150503.1 --depth 1 \
+        https://github.com/jordansissel/xdotool.git /tmp/xdotool-src \
+    && test "$(git -C /tmp/xdotool-src rev-parse HEAD)" = 3a45f1a2a541896f130ddb82c3afb72987c7344b \
+    && make -C /tmp/xdotool-src -j 4 xdotool \
+    && install -m 755 /tmp/xdotool-src/xdotool /usr/bin/xdotool \
+    && install -m 755 /tmp/xdotool-src/libxdo.so /usr/local/lib64/libxdo.so.3 \
+    && rm -rf /tmp/xdotool-src
 
 RUN python3.11 -m pip install --no-cache-dir 'meson==1.12.1' 'ninja==1.13.0'
 
@@ -51,7 +61,7 @@ RUN source /opt/rh/gcc-toolset-13/enable \
         -Dbuild-demos=false \
         -Dmedia-gstreamer=disabled \
         -Dvulkan=disabled \
-        -Dprint-cups=disabled \
+        -Dprint-cups=enabled \
         -Dprint-cpdb=disabled \
         -Dcloudproviders=disabled \
         -Dsysprof=disabled \

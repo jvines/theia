@@ -24,6 +24,7 @@ import TheiaKit
     var onOpen: (@MainActor () -> Void)?
     var onOpenRecent: (@MainActor (URL) -> Void)?
     var onSettings: (@MainActor () -> Void)?
+    var onPrint: (@MainActor () -> Void)?
     var onWorkspaceCommand: (@MainActor (WorkspaceCommand) -> Void)?
 
     var sectionCount: Int {
@@ -202,6 +203,11 @@ import TheiaKit
                                   UnsafeMutablePointer<GMenuModel>(section))
             g_object_unref(UnsafeMutableRawPointer(section))
         }
+        installAction(identifier: "file.print", name: "file-print")
+        if let action = actions["file.print"] {
+            g_simple_action_set_enabled(action, session.displayed == nil ? 0 : 1)
+        }
+        g_menu_append(submenu, "Print…", "win.file-print")
         g_menu_append_submenu(model, "File", UnsafeMutablePointer<GMenuModel>(submenu))
         g_object_unref(UnsafeMutableRawPointer(submenu))
     }
@@ -273,6 +279,8 @@ import TheiaKit
                     menu.onOpen?()
                 } else if identifier == "app.settings" {
                     menu.onSettings?()
+                } else if identifier == "file.print" {
+                    menu.onPrint?()
                 } else if let url = menu.recentURLs[identifier] {
                     menu.onOpenRecent?(url)
                 } else if let command = menu.commands[identifier] {

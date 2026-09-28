@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Select a running Theia instance before sending XPA commands.
+set -euo pipefail
+
+runtime_base=${XDG_RUNTIME_DIR:-/tmp/theia-$(id -u)}
+if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    runtime_base="$runtime_base/theia"
+fi
+usage() {
+    echo 'usage: theiactl list | --instance PID get COMMAND... | --instance PID set COMMAND...' >&2
+    exit 2
+}
+if [[ "${1:-}" == list ]]; then
+    shopt -s nullglob
+    for directory in "$runtime_base"/instance-*; do
+        [[ -d "$directory" && -S "$directory/xpans_unix" ]] || continue
+        name=$(basename "$directory")
+        pid=${name#instance-}
+        pid=${pid%%-*}
+        printf '%s\t%s\n' "$pid" "$directory"
+    done
+    exit 0
+fi
+[[ "${1:-}" == --instance && "${2:-}" =~ ^[0-9]+$ ]] || usage
+pid=$2
+shift 2
+action=${1:-}
+[[ "$action" == get || "$action" == set ]] || usage
+shift
+[[ $# -gt 0 ]] || usage
+
+shopt -s nullglob
+matches=("$runtime_base"/instance-"$pid"-*)
+[[ ${#matches[@]} -eq 1 ]] || { echo "theiactl: expected one instance for PID $pid" >&2; exit 1; }
+instance_dir=${matches[0]}
+[[ -d "$instance_dir" && -S "$instance_dir/xpans_unix" ]] || {
+    echo 'theiactl: instance socket unavailable' >&2
+    exit 1
+}
+[[ "$(stat -c '%u' "$instance_dir")" == "$(id -u)" &&
+   "$(stat -c '%a' "$instance_dir")" == 700 ]] || {
+    echo 'theiactl: instance directory is not private' >&2
+    exit 1
+}
+export XPA_METHOD=unix
+export XPA_TMPDIR="$instance_dir"
+export XPA_NSUNIX="$instance_dir/xpans_unix"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [[ "$action" == get ]]; then
+    if [[ -x "$script_dir/xpaget" ]]; then helper="$script_dir/xpaget"; else helper=xpaget; fi
+    exec "$helper" ds9 "$@"
+fi
+if [[ -x "$script_dir/xpaset" ]]; then helper="$script_dir/xpaset"; else helper=xpaset; fi
+exec "$helper" -p ds9 "$@"

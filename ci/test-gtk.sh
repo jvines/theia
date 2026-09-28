@@ -11,4 +11,6 @@ fixture=Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
 ci/smoke-gtk.sh "$bin_path/theia-gtk" "$fixture"
 ci/smoke-gtk-http.sh "$bin_path/theia-gtk" "$fixture"
 ci/smoke-gtk-xpa.sh "$bin_path/theia-gtk" "$fixture"
+ci/smoke-gtk-xpa-unix.sh "$bin_path/theia-gtk"
+ci/smoke-gtk-multi-instance.sh "$bin_path/theia-gtk" "$fixture"
 scripts/test_xpa_local_security.sh "$bin_path"

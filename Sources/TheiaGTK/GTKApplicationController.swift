@@ -13,9 +13,13 @@ import XPABridge
     private let recentFiles = GTKRecentFiles()
     private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
     private let bridge = GTKMainLoopBridge()
-    private lazy var scriptingServer = GTKScriptingServer(controller: self)
+    private lazy var scriptingServer = GTKScriptingServer(
+        controller: self, runtimeDirectory: instanceRuntime?.directory
+    )
     private lazy var xpaBridge = GTKXPACommandBridge(controller: self)
     private var xpaServer: XPAServer?
+    private var xpaRuntime: GTKXPARuntime?
+    private var instanceRuntime: GTKInstanceRuntime?
     private var windows: [UUID: GTKDocumentWindow] = [:]
     private var lightCurveWindow: GTKLightCurveWindow?
     private(set) var settingsWindow: GTKSettingsWindow?
@@ -50,6 +54,7 @@ import XPABridge
     func run() -> Int32 {
         guard bridge.install() else { return 1 }
         do {
+            instanceRuntime = try GTKInstanceRuntime(paths: appPaths)
             try scriptingServer.start()
         } catch {
             fputs("Theia: scripting server unavailable: \(error)\n", stderr)
@@ -75,16 +80,36 @@ import XPABridge
         )
         xpaServer?.stop()
         xpaServer = nil
+        xpaRuntime?.stop()
+        xpaRuntime = nil
         scriptingServer.stop()
+        instanceRuntime?.stop()
+        instanceRuntime = nil
         bridge.remove()
         g_object_unref(UnsafeMutableRawPointer(application))
         return exitStatus == 0 ? status : exitStatus
     }
 
     private func startXPAServer() {
-        if let directory = Bundle.main.executableURL?.deletingLastPathComponent().path {
-            let previous = ProcessInfo.processInfo.environment["PATH"] ?? ""
-            setenv("PATH", previous.isEmpty ? directory : "\(directory):\(previous)", 1)
+        guard let directory = Bundle.main.executableURL?.deletingLastPathComponent(),
+              let instanceRuntime else { return }
+        let previous = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        setenv("PATH", previous.isEmpty ? directory.path : "\(directory.path):\(previous)", 1)
+        let environment = ProcessInfo.processInfo.environment
+        if environment["XPA_METHOD"] == "inet" {
+            guard environment["XPA_NSINET"]?.hasPrefix("127.0.0.1:") == true else {
+                fputs("Theia: inet XPA requires an explicit 127.0.0.1 XPA_NSINET\n", stderr)
+                return
+            }
+        } else {
+            do {
+                xpaRuntime = try GTKXPARuntime(
+                    instanceDirectory: instanceRuntime.directory, executableDirectory: directory
+                )
+            } catch {
+                fputs("Theia: private XPA unavailable: \(error)\n", stderr)
+                return
+            }
         }
         let server = XPAServer(delegate: xpaBridge)
         server.start()
@@ -313,7 +338,9 @@ import XPABridge
         }
         if let existing = infoWindows[key] { existing.present(); return }
         let window = GTKInfoWindow(application: application, kind: kind,
-                                   scriptingPort: scriptingServer.port) { [weak self] in
+                                   scriptingPort: scriptingServer.port,
+                                   scriptingTokenFile: instanceRuntime?.directory
+                                       .appendingPathComponent("scripting-token")) { [weak self] in
             self?.infoWindows.removeValue(forKey: key)
         }
         infoWindows[key] = window

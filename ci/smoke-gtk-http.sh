@@ -19,10 +19,16 @@ trap cleanup EXIT
 export XDG_RUNTIME_DIR="$runtime_root"
 "$app" >"$log" 2>&1 &
 app_pid=$!
-port_file="$runtime_root/theia/scripting-port"
-token_file="$runtime_root/theia/scripting-token"
+port_file=
+token_file=
 port=
 for _ in $(seq 1 100); do
+    instance_dir=$(find "$runtime_root/theia" -maxdepth 1 -type d \
+        -name "instance-$app_pid-*" -print -quit 2>/dev/null || true)
+    if [[ -n "$instance_dir" ]]; then
+        port_file="$instance_dir/scripting-port"
+        token_file="$instance_dir/scripting-token"
+    fi
     if [[ -f "$port_file" && -f "$token_file" ]]; then
         candidate=$(sed -n '1p' "$port_file")
         owner=$(sed -n '2p' "$port_file")

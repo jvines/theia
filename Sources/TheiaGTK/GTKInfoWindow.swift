@@ -9,7 +9,8 @@ import TheiaKit
     private let onDestroy: @MainActor () -> Void
 
     init(application: UnsafeMutablePointer<GtkApplication>, kind: AppWindowKind,
-         scriptingPort: UInt16, onDestroy: @escaping @MainActor () -> Void) {
+         scriptingPort: UInt16, scriptingTokenFile: URL? = nil,
+         onDestroy: @escaping @MainActor () -> Void) {
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(
             gtk_application_window_new(application)!
@@ -39,7 +40,8 @@ import TheiaKit
             gtk_window_set_title(widget, "HTTP Scripting Reference")
             gtk_window_set_default_size(widget, 730, 520)
             appendLabel("HTTP scripting is available on localhost only.", to: root)
-            let reference = Self.scriptingReference(port: scriptingPort)
+            let reference = Self.scriptingReference(port: scriptingPort,
+                                                    tokenFile: scriptingTokenFile)
             let scroll = gtk_scrolled_window_new()!
             gtk_widget_set_vexpand(scroll, 1)
             let view = gtk_text_view_new()!
@@ -132,8 +134,8 @@ import TheiaKit
         gdk_clipboard_set_text(gdk_display_get_clipboard(display), value)
     }
 
-    private static func scriptingReference(port: UInt16) -> String {
-        let tokenPath = (try? AppPaths(platform: .linux).tokenFile().path) ?? "(unavailable)"
+    private static func scriptingReference(port: UInt16, tokenFile: URL?) -> String {
+        let tokenPath = tokenFile?.path ?? "(unavailable)"
         let routes = ScriptingHTTPRouter.routeTable.map {
             "\($0.method) \($0.path)  \($0.summary)"
         }.joined(separator: "\n")
