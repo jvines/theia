@@ -5,7 +5,7 @@ import TheiaKit
 import XCTest
 @testable import TheiaGTK
 
-@MainActor private func documentWindowID() throws -> String {
+@MainActor private func documentWindowID(matching title: String = "uint8_simple.fits — Theia") throws -> String {
     let deadline = Date().addingTimeInterval(2)
     while Date() < deadline {
         _ = g_main_context_iteration(nil, 0)
@@ -22,7 +22,7 @@ import XCTest
         if search.terminationStatus == 0,
            let identifier = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .split(separator: "\n")
-            .first(where: { $0.contains("uint8_simple.fits — Theia") })?
+            .first(where: { $0.contains(title) })?
             .split(whereSeparator: \.isWhitespace).first.map(String.init) {
             return identifier
         }
@@ -346,6 +346,31 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(String(cString: gtk_label_get_text(OpaquePointer(secondPageFirstCell))), "100")
         XCTAssertEqual(String(cString: gtk_label_get_text(window.tablePanel.rangeLabel)),
                        "101–105 of 105 rows · 1 columns")
+    }
+
+    @MainActor func testGTKKeysReachSharedCanvasInteraction() throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        let id = try documentWindowID(matching: "theia-gtk-cube.fits — Theia")
+        XCTAssertEqual(gtk_widget_grab_focus(UnsafeMutablePointer<GtkWidget>(window.picture)), 1)
+
+        let key = Process()
+        key.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+        key.arguments = ["windowfocus", id, "key", "Right"]
+        try key.run()
+        let deadline = Date().addingTimeInterval(2)
+        while (key.isRunning || session.plane == 0) && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        key.waitUntilExit()
+        XCTAssertEqual(key.terminationStatus, 0)
+        XCTAssertEqual(session.plane, 1)
     }
 
     @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {

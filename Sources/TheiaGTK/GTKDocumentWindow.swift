@@ -106,6 +106,7 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_window_set_default_size(widget, 1100, 720)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
+        gtk_widget_set_focusable(UnsafeMutablePointer<GtkWidget>(picture), 1)
 
         let root = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!))
         let content = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!))
@@ -262,6 +263,7 @@ private final class RenderCancellation: @unchecked Sendable {
         installScrollController()
         installDragGesture()
         installMotionController()
+        installKeyController()
         installCubeControls()
         commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
         commandMenus.onToolAction = { [weak self] action in self?.handleToolAction(action) }
@@ -417,6 +419,52 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), controller)
     }
 
+    private func installKeyController() {
+        let controller = gtk_event_controller_key_new()!
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let pressed: @convention(c) (OpaquePointer?, guint, guint, guint, gpointer?) -> gboolean = {
+            _, keyval, _, state, userData in
+            guard let userData else { return 0 }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            return MainActor.assumeIsolated {
+                window.handleKey(keyval: keyval, state: state) ? 1 : 0
+            }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(controller), "key-pressed",
+                              unsafeBitCast(pressed, to: GCallback.self), context, release,
+                              GConnectFlags(rawValue: 0))
+        gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), controller)
+    }
+
+    private func handleKey(keyval: guint, state: guint) -> Bool {
+        guard let name = gdk_keyval_name(keyval).map(String.init(cString:)) else { return false }
+        let key: KeyEvent.Key
+        switch name {
+        case "Left": key = .leftArrow
+        case "Right": key = .rightArrow
+        case "Up": key = .upArrow
+        case "Down": key = .downArrow
+        case "space": key = .space
+        case "BackSpace": key = .delete
+        case "Delete": key = .forwardDelete
+        case "Escape": key = .escape
+        case "Return", "KP_Enter": key = .return
+        default:
+            guard let scalar = UnicodeScalar(gdk_keyval_to_unicode(keyval)),
+                  scalar.value >= 32 else { return false }
+            key = .character(String(Character(scalar)))
+        }
+        var modifiers: PointerEvent.Modifiers = []
+        if state & (1 << 0) != 0 { modifiers.insert(.shift) }
+        if state & (1 << 2) != 0 { modifiers.insert(.primary) }
+        if state & (1 << 3) != 0 { modifiers.insert(.option) }
+        return interaction.key(KeyEvent(key: key, modifiers: modifiers))
+    }
+
     private func handleMotion(x: Double, y: Double) {
         let pictureWidget = UnsafeMutablePointer<GtkWidget>(picture)
         var localX = 0.0
@@ -474,6 +522,7 @@ private final class RenderCancellation: @unchecked Sendable {
             UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), pictureWidget,
             x, y, &localX, &localY
         ) != 0, gtk_widget_contains(pictureWidget, localX, localY) != 0 else { return }
+        gtk_widget_grab_focus(pictureWidget)
         let button = gtk_gesture_single_get_current_button(gesture)
         dragButton = button == 2 ? .middle : button == 3 ? .secondary : .primary
         dragStart = SIMD2(localX, localY)
