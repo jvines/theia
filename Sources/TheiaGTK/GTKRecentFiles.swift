@@ -1,18 +1,25 @@
 import CGtk4
 import Foundation
+import TheiaKit
 
 /// The user's GTK recent-file database, filtered to FITS paths Theia can open.
 @MainActor final class GTKRecentFiles {
     private let manager: UnsafeMutablePointer<GtkRecentManager>
+    private let remoteStore: RemoteRecentStore
     private let extensions: Set<String> = ["fits", "fit", "fts", "fz"]
 
-    init() {
+    init(paths: AppPaths = AppPaths(platform: .linux)) {
         if g_get_application_name() == nil { g_set_application_name("Theia") }
         manager = gtk_recent_manager_get_default()!
+        remoteStore = RemoteRecentStore(paths: paths)
     }
 
     func record(_ url: URL) {
-        guard url.isFileURL else { return }
+        guard url.isFileURL else {
+            do { try remoteStore.record(url) }
+            catch { NSLog("[GTKRecentFiles] remote location not saved: \(error)") }
+            return
+        }
         url.absoluteString.withCString { uri in
             "image/fits".withCString { mime in
                 "Theia".withCString { name in
@@ -32,9 +39,15 @@ import Foundation
     }
 
     func urls(limit: Int = 10) -> [URL] {
-        guard let items = gtk_recent_manager_get_items(manager) else { return [] }
+        let remote: [URL]
+        do { remote = try remoteStore.urls(limit: limit) }
+        catch {
+            NSLog("[GTKRecentFiles] remote locations unavailable: \(error)")
+            remote = []
+        }
+        guard let items = gtk_recent_manager_get_items(manager) else { return remote }
         defer { g_list_free(items) }
-        var result: [URL] = []
+        var result = remote
         var node: UnsafeMutablePointer<GList>? = items
         while let current = node {
             if let raw = current.pointee.data {

@@ -196,6 +196,29 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testRemoteSourceSaveWritesSelectedLocalDestination() async throws {
+        try await MainActor.run {
+            let remote = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/remote.fits"))
+            let session = try makeSession(url: remote)
+            let asked = session.perform(.saveImageAsFITS, origin: .user)
+            guard case .ask(.savePath(let suggestedName, _), let request) = asked.effects.first else {
+                return XCTFail("A remote image should ask for a local save path")
+            }
+            XCTAssertEqual(suggestedName, "remote-modified.fits")
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("theia-remote-save-\(UUID().uuidString).fits")
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let answered = session.perform(.answer(request, .path(destination)), origin: .user)
+            guard case .saveImage(let snapshot, let selectedURL) = answered.effects.first else {
+                return XCTFail("Save should use the chosen local destination")
+            }
+            XCTAssertEqual(selectedURL, destination)
+            try snapshot.writeFITS(to: selectedURL)
+            XCTAssertEqual(session.url, remote)
+            XCTAssertEqual(try FITSFile(data: Data(contentsOf: destination)).hdus.count, 1)
+        }
+    }
+
     func testFITSAndRenderedExportCaptureTheDisplayedDerivedImage() async throws {
         try await MainActor.run {
             let session = try makeSession()
@@ -1777,7 +1800,8 @@ final class DocumentSessionTests: XCTestCase {
     }
 
     @MainActor
-    private func makeSession(catalogClient: CatalogClient? = nil) throws -> DocumentSession {
+    private func makeSession(catalogClient: CatalogClient? = nil,
+                             url: URL? = nil) throws -> DocumentSession {
         var data = Data()
         appendHDU(&data, cards: ["SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    0"], pixels: [])
         appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2) + wcsCards(suffix: "", ra: 10) + wcsCards(suffix: "A", ra: 20), pixels: Array(0..<8).map(UInt8.init))
@@ -1785,7 +1809,7 @@ final class DocumentSessionTests: XCTestCase {
         appendHDU(&data, cards: imageCards(width: 3, height: 2), pixels: [1, 2, 3, 4, 5, 6])
         appendHDU(&data, cards: ["XTENSION= 'BINTABLE'", "BITPIX  =                    8", "NAXIS   =                    2", "NAXIS1  =                    0", "NAXIS2  =                    0", "PCOUNT  =                    0", "GCOUNT  =                    1", "TFIELDS =                    0"], pixels: [])
         appendHDU(&data, cards: imageCards(width: 2, height: 2, depth: 2, fourthAxis: 2), pixels: Array(0..<16).map(UInt8.init))
-        return DocumentSession(url: URL(fileURLWithPath: "/tmp/session.fits"),
+        return DocumentSession(url: url ?? URL(fileURLWithPath: "/tmp/session.fits"),
                                file: try FITSFile(data: data), catalogClient: catalogClient)
     }
 

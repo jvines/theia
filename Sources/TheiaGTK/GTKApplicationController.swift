@@ -11,7 +11,7 @@ import XPABridge
     private let appPaths: AppPaths
     private let preferences: GTKPreferences
     private let workspace = Workspace()
-    private let recentFiles = GTKRecentFiles()
+    private let recentFiles: GTKRecentFiles
     private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
     private let bridge = GTKMainLoopBridge()
     private lazy var scriptingServer = GTKScriptingServer(
@@ -51,6 +51,7 @@ import XPABridge
         self.paths = paths
         self.appPaths = appPaths
         preferences = GTKPreferences(paths: appPaths)
+        recentFiles = GTKRecentFiles(paths: appPaths)
         application = gtk_application_new("cl.jvines.theia", GApplicationFlags(rawValue: 1 << 5))!
     }
 
@@ -194,8 +195,7 @@ import XPABridge
                 self?.presentRemoteOpenDialog(parent: parent)
             },
             onOpenRecent: { [weak self] url in
-                do { _ = try self?.open(path: url.path) }
-                catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
+                self?.openRecent(url)
             },
             onSettings: { [weak self] in self?.showSettingsWindow() },
             onDrop: { [weak self] paths in self?.openDropped(paths) },
@@ -299,10 +299,11 @@ import XPABridge
         if !recent.isEmpty {
             gtk_box_append(box, gtk_label_new("Recent FITS files"))
             for url in recent {
-                let button = gtk_button_new_with_label(url.lastPathComponent)!
+                let title = url.isFileURL ? url.lastPathComponent
+                    : "\(url.lastPathComponent) — \(url.host ?? "SSH")"
+                let button = gtk_button_new_with_label(title)!
                 GTKButtonAction { [weak self] in
-                    do { _ = try self?.open(path: url.path) }
-                    catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
+                    self?.openRecent(url)
                 }.connect(to: button)
                 gtk_box_append(box, button)
             }
@@ -318,6 +319,16 @@ import XPABridge
         for path in paths {
             do { _ = try open(path: path) }
             catch { fputs("Theia: cannot open \(path): \(error)\n", stderr) }
+        }
+    }
+
+    private func openRecent(_ url: URL) {
+        do {
+            if url.isFileURL { _ = try open(path: url.path) }
+            else { try beginRemoteOpen(at: url) }
+        } catch {
+            fputs("Theia: cannot open \(url.absoluteString): \(error)\n", stderr)
+            showOpenError(error, url: url)
         }
     }
 

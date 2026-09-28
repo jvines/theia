@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let xpaBridge = XPACommandBridge()
     private var xpaServer: XPAServer?
     private let viewCommandsMenu = ViewCommandsMenuController()
+    private let remoteRecentStore = RemoteRecentStore()
     private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
     private var workspace: Workspace { WindowSyncCoordinator.shared.workspace }
 
@@ -354,6 +355,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controllers.first { $0.window === window }?.documentModel.session
     }
 
+    var remoteRecentURLs: [URL] {
+        do { return try remoteRecentStore.urls() }
+        catch {
+            log("remote recent locations unavailable: \(error)")
+            return []
+        }
+    }
+
     @discardableResult
     func performWorkspaceMenuItem(_ id: WorkspaceMenuID) -> CommandOutcome {
         performWorkspaceCommand(CommandCatalog.workspaceMenuItem(id).command, origin: .user)
@@ -382,7 +391,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controllerDidFocus(controller)
             WelcomeWindowController.closeIfOpen()
         case .noteRecent(let url):
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            if url.isFileURL {
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            } else {
+                do { try remoteRecentStore.record(url) }
+                catch { log("remote recent location not saved: \(error)") }
+            }
         case .alert(let title, let message, let style):
             let alert = NSAlert()
             alert.messageText = title

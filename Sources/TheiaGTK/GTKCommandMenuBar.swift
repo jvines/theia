@@ -200,7 +200,10 @@ import TheiaKit
                 let name = identifier.replacingOccurrences(of: ".", with: "-")
                 recentURLs[identifier] = url
                 installAction(identifier: identifier, name: name)
-                g_menu_append(section, url.lastPathComponent, "win.\(name)")
+                let label = url.isFileURL ? url.lastPathComponent
+                    : "\(url.lastPathComponent) — \(url.host ?? "SSH")"
+                titles[identifier] = label
+                g_menu_append(section, label, "win.\(name)")
             }
             g_menu_append_section(submenu, "Open Recent",
                                   UnsafeMutablePointer<GMenuModel>(section))

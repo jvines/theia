@@ -15,7 +15,6 @@ final class WelcomeWindowController: NSWindowController {
         }
         let view = WelcomeView { url in
             AppDelegate.shared?.openDocument(at: url)
-            shared?.close()
         } openPanel: {
             AppDelegate.shared?.openDocumentAction(nil)
         }
@@ -132,7 +131,7 @@ private struct WelcomeView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(recentURLs, id: \.path) { url in
+                            ForEach(recentURLs, id: \.absoluteString) { url in
                                 Button {
                                     openURL(url)
                                 } label: {
@@ -141,7 +140,9 @@ private struct WelcomeView: View {
                                             .foregroundStyle(AppTheme.accent)
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(url.lastPathComponent).font(.body)
-                                            Text(url.deletingLastPathComponent().path)
+                                            Text(url.isFileURL
+                                                 ? url.deletingLastPathComponent().path
+                                                 : url.deletingLastPathComponent().absoluteString)
                                                 .font(.caption2)
                                                 .foregroundStyle(.tertiary)
                                                 .lineLimit(1)
@@ -193,7 +194,11 @@ private struct WelcomeView: View {
     }
 
     private var recentURLs: [URL] {
-        NSDocumentController.shared.recentDocumentURLs
+        let remote = AppDelegate.shared?.remoteRecentURLs ?? []
+        let local = NSDocumentController.shared.recentDocumentURLs.filter { url in
+            !remote.contains(url)
+        }
+        return remote + local
     }
 
     /// First FITS we find in the project's `test_data/` folder (handy for dev launches),
