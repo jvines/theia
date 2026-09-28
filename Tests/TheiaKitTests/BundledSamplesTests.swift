@@ -38,6 +38,25 @@ final class BundledSamplesTests: XCTestCase {
         }
     }
 
+    func testTauCetiFerosExampleOpensAsAnEchelleCube() throws {
+        let name = "feros_tau_ceti_20240730.fits"
+        let url = sampleDirectory.appendingPathComponent(name)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "Missing FEROS example")
+        let sample = try XCTUnwrap(BundledSamples.available(in: sampleDirectory)
+            .first { $0.fileName == name })
+        XCTAssertEqual(sample.title, "FEROS Tau Ceti echelle spectrum")
+
+        let file = try FITSFile(data: Data(contentsOf: sample.url))
+        let image = try XCTUnwrap(file.hdus.first { $0.isImage })
+        XCTAssertEqual(image.axes, [4096, 25, 11])
+        let wavelengths = try FITSImage(hdu: image, plane: 0)
+        let flux = try FITSImage(hdu: image, plane: 1)
+        XCTAssertEqual(wavelengths.physicalValue(x: 2000, y: 10), 5149.76332662499,
+                       accuracy: 0.000001)
+        XCTAssertEqual(flux.physicalValue(x: 2000, y: 10), 29788.49510487089,
+                       accuracy: 0.000001)
+    }
+
     private var sampleDirectory: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -13,6 +13,7 @@ public enum BundledSamples {
         ("Hubble NICMOS image", "nicmos_mosaic.fits"),
         ("Hubble WFPC2 cube", "wfpc2_cube.fits"),
         ("Hubble FOS spectrum and table", "fos_bintable.fits"),
+        ("FEROS Tau Ceti echelle spectrum", "feros_tau_ceti_20240730.fits"),
     ]
 
     public static func available(in directory: URL) -> [BundledSample] {

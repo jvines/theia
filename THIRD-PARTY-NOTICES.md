@@ -9,6 +9,12 @@ The Mac and Linux packages also contain three Hubble FITS examples from the
 to NASA/STScI. File-level provenance is in
 [`resources/samples/README.md`](resources/samples/README.md).
 
+They also contain a reduced Tau Ceti FEROS spectrum from an ESO observation,
+credited to the European Southern Observatory. ESO distributes its archive data
+under [CC BY 4.0](https://www.eso.org/cms/eso-data-access-policy.html), which
+permits redistribution with credit and preserved FITS headers. File-level
+provenance is in [`resources/samples/README.md`](resources/samples/README.md).
+
 ## CFITSIO — `Sources/CFITSIO`
 
 FITS file I/O library by William Pence, High Energy Astrophysics Science Archive
