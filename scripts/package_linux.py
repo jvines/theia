@@ -79,6 +79,9 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
         'export GIO_EXTRA_MODULES="$app_dir/lib/gio/modules${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"\n'
         'export XDG_DATA_DIRS="$app_dir/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n'
         'export FONTCONFIG_FILE="$app_dir/share/fontconfig/fonts.conf"\n'
+        # The bundled fontconfig was built for /usr/local; resolve the host
+        # config's relative includes (conf.d, local.conf) against /etc/fonts.
+        'export FONTCONFIG_PATH="${FONTCONFIG_PATH:-/etc/fonts}"\n'
         'export THEIA_LOCALE_DIR="$app_dir/share/locale"\n'
         'exec "$app_dir/bin/theia-gtk" "$@"\n'
     )
@@ -142,7 +145,7 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
     shutil.copy2(resources / "fonts.conf", font_config)
     fonts = font_config / "fonts"
     fonts.mkdir()
-    for name in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+    for name in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf", "DejaVuSansMono.ttf"):
         shutil.copy2(Path("/usr/share/fonts/dejavu") / name, fonts)
 
     licenses = stage / "share/doc/theia"

@@ -87,6 +87,7 @@ jobs:
               for sample in nicmos_mosaic.fits wfpc2_cube.fits fos_bintable.fits feros_tau_ceti_20240730.fits; do
                 test -s "$stage/share/theia/samples/$sample"
               done
+              ci/check-package-fonts.sh "$stage"
               scripts/package_appimage.sh "$stage" "$stage.AppImage"
             '
 

@@ -95,6 +95,10 @@ RUN git clone --branch 0.19.1 --depth 1 https://github.com/NixOS/patchelf.git /t
     && ninja -C /tmp/patchelf-build -j 4 install \
     && rm -rf /tmp/patchelf-src /tmp/patchelf-build
 
+# The package bundles a monospace face so FITS headers stay aligned on hosts
+# without fonts. Installed late to keep the cached GTK layers above.
+RUN dnf install -y dejavu-sans-mono-fonts && dnf clean all
+
 ENV LD_LIBRARY_PATH=/usr/local/lib64:/opt/rh/gcc-toolset-13/root/usr/lib64
 ENV FONTCONFIG_FILE=/etc/fonts/fonts.conf
 ENV GSK_RENDERER=cairo

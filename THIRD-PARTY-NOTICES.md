@@ -67,6 +67,6 @@ source is at [VideoLAN](https://www.videolan.org/developers/x264.html).
 
 ## DejaVu fonts — Linux package
 
-The Linux package contains DejaVu Sans and Sans Bold for systems
-without installed fonts. Their license is reproduced in the package as
+The Linux package contains DejaVu Sans, Sans Bold and Sans Mono for
+systems without installed fonts. Their license is reproduced in the package as
 `share/doc/theia/DejaVu-LICENSE`.
