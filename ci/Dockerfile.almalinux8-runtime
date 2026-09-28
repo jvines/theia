@@ -3,7 +3,7 @@ FROM almalinux:8.10@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756d
 
 RUN dnf install -y \
         xorg-x11-server-Xvfb xorg-x11-utils xorg-x11-xauth \
-        curl util-linux python3 \
+        curl util-linux python3 openssh-server openssh-clients \
     && dnf clean all
 
 WORKDIR /src

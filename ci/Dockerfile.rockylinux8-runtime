@@ -3,7 +3,7 @@ FROM rockylinux:8@sha256:9794037624aaa6212aeada1d28861ef5e0a935adaf93e4ef7983711
 
 RUN dnf install -y \
         xorg-x11-server-Xvfb xorg-x11-utils xorg-x11-xauth \
-        curl util-linux python3 \
+        curl util-linux python3 openssh-server openssh-clients \
     && dnf clean all
 
 WORKDIR /src

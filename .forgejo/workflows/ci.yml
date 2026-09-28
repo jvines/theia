@@ -113,6 +113,14 @@ jobs:
               xvfb-run -a ci/smoke-gtk-xpa-unix.sh /opt/theia/bin/theia
             '
           for runtime_image in theia-runtime-smoke:ci theia-rocky-runtime-smoke:ci; do
+            docker run --rm --platform linux/amd64 \
+              --mount type=bind,source="$PWD",target=/src,readonly \
+              --mount type=bind,source="$stage",target=/opt/theia,readonly \
+              --workdir /src "$runtime_image" sh -ec '
+                bash ci/smoke-gtk-ssh-x.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              '
+          done
+          for runtime_image in theia-runtime-smoke:ci theia-rocky-runtime-smoke:ci; do
             docker run --rm --platform linux/amd64 --user 1000:1000 \
               --mount type=bind,source="$PWD",target=/src,readonly \
               --mount type=bind,source="$stage.AppImage",target=/opt/theia.AppImage,readonly \
