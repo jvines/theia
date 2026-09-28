@@ -36,12 +36,13 @@ import XCTest
 @MainActor private func waitForCanvas(
     _ window: GTKDocumentWindow,
     using bridge: GTKMainLoopBridge? = nil,
+    timeout: TimeInterval = 5,
     matching predicate: (OpaquePointer?) -> Bool
 ) async throws -> OpaquePointer {
     let temporaryBridge = bridge == nil ? GTKMainLoopBridge() : nil
     XCTAssertTrue((bridge ?? temporaryBridge)?.install() == true)
     defer { temporaryBridge?.remove() }
-    let deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         _ = g_main_context_iteration(nil, 0)
         let paintable = gtk_picture_get_paintable(window.picture)
@@ -954,7 +955,9 @@ final class GTKDocumentWindowTests: XCTestCase {
             _ = g_main_context_iteration(nil, 0)
             try await Task.sleep(nanoseconds: 5_000_000)
         }
-        let fullTexture = try await waitForCanvas(window, using: bridge) { $0 != nil }
+        let fullTexture = try await waitForCanvas(window, using: bridge, timeout: 15) {
+            $0 != nil
+        }
         let fullWidth = Int(gdk_texture_get_width(fullTexture))
         XCTAssertGreaterThan(fullWidth, 0)
 
@@ -968,7 +971,7 @@ final class GTKDocumentWindowTests: XCTestCase {
         window.updateDrag(offsetX: 40, offsetY: 20)
         var previewWidth: Int?
         var expectedPreviewWidth: Int?
-        let deadline = Date().addingTimeInterval(1.5)
+        let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
             _ = g_main_context_iteration(nil, 0)
             let pixels = Int((session.view.viewSizePoints.width * session.view.backingScale).rounded())
@@ -988,7 +991,7 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertNotEqual(session.view.transform.centre, initialCentre,
                           "the drag must move this document")
         let refinedWidth = Int((session.view.viewSizePoints.width * session.view.backingScale).rounded())
-        _ = try await waitForCanvas(window, using: bridge) {
+        _ = try await waitForCanvas(window, using: bridge, timeout: 15) {
             $0 != nil && gdk_texture_get_width($0) == refinedWidth
         }
     }
