@@ -11,6 +11,11 @@ print(re.search(r'public static let string = "([^"]+)"', source).group(1))
 PY
 )
 architecture=$(uname -m)
+revision=${THEIA_SOURCE_REVISION:-$(git rev-parse HEAD 2>/dev/null || true)}
+[[ "$revision" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'a full source Git SHA is required for release metadata' >&2
+    exit 1
+}
 distribution=${DIST_DIR:-"$PWD/dist"}
 swift_args=(-c "$config")
 if [[ -n "${THEIA_SWIFT_SCRATCH_PATH:-}" ]]; then
@@ -26,4 +31,6 @@ name="Theia-${version}-linux-${architecture}"
 python3.11 scripts/package_linux.py \
     --bin-dir "$binary_dir" \
     --stage-dir "$distribution/$name" \
-    --archive "$distribution/$name.tar.xz"
+    --archive "$distribution/$name.tar.xz" \
+    --version "$version" \
+    --revision "$revision"

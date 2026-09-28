@@ -2,7 +2,9 @@
 """Assemble an EL8-built Theia executable and its runtime into a relocatable tree."""
 
 import argparse
+import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -47,7 +49,7 @@ def patch_rpaths(stage: Path, binaries: list[Path], libraries: list[Path]) -> No
         run("patchelf", "--set-rpath", rpath, str(path))
 
 
-def assemble(bin_dir: Path, stage: Path) -> None:
+def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
     if stage.exists():
         raise FileExistsError(f"package output already exists: {stage}")
     binary_dir = stage / "bin"
@@ -77,6 +79,7 @@ def assemble(bin_dir: Path, stage: Path) -> None:
         'export GIO_EXTRA_MODULES="$app_dir/lib/gio/modules${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"\n'
         'export XDG_DATA_DIRS="$app_dir/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\n'
         'export FONTCONFIG_FILE="$app_dir/share/fontconfig/fonts.conf"\n'
+        'export THEIA_LOCALE_DIR="$app_dir/share/locale"\n'
         'exec "$app_dir/bin/theia-gtk" "$@"\n'
     )
     launcher.chmod(0o755)
@@ -97,6 +100,20 @@ def assemble(bin_dir: Path, stage: Path) -> None:
 
     schemas = stage / "share/glib-2.0/schemas"
     shutil.copytree("/usr/local/share/glib-2.0/schemas", schemas)
+    locales = stage / "share/locale"
+    for source_root in (Path("/usr/local/share/locale"), Path("/usr/share/locale")):
+        for source in source_root.glob("*/LC_MESSAGES/*.mo"):
+            if source_root != Path("/usr/local/share/locale") and source.stem not in {
+                "gtk40", "glib20", "gdk-pixbuf",
+            }:
+                continue
+            destination = locales / source.relative_to(source_root)
+            if destination.exists():
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+    if not any(locales.glob("*/LC_MESSAGES/gtk40.mo")):
+        raise FileNotFoundError("GTK translation catalogs were not installed in the build image")
     resources = ROOT / "resources/linux"
     applications = stage / "share/applications"
     applications.mkdir(parents=True)
@@ -136,6 +153,24 @@ def assemble(bin_dir: Path, stage: Path) -> None:
     shutil.copy2(resources / "GPL-3.0.txt", licenses / "FFmpeg-GPL-3.0.txt")
     shutil.copy2("/usr/share/doc/dejavu-fonts-common/LICENSE", licenses / "DejaVu-LICENSE")
 
+    metadata = stage / "share/theia"
+    metadata.mkdir(parents=True)
+    swift_version = subprocess.run(
+        ["swift", "--version"], check=True, capture_output=True, text=True
+    ).stdout.splitlines()[0]
+    gtk_version = subprocess.run(
+        ["pkg-config", "--modversion", "gtk4"], check=True,
+        capture_output=True, text=True
+    ).stdout.strip()
+    (metadata / "build.json").write_text(json.dumps({
+        "schemaVersion": 1,
+        "version": version,
+        "revision": revision,
+        "architecture": platform.machine(),
+        "swiftToolchain": swift_version,
+        "gtkVersion": gtk_version,
+    }, indent=2) + "\n")
+
     libraries = sorted(library_dir.glob("*.so*"))
     patch_rpaths(stage, binaries, libraries + modules)
     for binary in binaries:
@@ -150,12 +185,14 @@ def main() -> None:
     parser.add_argument("--bin-dir", type=Path, required=True)
     parser.add_argument("--stage-dir", type=Path, required=True)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--revision", required=True)
     options = parser.parse_args()
     stage = options.stage_dir.resolve()
     archive = options.archive.resolve() if options.archive else None
     if archive and archive.exists():
         raise FileExistsError(f"package archive already exists: {archive}")
-    assemble(options.bin_dir.resolve(), stage)
+    assemble(options.bin_dir.resolve(), stage, options.version, options.revision)
     if archive:
         archive.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive, "w:xz") as output:

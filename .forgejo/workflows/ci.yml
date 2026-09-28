@@ -65,6 +65,7 @@ jobs:
           release_dir=$(mktemp -d /tmp/theia-linux-ci.XXXXXX)
           trap 'rm -rf "$release_dir"' EXIT
           docker run --rm --platform linux/amd64 --label cl.jvines.owner=theia-ci \
+            -e THEIA_SOURCE_REVISION="$GITHUB_SHA" \
             --mount type=bind,source="$PWD",target=/src,readonly \
             --mount type=bind,source="$release_dir",target=/out \
             --workdir /tmp "$(cat ci-image-id)" sh -ec '

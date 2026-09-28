@@ -117,6 +117,7 @@ import XPABridge
     }
 
     private func activate() {
+        GTKTranslations.configure()
         for path in paths {
             do {
                 _ = try open(path: path)
