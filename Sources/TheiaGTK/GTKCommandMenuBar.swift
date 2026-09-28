@@ -8,14 +8,18 @@ import TheiaKit
     private let model: OpaquePointer
     private let window: UnsafeMutablePointer<GtkWindow>
     private let session: DocumentSession
+    private let recentFiles: GTKRecentFiles
     private var observerID: UUID?
     private var commands: [String: SessionCommand] = [:]
     private var toolActions: [String: ToolMenuAction] = [:]
+    private var recentURLs: [String: URL] = [:]
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
     private var titles: [String: String] = [:]
     var onOutcome: (@MainActor (CommandOutcome) -> Void)?
     var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
+    var onOpen: (@MainActor () -> Void)?
+    var onOpenRecent: (@MainActor (URL) -> Void)?
 
     var sectionCount: Int {
         Int(g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(model)))
@@ -26,9 +30,11 @@ import TheiaKit
         return g_action_get_enabled(action) != 0
     }
 
-    init(window: UnsafeMutablePointer<GtkWindow>, session: DocumentSession) {
+    init(window: UnsafeMutablePointer<GtkWindow>, session: DocumentSession,
+         recentFiles: GTKRecentFiles) {
         self.window = window
         self.session = session
+        self.recentFiles = recentFiles
         model = g_menu_new()!
         widget = gtk_popover_menu_bar_new_from_model(UnsafeMutablePointer<GMenuModel>(model))!
         rebuild()
@@ -57,11 +63,15 @@ import TheiaKit
         g_action_activate(action, nil)
     }
 
+    func refresh() { rebuild() }
+
     private func rebuild() {
         g_menu_remove_all(model)
         titles.removeAll()
         commands.removeAll()
         toolActions.removeAll()
+        recentURLs.removeAll()
+        appendFileMenu()
         let groups: [(String, [CommandMenuEntry])] = [
             ("View", CommandCatalog.viewMenu(for: session)),
             ("Image", CommandCatalog.imageMenu(for: session)),
@@ -113,6 +123,29 @@ import TheiaKit
             g_object_unref(UnsafeMutableRawPointer(submenu))
         }
         appendToolsMenu()
+    }
+
+    private func appendFileMenu() {
+        let submenu = g_menu_new()!
+        let openName = "file-open"
+        installAction(identifier: "file.open", name: openName)
+        g_menu_append(submenu, "Open…", "win.\(openName)")
+        let recent = recentFiles.urls()
+        if !recent.isEmpty {
+            let section = g_menu_new()!
+            for (index, url) in recent.enumerated() {
+                let identifier = "file.recent.\(index)"
+                let name = identifier.replacingOccurrences(of: ".", with: "-")
+                recentURLs[identifier] = url
+                installAction(identifier: identifier, name: name)
+                g_menu_append(section, url.lastPathComponent, "win.\(name)")
+            }
+            g_menu_append_section(submenu, "Open Recent",
+                                  UnsafeMutablePointer<GMenuModel>(section))
+            g_object_unref(UnsafeMutableRawPointer(section))
+        }
+        g_menu_append_submenu(model, "File", UnsafeMutablePointer<GMenuModel>(submenu))
+        g_object_unref(UnsafeMutableRawPointer(submenu))
     }
 
     private func appendToolsMenu() {
@@ -177,7 +210,11 @@ import TheiaKit
             MainActor.assumeIsolated {
                 guard let name = g_action_get_name(action).map(String.init(cString:)),
                       let identifier = menu.actionIDs[name] else { return }
-                if let command = menu.commands[identifier] {
+                if identifier == "file.open" {
+                    menu.onOpen?()
+                } else if let url = menu.recentURLs[identifier] {
+                    menu.onOpenRecent?(url)
+                } else if let command = menu.commands[identifier] {
                     menu.onOutcome?(menu.session.perform(command, origin: .user))
                 } else if let tool = menu.toolActions[identifier] {
                     menu.onToolAction?(tool)

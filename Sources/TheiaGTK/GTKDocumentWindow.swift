@@ -58,6 +58,8 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var activeNumberDialog: GTKNumberDialog?
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
+    private let onOpenRecent: @MainActor (URL) -> Void
+    private let onDrop: @MainActor ([String]) -> Void
     private var observerID: UUID?
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
@@ -77,15 +79,21 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
+         recentFiles: GTKRecentFiles? = nil,
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
+         onOpenRecent: @escaping @MainActor (URL) -> Void = { _ in },
+         onDrop: @escaping @MainActor ([String]) -> Void = { _ in },
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
         interaction = InteractionController(view: session.view, mode: .full, session: session)
         interaction.drawMode = session.mode
         self.onOpen = onOpen
+        self.onOpenRecent = onOpenRecent
+        self.onDrop = onDrop
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
-        commandMenus = GTKCommandMenuBar(window: widget, session: session)
+        commandMenus = GTKCommandMenuBar(window: widget, session: session,
+                                         recentFiles: recentFiles ?? GTKRecentFiles())
         inspector = GTKInspectorPanel(session: session)
         tablePanel = GTKTablePanel()
         picture = OpaquePointer(gtk_picture_new()!)
@@ -265,8 +273,16 @@ private final class RenderCancellation: @unchecked Sendable {
         installMotionController()
         installKeyController()
         installCubeControls()
+        GTKFileDropTarget.install(on: UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget))) {
+            [weak self] paths in self?.onDrop(paths)
+        }
         commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
         commandMenus.onToolAction = { [weak self] action in self?.handleToolAction(action) }
+        commandMenus.onOpen = { [weak self] in
+            guard let self else { return }
+            self.onOpen(self.widget)
+        }
+        commandMenus.onOpenRecent = { [weak self] url in self?.onOpenRecent(url) }
         frameDriver = SessionFrameDriver(
             session: session,
             startPulses: { [weak self] in self?.startFramePulses() },
@@ -944,4 +960,6 @@ private final class RenderCancellation: @unchecked Sendable {
         connectSurfaceLayout()
         scheduleCanvasSizeSync()
     }
+
+    func refreshRecentMenu() { commandMenus.refresh() }
 }

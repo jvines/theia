@@ -8,6 +8,7 @@ import XPABridge
     let application: UnsafeMutablePointer<GtkApplication>
     private let paths: [String]
     private let workspace = Workspace()
+    private let recentFiles = GTKRecentFiles()
     private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
     private let bridge = GTKMainLoopBridge()
     private lazy var scriptingServer = GTKScriptingServer(controller: self)
@@ -103,13 +104,21 @@ import XPABridge
             return DocumentSession(url: url, file: try FITSFile(data: data),
                                    catalogClient: catalogClient)
         }
+        recentFiles.record(opened.session.url)
+        for window in windows.values { window.refreshRecentMenu() }
         if let existing = windows[opened.session.id] {
             existing.present()
             return existing
         }
         let window = GTKDocumentWindow(
             application: application, session: opened.session,
-            onOpen: { [weak self] parent in self?.presentOpenDialog(parent: parent) }
+            recentFiles: recentFiles,
+            onOpen: { [weak self] parent in self?.presentOpenDialog(parent: parent) },
+            onOpenRecent: { [weak self] url in
+                do { _ = try self?.open(path: url.path) }
+                catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
+            },
+            onDrop: { [weak self] paths in self?.openDropped(paths) }
         ) { [weak self, weak session = opened.session] in
             guard let self, let session else { return }
             self.windows.removeValue(forKey: session.id)
@@ -143,8 +152,30 @@ import XPABridge
             self.presentOpenDialog(parent: parent)
         }.connect(to: openButton)
         gtk_box_append(box, openButton)
+        let recent = recentFiles.urls(limit: 5)
+        if !recent.isEmpty {
+            gtk_box_append(box, gtk_label_new("Recent FITS files"))
+            for url in recent {
+                let button = gtk_button_new_with_label(url.lastPathComponent)!
+                GTKButtonAction { [weak self] in
+                    do { _ = try self?.open(path: url.path) }
+                    catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
+                }.connect(to: button)
+                gtk_box_append(box, button)
+            }
+        }
         gtk_window_set_child(window, UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)))
+        GTKFileDropTarget.install(on: UnsafeMutablePointer<GtkWidget>(OpaquePointer(window))) {
+            [weak self] paths in self?.openDropped(paths)
+        }
         gtk_window_present(window)
+    }
+
+    private func openDropped(_ paths: [String]) {
+        for path in paths {
+            do { _ = try open(path: path) }
+            catch { fputs("Theia: cannot open \(path): \(error)\n", stderr) }
+        }
     }
 
     func presentOpenDialog(parent: UnsafeMutablePointer<GtkWindow>?) {

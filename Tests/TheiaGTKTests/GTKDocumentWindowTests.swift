@@ -179,7 +179,7 @@ final class GTKDocumentWindowTests: XCTestCase {
         let window = GTKDocumentWindow(application: application, session: session)
         defer { gtk_window_destroy(window.widget) }
 
-        XCTAssertEqual(window.commandMenus.sectionCount, 10)
+        XCTAssertEqual(window.commandMenus.sectionCount, 11)
         XCTAssertNotNil(gtk_widget_get_parent(window.commandMenus.widget))
         XCTAssertEqual(window.commandMenus.title(for: "map.viridis"), "Viridis")
         XCTAssertFalse(window.commandMenus.isEnabled("region.clear"))
