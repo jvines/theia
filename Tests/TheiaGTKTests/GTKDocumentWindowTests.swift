@@ -1,6 +1,7 @@
 import CGtk4
 import FITSCore
 import Foundation
+import Glibc
 import TheiaKit
 import XCTest
 @testable import TheiaGTK
@@ -915,6 +916,76 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(gdk_texture_get_height(paintable), 152)
         XCTAssertEqual(session.view.viewSizePoints.width, 201)
         XCTAssertEqual(session.view.backingScale, 1.5)
+    }
+
+    @MainActor func testRemoteDragUsesReducedTextureAndRefinesOnRelease() async throws {
+        let previousSSH = getenv("SSH_CONNECTION").map { String(cString: $0) }
+        setenv("SSH_CONNECTION", "client 12345 cluster 22", 1)
+        defer {
+            if let previousSSH { setenv("SSH_CONNECTION", previousSSH, 1) }
+            else { unsetenv("SSH_CONNECTION") }
+        }
+
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL,
+                                      file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let bridge = GTKMainLoopBridge()
+        XCTAssertTrue(bridge.install())
+        defer { bridge.remove() }
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        let picture = UnsafeMutablePointer<GtkWidget>(window.picture)
+        let layoutDeadline = Date().addingTimeInterval(2)
+        while gtk_widget_get_width(picture) == 0 && Date() < layoutDeadline {
+            _ = g_main_context_iteration(nil, 0)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let fullTexture = try await waitForCanvas(window) { $0 != nil }
+        let fullWidth = Int(gdk_texture_get_width(fullTexture))
+        XCTAssertGreaterThan(fullWidth, 0)
+
+        let initialCentre = session.view.transform.centre
+        XCTAssertTrue(GTKDisplayPolicy.isRemoteDisplay(
+            environment: ProcessInfo.processInfo.environment
+        ))
+        window.beginDrag(at: SIMD2(Double(gtk_widget_get_width(picture)) / 2,
+                                   Double(gtk_widget_get_height(picture)) / 2),
+                         button: .primary)
+        window.updateDrag(offsetX: 40, offsetY: 20)
+        var previewWidth: Int?
+        var expectedPreviewWidth: Int?
+        let deadline = Date().addingTimeInterval(1.5)
+        while Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            let pixels = Int((session.view.viewSizePoints.width * session.view.backingScale).rounded())
+            let expected = 1 + (pixels - 1) / 4
+            if let texture = gtk_picture_get_paintable(window.picture),
+               gdk_texture_get_width(texture) == expected {
+                previewWidth = Int(gdk_texture_get_width(texture))
+                expectedPreviewWidth = expected
+                break
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(previewWidth, expectedPreviewWidth,
+                       "remote drag should show a quarter-resolution texture")
+        XCTAssertNotNil(previewWidth, "remote drag should show a reduced texture")
+        window.endDrag(offsetX: 40, offsetY: 20)
+        XCTAssertNotEqual(session.view.transform.centre, initialCentre,
+                          "the drag must move this document")
+        let refinedWidth = Int((session.view.viewSizePoints.width * session.view.backingScale).rounded())
+        _ = try await waitForCanvas(window) {
+            $0 != nil && gdk_texture_get_width($0) == refinedWidth
+        }
     }
 
     @MainActor func testCanvasTracksAllocatedWindowSize() async throws {

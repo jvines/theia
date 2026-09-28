@@ -16,5 +16,8 @@ final class GTKDisplayPolicyTests: XCTestCase {
         XCTAssertFalse(GTKDisplayPolicy.shouldUseCairo(environment: [
             "DISPLAY": "localhost:10.0", "GSK_RENDERER": "ngl",
         ]))
+        XCTAssertTrue(GTKDisplayPolicy.isRemoteDisplay(environment: [
+            "DISPLAY": "localhost:10.0", "GSK_RENDERER": "ngl",
+        ]))
     }
 }

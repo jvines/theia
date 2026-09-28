@@ -11,6 +11,10 @@ enum GTKDisplayPolicy {
     static func shouldUseCairo(environment: [String: String]) -> Bool {
         // GSK_RENDERER is the explicit diagnostic override, including on forwarded displays.
         if environment["GSK_RENDERER"] != nil { return false }
+        return isRemoteDisplay(environment: environment)
+    }
+
+    static func isRemoteDisplay(environment: [String: String]) -> Bool {
         if environment["SSH_CONNECTION"]?.isEmpty == false ||
            environment["SSH_CLIENT"]?.isEmpty == false ||
            environment["WAYPIPE_DISPLAY"]?.isEmpty == false { return true }

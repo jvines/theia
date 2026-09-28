@@ -78,6 +78,9 @@ private final class RenderCancellation: @unchecked Sendable {
     private let onWorkspaceCommand: @MainActor (WorkspaceCommand) -> Void
     private let onWorkspaceToolAction: @MainActor (ToolMenuAction, DocumentSession) -> Void
     private let onFocus: @MainActor () -> Void
+    private let remoteDisplay = GTKDisplayPolicy.isRemoteDisplay(
+        environment: ProcessInfo.processInfo.environment
+    )
     private var observerID: UUID?
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
@@ -615,15 +618,20 @@ private final class RenderCancellation: @unchecked Sendable {
         ) != 0, gtk_widget_contains(pictureWidget, localX, localY) != 0 else { return }
         gtk_widget_grab_focus(pictureWidget)
         let button = gtk_gesture_single_get_current_button(gesture)
-        dragButton = button == 2 ? .middle : button == 3 ? .secondary : .primary
-        dragStart = SIMD2(localX, localY)
+        beginDrag(at: SIMD2(localX, localY),
+                  button: button == 2 ? .middle : button == 3 ? .secondary : .primary)
+    }
+
+    func beginDrag(at location: SIMD2<Double>, button: PointerEvent.Button) {
+        dragButton = button
+        dragStart = location
         _ = interaction.pointer(PointerEvent(
-            phase: .down, button: dragButton, location: SIMD2(localX, localY)
+            phase: .down, button: dragButton, location: location
         ))
         handleInteractionEffects()
     }
 
-    private func updateDrag(offsetX: Double, offsetY: Double) {
+    func updateDrag(offsetX: Double, offsetY: Double) {
         guard let dragStart else { return }
         _ = interaction.pointer(PointerEvent(
             phase: .dragged, button: dragButton,
@@ -631,14 +639,15 @@ private final class RenderCancellation: @unchecked Sendable {
         ))
     }
 
-    private func endDrag(offsetX: Double, offsetY: Double) {
+    func endDrag(offsetX: Double, offsetY: Double) {
         guard let dragStart else { return }
+        self.dragStart = nil
         _ = interaction.pointer(PointerEvent(
             phase: .up, button: dragButton,
             location: dragStart + SIMD2(offsetX, offsetY)
         ))
         handleInteractionEffects()
-        self.dragStart = nil
+        if remoteDisplay { renderCanvas() }
     }
 
     private func handleInteractionEffects() {
@@ -1167,6 +1176,7 @@ private final class RenderCancellation: @unchecked Sendable {
             let levels = RasterLevels(vmin: session.view.vmin, vmax: session.view.vmax)
             let colorMap = session.view.colorMap
             let parameter = session.view.stretchParameter
+            let sampleStep = remoteDisplay && dragStart != nil ? 4 : 1
             let builder = displayBuilder
             let cancellation = RenderCancellation()
             renderTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -1181,6 +1191,7 @@ private final class RenderCancellation: @unchecked Sendable {
                     guard !cancellation.isCancelled else { return }
                     guard let raster = ViewportRasterizer.renderViewportCheckingCancellation(
                         display, mapping: mapping, width: pixelWidth, height: pixelHeight,
+                        sampleStep: sampleStep,
                         stretch: stretch, levels: levels, colorMap: colorMap,
                         parameter: parameter, shouldCancel: { cancellation.isCancelled }
                     ) else { return }
