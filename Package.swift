@@ -6,11 +6,11 @@ let xpaToolLinkerSettings: [LinkerSetting] = [
 ]
 
 #if os(macOS)
-let macOSProducts: [Product] = [
+let platformProducts: [Product] = [
     .executable(name: "Theia", targets: ["FITSViewerApp"]),
     .library(name: "FITSRender", targets: ["FITSRender"]),
 ]
-let macOSTargets: [Target] = [
+let platformTargets: [Target] = [
     .executableTarget(
         name: "FITSViewerApp",
         dependencies: ["FITSCore", "FITSRaster", "TheiaKit", "FITSRender", "XPABridge"],
@@ -33,9 +33,27 @@ let macOSTargets: [Target] = [
         path: "Tests/FITSViewerAppTests"
     ),
 ]
+#elseif os(Linux)
+let platformProducts: [Product] = [
+    .executable(name: "theia-gtk", targets: ["TheiaGTK"]),
+]
+let platformTargets: [Target] = [
+    .systemLibrary(name: "CGtk4", path: "Sources/CGtk4", pkgConfig: "gtk4"),
+    .executableTarget(
+        name: "TheiaGTK",
+        dependencies: ["CGtk4", "FITSCore", "TheiaKit", "FITSRaster", "XPABridge"],
+        path: "Sources/TheiaGTK"
+    ),
+    .testTarget(
+        name: "TheiaGTKTests",
+        dependencies: ["TheiaGTK", "CGtk4", "FITSRaster", "FITSCore", "TheiaKit"],
+        path: "Tests/TheiaGTKTests",
+        resources: [.copy("Fixtures")]
+    ),
+]
 #else
-let macOSProducts: [Product] = []
-let macOSTargets: [Target] = []
+let platformProducts: [Product] = []
+let platformTargets: [Target] = []
 #endif
 
 let package = Package(
@@ -46,7 +64,7 @@ let package = Package(
         .library(name: "FITSRaster", targets: ["FITSRaster"]),
         .library(name: "TheiaKit", targets: ["TheiaKit"]),
         .library(name: "XPABridge", targets: ["XPABridge"]),
-    ] + macOSProducts,
+    ] + platformProducts,
     dependencies: [],
     targets: [
         // Vendored CFITSIO 4.6.4 (HEASARC/NASA) compiled as a static C target.
@@ -135,5 +153,5 @@ let package = Package(
             dependencies: ["XPABridge"],
             path: "Tests/XPABridgeTests"
         ),
-    ] + macOSTargets
+    ] + platformTargets
 )
