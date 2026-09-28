@@ -53,6 +53,20 @@ private final class RenderCancellation: @unchecked Sendable {
     let commandMenus: GTKCommandMenuBar
     let inspector: GTKInspectorPanel
     let tablePanel: GTKTablePanel
+    /// The arrangement for the window's current width.
+    private(set) var layout: GTKDocumentLayout = .wide
+    /// Width below which this window turns narrow.
+    var narrowLayoutBelow = GTKDocumentLayout.narrowBelow {
+        didSet { scheduleCanvasSizeSync() }
+    }
+    /// The HDU list and image columns, and the two arrangements they move
+    /// between: three columns when wide, image over an HDU/inspector strip
+    /// when narrow.
+    private let hduScroller: UnsafeMutablePointer<GtkWidget>
+    private let center: UnsafeMutablePointer<GtkBox>
+    private let columns: UnsafeMutablePointer<GtkBox>
+    private let stack: OpaquePointer
+    private let strip: UnsafeMutablePointer<GtkBox>
     private let preferences: GTKPreferences?
     private(set) var pixelTableWindow: GTKPixelTableWindow?
     private(set) var contourLevelsWindow: GTKContourLevelsWindow?
@@ -160,6 +174,11 @@ private final class RenderCancellation: @unchecked Sendable {
         planeLabel = OpaquePointer(gtk_label_new("")!)
         playButton = gtk_button_new_with_label("Play")!
         fpsSpin = OpaquePointer(gtk_spin_button_new_with_range(1, 30, 1)!)
+        hduScroller = gtk_scrolled_window_new()!
+        center = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!))
+        columns = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!))
+        stack = OpaquePointer(gtk_paned_new(GTK_ORIENTATION_VERTICAL)!)
+        strip = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!))
         gtk_window_set_title(widget, "\(session.url.lastPathComponent) — Theia")
         gtk_window_set_default_size(widget, 1100, 720)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
@@ -167,9 +186,9 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_widget_set_focusable(UnsafeMutablePointer<GtkWidget>(picture), 1)
 
         let root = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!))
-        let content = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!))
-        gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)), 1)
+        gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(columns)), 1)
         let toolbar = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!))
+        gtk_box_append(toolbar, commandMenus.compactButton)
         let openButton = gtk_button_new_with_label("Open…")!
         GTKButtonAction { [weak self] in
             guard let self else { return }
@@ -214,22 +233,33 @@ private final class RenderCancellation: @unchecked Sendable {
             gtk_list_box_append(hduList, gtk_label_new("HDU \(index)  \(title)"))
         }
         gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(hduList), 160, -1)
-        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(hduList))
+        // Scrolls so files with many extensions cannot make the strip tall.
+        gtk_scrolled_window_set_policy(OpaquePointer(hduScroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        gtk_scrolled_window_set_child(OpaquePointer(hduScroller), UnsafeMutablePointer<GtkWidget>(hduList))
+        gtk_box_append(columns, hduScroller)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
         gtk_overlay_set_child(imageOverlay, UnsafeMutablePointer<GtkWidget>(picture))
         gtk_overlay_add_overlay(imageOverlay, UnsafeMutablePointer<GtkWidget>(overlayArea))
         gtk_widget_set_can_target(UnsafeMutablePointer<GtkWidget>(overlayArea), 0)
-        let center = UnsafeMutablePointer<GtkBox>(OpaquePointer(
-            gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
-        ))
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)), 1)
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)), 1)
         gtk_box_append(center, UnsafeMutablePointer<GtkWidget>(imageOverlay))
         gtk_box_append(center, tablePanel.widget)
-        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)))
-        gtk_box_append(content, inspector.widget)
-        gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
+        gtk_box_append(columns, UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)))
+        gtk_box_append(columns, inspector.widget)
+        gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(columns)))
+        // The narrow arrangement starts empty; applyLayout moves panels in.
+        // The strip opens 280 px tall and the image takes the rest and any
+        // later growth; the divider stays draggable.
+        let stackWidget = UnsafeMutablePointer<GtkWidget>(stack)
+        let stripWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(strip))
+        gtk_widget_set_size_request(stripWidget, -1, 280)
+        gtk_paned_set_end_child(stack, stripWidget)
+        gtk_paned_set_resize_end_child(stack, 0)
+        gtk_widget_set_vexpand(stackWidget, 1)
+        gtk_widget_set_visible(stackWidget, 0)
+        gtk_box_append(root, stackWidget)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(statusLabel))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
         inspector.onSaveHeader = { [weak self] hdu, extraCards in
@@ -1109,7 +1139,12 @@ private final class RenderCancellation: @unchecked Sendable {
         let callback: @convention(c) (OpaquePointer?, gint, gint, gpointer?) -> Void = { _, _, _, userData in
             guard let userData else { return }
             let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
-            MainActor.assumeIsolated { window.scheduleCanvasSizeSync() }
+            MainActor.assumeIsolated {
+                // Rearranging here, after GTK allocated the new size, makes the
+                // frame clock rerun layout before painting: no wide first frame.
+                if !window.destroyed { window.syncLayoutWithWidth() }
+                window.scheduleCanvasSizeSync()
+            }
         }
         let destroy: GClosureNotify = { userData, _ in
             guard let userData else { return }
@@ -1139,8 +1174,51 @@ private final class RenderCancellation: @unchecked Sendable {
         })
     }
 
+    private func syncLayoutWithWidth() {
+        let width = Int(gtk_widget_get_width(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget))))
+        guard width > 0 else { return }
+        applyLayout(GTKDocumentLayout.mode(forWidth: width, narrowBelow: narrowLayoutBelow))
+    }
+
+    /// Moves the HDU list, image column and inspector between the wide three
+    /// columns under the menu bar and the narrow image-over-strip arrangement
+    /// with the menus behind one button.
+    private func applyLayout(_ mode: GTKDocumentLayout) {
+        guard mode != layout else { return }
+        layout = mode
+        let sidebar = hduScroller
+        let image = UnsafeMutablePointer<GtkWidget>(OpaquePointer(center))
+        let panel = inspector.widget
+        let canvas = UnsafeMutablePointer<GtkWidget>(picture)
+        let canvasFocused = gtk_widget_has_focus(canvas) != 0
+        let moved = [sidebar, image, panel]
+        for child in moved { g_object_ref(UnsafeMutableRawPointer(child)) }
+        switch mode {
+        case .narrow:
+            for child in moved { gtk_box_remove(columns, child) }
+            gtk_paned_set_start_child(stack, image)
+            gtk_box_append(strip, sidebar)
+            gtk_box_append(strip, panel)
+        case .wide:
+            gtk_paned_set_start_child(stack, nil)
+            gtk_box_remove(strip, sidebar)
+            gtk_box_remove(strip, panel)
+            for child in moved { gtk_box_append(columns, child) }
+        }
+        for child in moved { g_object_unref(UnsafeMutableRawPointer(child)) }
+        let narrow: gboolean = mode == .narrow ? 1 : 0
+        let wide: gboolean = narrow == 0 ? 1 : 0
+        // In the strip the inspector takes the width beside the HDU list.
+        gtk_widget_set_hexpand(panel, narrow)
+        gtk_widget_set_visible(UnsafeMutablePointer<GtkWidget>(OpaquePointer(columns)), wide)
+        gtk_widget_set_visible(UnsafeMutablePointer<GtkWidget>(stack), narrow)
+        commandMenus.compact = mode == .narrow
+        if canvasFocused { gtk_widget_grab_focus(canvas) }
+    }
+
     private func syncCanvasSizeFromGTK() {
         guard !destroyed else { return }
+        syncLayoutWithWidth()
         let pictureWidget = UnsafeMutablePointer<GtkWidget>(picture)
         let width = Int(gtk_widget_get_width(pictureWidget))
         let height = Int(gtk_widget_get_height(pictureWidget))

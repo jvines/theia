@@ -712,12 +712,14 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
         let window = GTKDocumentWindow(application: application, session: session)
         defer { gtk_window_destroy(window.widget) }
+        window.narrowLayoutBelow = 0
         window.present()
         let image = UnsafeMutablePointer<GtkWidget>(window.imageOverlay)
         let deadline = Date().addingTimeInterval(2)
         while gtk_widget_get_width(image) == 0 && Date() < deadline {
             _ = g_main_context_iteration(nil, 0)
         }
+        XCTAssertEqual(window.layout, .wide)
 
         // Only the image expands: the side panels keep their natural width.
         var sidebarNatural: Int32 = 0
@@ -730,6 +732,174 @@ final class GTKDocumentWindowTests: XCTestCase {
         let windowWidth = gtk_widget_get_width(UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)))
         XCTAssertGreaterThanOrEqual(gtk_widget_get_width(image),
                                     windowWidth - sidebarNatural - inspectorNatural - 24)
+    }
+
+    func testLayoutTurnsNarrowBelowTheBreakpoint() {
+        XCTAssertEqual(GTKDocumentLayout.mode(forWidth: 752, narrowBelow: 1000), .narrow)
+        XCTAssertEqual(GTKDocumentLayout.mode(forWidth: 999, narrowBelow: 1000), .narrow)
+        XCTAssertEqual(GTKDocumentLayout.mode(forWidth: 1000, narrowBelow: 1000), .wide)
+        XCTAssertEqual(GTKDocumentLayout.narrowBelow, 1000)
+    }
+
+    @MainActor func testNarrowWindowStacksPanelsUnderAFullWidthImage() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        let root = UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget))
+        let image = UnsafeMutablePointer<GtkWidget>(window.imageOverlay)
+        let hdus = UnsafeMutablePointer<GtkWidget>(window.hduList)
+        func settle(until done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(2)
+            while !done() && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+        }
+        func top(of child: UnsafeMutablePointer<GtkWidget>) -> Double {
+            var x = 0.0, y = 0.0
+            XCTAssertEqual(gtk_widget_translate_coordinates(child, root, 0, 0, &x, &y), 1)
+            return y
+        }
+
+        // Xvfb's 640-px screen is a narrow tile.
+        window.present()
+        settle { window.layout == .narrow && gtk_widget_get_width(window.inspector.widget) > 0 }
+        XCTAssertEqual(window.layout, .narrow)
+        XCTAssertEqual(gtk_widget_get_visible(window.commandMenus.widget), 0)
+        XCTAssertEqual(gtk_widget_get_visible(window.commandMenus.compactButton), 1)
+        XCTAssertEqual(gtk_menu_button_get_menu_model(OpaquePointer(window.commandMenus.compactButton)),
+                       gtk_popover_menu_bar_get_menu_model(OpaquePointer(window.commandMenus.widget)))
+        let windowWidth = gtk_widget_get_width(root)
+        XCTAssertGreaterThanOrEqual(gtk_widget_get_width(image), windowWidth - 24)
+        XCTAssertGreaterThan(top(of: window.inspector.widget), top(of: image))
+        XCTAssertGreaterThan(top(of: hdus), top(of: image))
+        var minimum: Int32 = 0
+        gtk_widget_measure(root, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, nil, nil, nil)
+        XCTAssertLessThanOrEqual(minimum, 640, "a narrow document must fit a 640-px tile")
+
+        // Widening past the breakpoint restores the three columns and the bar.
+        window.narrowLayoutBelow = 0
+        settle { window.layout == .wide && abs(top(of: window.inspector.widget) - top(of: image)) < 4 }
+        XCTAssertEqual(window.layout, .wide)
+        XCTAssertEqual(gtk_widget_get_visible(window.commandMenus.widget), 1)
+        XCTAssertEqual(gtk_widget_get_visible(window.commandMenus.compactButton), 0)
+        XCTAssertEqual(top(of: window.inspector.widget), top(of: image), accuracy: 3)
+        XCTAssertEqual(top(of: hdus), top(of: image), accuracy: 3)
+    }
+
+    @MainActor func testCompactMenuShowsCurrentStateAfterRebuilds() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        let deadline = Date().addingTimeInterval(2)
+        while window.layout != .narrow && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertEqual(window.layout, .narrow)
+
+        // A submenu page of the compact popover, and the labels it shows.
+        func page(_ name: String) -> UnsafeMutablePointer<GtkWidget>? {
+            func find(_ type: String, under widget: UnsafeMutablePointer<GtkWidget>?) -> UnsafeMutablePointer<GtkWidget>? {
+                guard let widget else { return nil }
+                let instance = UnsafeMutablePointer<GTypeInstance>(OpaquePointer(widget))
+                if String(cString: g_type_name(instance.pointee.g_class.pointee.g_type)) == type {
+                    return widget
+                }
+                var child = gtk_widget_get_first_child(widget)
+                while let current = child {
+                    if let found = find(type, under: current) { return found }
+                    child = gtk_widget_get_next_sibling(current)
+                }
+                return nil
+            }
+            let button = OpaquePointer(window.commandMenus.compactButton)
+            let popover = gtk_menu_button_get_popover(button).map {
+                UnsafeMutablePointer<GtkWidget>(OpaquePointer($0))
+            }
+            guard let stack = find("GtkStack", under: popover) else { return nil }
+            return gtk_stack_get_child_by_name(OpaquePointer(stack), name)
+        }
+        func labels(onPage name: String) -> [String] {
+            func find(_ type: String, under widget: UnsafeMutablePointer<GtkWidget>?) -> UnsafeMutablePointer<GtkWidget>? {
+                guard let widget else { return nil }
+                let instance = UnsafeMutablePointer<GTypeInstance>(OpaquePointer(widget))
+                if String(cString: g_type_name(instance.pointee.g_class.pointee.g_type)) == type {
+                    return widget
+                }
+                var child = gtk_widget_get_first_child(widget)
+                while let current = child {
+                    if let found = find(type, under: current) { return found }
+                    child = gtk_widget_get_next_sibling(current)
+                }
+                return nil
+            }
+            func texts(under widget: UnsafeMutablePointer<GtkWidget>) -> [String] {
+                var found: [String] = []
+                let instance = UnsafeMutablePointer<GTypeInstance>(OpaquePointer(widget))
+                if String(cString: g_type_name(instance.pointee.g_class.pointee.g_type)) == "GtkLabel" {
+                    found.append(String(cString: gtk_label_get_text(OpaquePointer(widget))))
+                }
+                var child = gtk_widget_get_first_child(widget)
+                while let current = child {
+                    found += texts(under: current)
+                    child = gtk_widget_get_next_sibling(current)
+                }
+                return found
+            }
+            return page(name).map(texts(under:)) ?? []
+        }
+        func stretchTitles() -> (checked: String, other: CommandMenuItem) {
+            let items = (CommandCatalog.sessionMenu("stretch", for: session) ?? []).compactMap {
+                if case .item(let item) = $0 { return item } else { return nil }
+            }
+            let checked = items.first { $0.state == .checked(true) }!
+            let other = items.first { $0.state != .checked(true) && $0.command != nil }!
+            return ("✓ \(checked.title)", other)
+        }
+
+        let (current, next) = stretchTitles()
+        XCTAssertTrue(labels(onPage: "Stretch").contains(current))
+        // Nested submenus too: GTK keeps their pages across model rebuilds,
+        // and the rebuilt page with the same name is then dropped.
+        let samplesBefore = try XCTUnwrap(page("Open Sample"))
+        _ = session.perform(try XCTUnwrap(next.command), origin: .user)
+        XCTAssertNotNil(page("Open Sample"))
+        XCTAssertNotEqual(page("Open Sample"), samplesBefore, "compact menu kept a stale submenu")
+        let (updated, _) = stretchTitles()
+        XCTAssertEqual(updated, "✓ \(next.title)")
+        XCTAssertTrue(labels(onPage: "Stretch").contains(updated),
+                      "compact menu kept a stale page: \(labels(onPage: "Stretch"))")
+
+        // Every menu of the bar is reachable from the button.
+        let button = OpaquePointer(window.commandMenus.compactButton)
+        gtk_menu_button_popup(button)
+        let popover = try XCTUnwrap(gtk_menu_button_get_popover(button))
+        let popoverWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(popover))
+        let popupDeadline = Date().addingTimeInterval(2)
+        while gtk_widget_get_mapped(popoverWidget) == 0 && Date() < popupDeadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertEqual(gtk_widget_get_mapped(popoverWidget), 1)
+        for title in ["File", "View", "Image", "Regions", "Analysis", "Stretch", "Map",
+                      "Mode", "Scale", "WCS", "Tools"] {
+            XCTAssertNotNil(page(title), "compact menu lacks \(title)")
+        }
+        gtk_menu_button_popdown(button)
     }
 
     @MainActor func testInspectorTracksSharedTabVisibilityAndRegions() async throws {
@@ -862,6 +1032,15 @@ final class GTKDocumentWindowTests: XCTestCase {
         let window = GTKDocumentWindow(application: application, session: session)
         defer { gtk_window_destroy(window.widget) }
         window.present()
+        // The first layout may rearrange the panels for the screen's width;
+        // a button being reparented drops its pending activation.
+        var painted = false
+        GTKFirstFrame.after(window.widget) { painted = true }
+        let paintDeadline = Date().addingTimeInterval(2)
+        while !painted && Date() < paintDeadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertTrue(painted)
         XCTAssertEqual(gtk_widget_get_visible(window.tablePanel.widget), 0)
 
         XCTAssertNil(session.perform(.selectHDU(1), origin: .user).failure)
@@ -1082,7 +1261,9 @@ final class GTKDocumentWindowTests: XCTestCase {
         let initialSyncDeadline = Date().addingTimeInterval(2)
         while Date() < initialSyncDeadline {
             _ = g_main_context_iteration(nil, 0)
-            if session.view.viewSizePoints.width == Double(gtk_widget_get_width(pictureWidget)) {
+            // Both sides: a 640-px canvas matches the placeholder width alone.
+            if session.view.viewSizePoints.width == Double(gtk_widget_get_width(pictureWidget)),
+               session.view.viewSizePoints.height == Double(gtk_widget_get_height(pictureWidget)) {
                 break
             }
             Thread.sleep(forTimeInterval: 0.005)

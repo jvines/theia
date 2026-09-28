@@ -5,6 +5,8 @@ import TheiaKit
 /// Native GTK menus backed by the same command descriptors as the Mac menus.
 @MainActor final class GTKCommandMenuBar {
     let widget: UnsafeMutablePointer<GtkWidget>
+    /// The same menus behind one button, for windows too narrow for the bar.
+    let compactButton: UnsafeMutablePointer<GtkWidget>
     private let model: OpaquePointer
     private let window: UnsafeMutablePointer<GtkWindow>
     private let session: DocumentSession
@@ -48,6 +50,10 @@ import TheiaKit
         self.workspaceImageCount = workspaceImageCount
         model = g_menu_new()!
         widget = gtk_popover_menu_bar_new_from_model(UnsafeMutablePointer<GMenuModel>(model))!
+        compactButton = gtk_menu_button_new()!
+        gtk_menu_button_set_label(OpaquePointer(compactButton), "☰")
+        gtk_widget_set_tooltip_text(compactButton, "Menu")
+        gtk_widget_set_visible(compactButton, 0)
         rebuild()
         observerID = session.addEventObserver { [weak self] event in
             switch event.kind {
@@ -76,7 +82,30 @@ import TheiaKit
 
     func refresh() { rebuild() }
 
+    /// Shows the menus behind `compactButton` instead of the bar.
+    var compact = false {
+        didSet {
+            guard compact != oldValue else { return }
+            gtk_widget_set_visible(widget, compact ? 0 : 1)
+            gtk_widget_set_visible(compactButton, compact ? 1 : 0)
+            attachCompactMenu()
+        }
+    }
+
+    /// Gives the button a fresh popover for the current model. GtkPopoverMenu
+    /// keeps nested submenu pages across model rebuilds, so a reused popover
+    /// would show stale submenus and reject the rebuilt ones by name.
+    private func attachCompactMenu() {
+        let button = OpaquePointer(compactButton)
+        gtk_menu_button_set_menu_model(button, nil)
+        if compact {
+            gtk_menu_button_set_menu_model(button, UnsafeMutablePointer<GMenuModel>(model))
+        }
+    }
+
     private func rebuild() {
+        if compact { gtk_menu_button_set_menu_model(OpaquePointer(compactButton), nil) }
+        defer { if compact { attachCompactMenu() } }
         g_menu_remove_all(model)
         titles.removeAll()
         commands.removeAll()
