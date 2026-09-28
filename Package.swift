@@ -39,9 +39,13 @@ let platformProducts: [Product] = [
 ]
 let platformTargets: [Target] = [
     .systemLibrary(name: "CGtk4", path: "Sources/CGtk4", pkgConfig: "gtk4"),
+    .target(
+        name: "CTheiaCurl", path: "Sources/CTheiaCurl", publicHeadersPath: "include",
+        linkerSettings: [.linkedLibrary("curl")]
+    ),
     .executableTarget(
         name: "TheiaGTK",
-        dependencies: ["CGtk4", "FITSCore", "TheiaKit", "FITSRaster", "XPABridge"],
+        dependencies: ["CGtk4", "CTheiaCurl", "FITSCore", "TheiaKit", "FITSRaster", "XPABridge"],
         path: "Sources/TheiaGTK"
     ),
     .testTarget(

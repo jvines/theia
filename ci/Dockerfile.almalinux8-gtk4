@@ -17,6 +17,7 @@ RUN dnf install -y epel-release dnf-plugins-core \
         mesa-libGL-devel mesa-libEGL-devel \
         fontconfig-devel freetype-devel \
         cairo-devel pixman-devel \
+        libcurl-devel \
         glib2-devel pango-devel harfbuzz-devel fribidi-devel \
         wayland-devel libxkbcommon-devel \
         shared-mime-info xorg-x11-server-Xvfb xorg-x11-utils xdotool \

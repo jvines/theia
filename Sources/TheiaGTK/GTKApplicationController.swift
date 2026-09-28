@@ -8,6 +8,7 @@ import XPABridge
     let application: UnsafeMutablePointer<GtkApplication>
     private let paths: [String]
     private let workspace = Workspace()
+    private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
     private let bridge = GTKMainLoopBridge()
     private lazy var scriptingServer = GTKScriptingServer(controller: self)
     private lazy var xpaBridge = GTKXPACommandBridge(controller: self)
@@ -99,7 +100,8 @@ import XPABridge
     @discardableResult func open(path: String) throws -> GTKDocumentWindow {
         let opened = try workspace.open(path: path) { url in
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            return DocumentSession(url: url, file: try FITSFile(data: data))
+            return DocumentSession(url: url, file: try FITSFile(data: data),
+                                   catalogClient: catalogClient)
         }
         if let existing = windows[opened.session.id] {
             existing.present()
