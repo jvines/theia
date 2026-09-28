@@ -5,6 +5,7 @@ app=$(realpath "${1:?usage: smoke-gtk-native-remote.sh APP FITS_FILE}")
 fits=$(realpath "${2:?usage: smoke-gtk-native-remote.sh APP FITS_FILE}")
 helper=$(realpath "$(dirname "$app")/theia-remote-helper")
 temp=$(mktemp -d)
+fixtures=$(mktemp -d)
 sshd_pid=
 app_pid=
 prepared=0
@@ -22,8 +23,42 @@ cleanup() {
             /home/theia-test/.local/bin/theia-remote-helper
     fi
     rm -r -- "$temp"
+    rm -r -- "$fixtures"
 }
 trap cleanup EXIT
+
+chmod 755 "$fixtures"
+python3 - "$fixtures" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+def header(cards):
+    text = ''.join(card.ljust(80) for card in cards)
+    return text.ljust(2880).encode('ascii')
+def padded(payload):
+    return payload.ljust(2880, b'\0')
+
+cube = header([
+    'SIMPLE  =                    T', 'BITPIX  =                    8',
+    'NAXIS   =                    3', 'NAXIS1  =                    1',
+    'NAXIS2  =                    1', 'NAXIS3  =                    3', 'END',
+]) + padded(bytes([2, 3, 5]))
+table = header([
+    'SIMPLE  =                    T', 'BITPIX  =                    8',
+    'NAXIS   =                    0', 'EXTEND  =                    T', 'END',
+]) + header([
+    "XTENSION= 'BINTABLE'", 'BITPIX  =                    8',
+    'NAXIS   =                    2', 'NAXIS1  =                    1',
+    'NAXIS2  =                    1', 'PCOUNT  =                    0',
+    'GCOUNT  =                    1', 'TFIELDS =                    1',
+    "TTYPE1  = 'id'", "TFORM1  = '1B'", 'END',
+]) + padded(bytes([42]))
+for name, data in [('remote-cube.fits', cube), ('remote-table.fits', table)]:
+    path = root / name
+    path.write_bytes(data)
+    path.chmod(0o644)
+PY
 
 # This runs as root only in a disposable runtime container, without host ports.
 if [[ -e /root/.ssh/id_ed25519 || -L /root/.ssh/id_ed25519 ||
@@ -52,24 +87,33 @@ chown -R theia-test:theia-test /home/theia-test/.ssh /home/theia-test/.local
     >"$temp/sshd.log" 2>&1 &
 sshd_pid=$!
 
-"$app" "ssh://theia-test@localhost:2222$fits" >"$temp/app.log" 2>&1 &
-app_pid=$!
-title="$(basename "$fits") — Theia"
-for attempt in $(seq 1 200); do
-    if LC_ALL=C.utf8 xwininfo -root -tree | grep -Fq "$title"; then
-        printf 'GTK native SSH window ready after %d checks\n' "$attempt"
-        exit 0
-    fi
-    if ! kill -0 "$app_pid" 2>/dev/null; then
-        cat "$temp/app.log" >&2
-        cat "$temp/sshd.log" >&2
-        echo 'GTK app exited before opening the remote file' >&2
-        exit 1
-    fi
-    sleep 0.1
-done
+check_open() {
+    local source=$1
+    local title="$(basename "$source") — Theia"
+    "$app" "ssh://theia-test@localhost:2222$source" >"$temp/app.log" 2>&1 &
+    app_pid=$!
+    for attempt in $(seq 1 200); do
+        if LC_ALL=C.utf8 xwininfo -root -tree | grep -Fq "$title"; then
+            printf 'GTK native SSH %s window ready after %d checks\n' "$(basename "$source")" "$attempt"
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+            app_pid=
+            return 0
+        fi
+        if ! kill -0 "$app_pid" 2>/dev/null; then
+            cat "$temp/app.log" >&2
+            cat "$temp/sshd.log" >&2
+            echo 'GTK app exited before opening the remote file' >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+    cat "$temp/app.log" >&2
+    cat "$temp/sshd.log" >&2
+    echo 'GTK remote file window did not appear within 20 seconds' >&2
+    return 1
+}
 
-cat "$temp/app.log" >&2
-cat "$temp/sshd.log" >&2
-echo 'GTK remote file window did not appear within 20 seconds' >&2
-exit 1
+check_open "$fits"
+check_open "$fixtures/remote-cube.fits"
+check_open "$fixtures/remote-table.fits"

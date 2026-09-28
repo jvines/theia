@@ -219,6 +219,37 @@ final class DocumentSessionTests: XCTestCase {
         }
     }
 
+    func testRemoteCubeTableRegionsAndExportUseTheSharedDocument() async throws {
+        try await MainActor.run {
+            let remote = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/cube-and-table.fits"))
+            let session = try makeSession(url: remote)
+            XCTAssertEqual(session.url, remote)
+            XCTAssertEqual(session.facts[1].planeCount, 2)
+            XCTAssertNil(session.perform(.selectHDU(1), origin: .user).failure)
+            XCTAssertNil(session.perform(.selectPlane(1), origin: .user).failure)
+            XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 4)
+            XCTAssertNil(session.perform(.setDrawMode(.cubeSpectrum), origin: .user).failure)
+
+            let region = Region(shape: .point(.init(x: 1, y: 1)), frame: .image)
+            XCTAssertNil(session.perform(.addRegion(region), origin: .user).failure)
+            guard case .ask(_, .saveRegions(let regions))? =
+                    session.perform(.saveRegions, origin: .user).effects.first else {
+                return XCTFail("Remote document should export its regions")
+            }
+            XCTAssertEqual(regions.regions, [region])
+            guard case .ask(_, .exportImage(let image))? =
+                    session.perform(.exportImage, origin: .user).effects.first else {
+                return XCTFail("Remote cube plane should be exportable")
+            }
+            XCTAssertEqual(image.image.physicalValue(x: 0, y: 0), 4)
+
+            XCTAssertNil(session.perform(.selectHDU(4), origin: .user).failure)
+            XCTAssertTrue(session.file.hdus[4].isTable)
+            XCTAssertNil(session.displayed)
+            XCTAssertEqual(session.url, remote)
+        }
+    }
+
     func testFITSAndRenderedExportCaptureTheDisplayedDerivedImage() async throws {
         try await MainActor.run {
             let session = try makeSession()

@@ -22,6 +22,38 @@ final class DocumentModelPersistenceTests: XCTestCase {
         XCTAssertEqual(model.file.hdus.count, 1)
     }
 
+    func testRemoteBytesOpenCubeAndTableThroughMacDocumentModel() throws {
+        func header(_ cards: [String]) -> Data {
+            let text = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+            return Data(text.padding(toLength: 2880, withPad: " ", startingAt: 0).utf8)
+        }
+        let cube = header([
+            "SIMPLE  =                    T", "BITPIX  =                    8",
+            "NAXIS   =                    3", "NAXIS1  =                    1",
+            "NAXIS2  =                    1", "NAXIS3  =                    2",
+            "EXTEND  =                    T", "END",
+        ]) + Data([3, 5]) + Data(repeating: 0, count: 2878)
+        let tableHeader = header([
+            "XTENSION= 'BINTABLE'", "BITPIX  =                    8",
+            "NAXIS   =                    2", "NAXIS1  =                    1",
+            "NAXIS2  =                    1", "PCOUNT  =                    0",
+            "GCOUNT  =                    1", "TFIELDS =                    1",
+            "TTYPE1  = 'id'", "TFORM1  = '1B'", "END",
+        ])
+        let bytes = cube + tableHeader + Data([42]) + Data(repeating: 0, count: 2879)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remote = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/cube-table.fits"))
+        let model = try DocumentModel(url: remote, data: bytes, paths: pathsForTests(root))
+        XCTAssertEqual(model.session.url, remote)
+        XCTAssertEqual(model.session.facts[0].planeCount, 2)
+        model.session.selectPlane(1)
+        XCTAssertEqual(model.session.displayed?.physicalValue(x: 0, y: 0), 5)
+        model.session.selectHDU(1)
+        XCTAssertTrue(model.file.hdus[1].isTable)
+        XCTAssertEqual(FITSBinTable(hdu: model.file.hdus[1])?.displayValue(row: 0, column: 0), "42")
+    }
+
     func testOpenRestoresCurrentStoreRecord() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

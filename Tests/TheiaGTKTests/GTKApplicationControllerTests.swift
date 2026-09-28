@@ -31,6 +31,46 @@ final class GTKApplicationControllerTests: XCTestCase {
         XCTAssertNil(controller.remoteDialog)
     }
 
+    @MainActor func testRemoteCubeAndTableUseNativeDocumentControls() async throws {
+        gtk_init()
+        func header(_ cards: [String]) -> Data {
+            let text = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+            return Data(text.padding(toLength: 2880, withPad: " ", startingAt: 0).utf8)
+        }
+        let cube = header([
+            "SIMPLE  =                    T", "BITPIX  =                    8",
+            "NAXIS   =                    3", "NAXIS1  =                    1",
+            "NAXIS2  =                    1", "NAXIS3  =                    3",
+            "EXTEND  =                    T", "END",
+        ]) + Data([2, 3, 5]) + Data(repeating: 0, count: 2877)
+        let tableHeader = header([
+            "XTENSION= 'BINTABLE'", "BITPIX  =                    8",
+            "NAXIS   =                    2", "NAXIS1  =                    1",
+            "NAXIS2  =                    1", "PCOUNT  =                    0",
+            "GCOUNT  =                    1", "TFIELDS =                    1",
+            "TTYPE1  = 'id'", "TFORM1  = '1B'", "END",
+        ])
+        let bytes = cube + tableHeader + Data([42]) + Data(repeating: 0, count: 2879)
+        let url = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/cube-table.fits"))
+        let controller = GTKApplicationController(paths: [])
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+        let window = try controller.open(url: url, remoteData: bytes)
+        defer { gtk_window_destroy(window.widget) }
+        XCTAssertEqual(window.session.url, url)
+        XCTAssertEqual(window.session.facts[0].planeCount, 3)
+        XCTAssertEqual(gtk_widget_get_visible(
+            UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.cubeControls))
+        ), 1)
+        window.session.selectPlane(2)
+        XCTAssertEqual(window.session.displayed?.physicalValue(x: 0, y: 0), 5)
+        window.session.selectHDU(1)
+        XCTAssertEqual(gtk_widget_get_visible(window.tablePanel.widget), 1)
+        XCTAssertEqual(window.tablePanel.table?.displayValue(row: 0, column: 0), "42")
+    }
+
     @MainActor func testWorkspaceSyncAndStackToolsUseOpenGTKDocuments() async throws {
         gtk_init()
         let fixture = try XCTUnwrap(Bundle.module.url(
