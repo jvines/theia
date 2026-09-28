@@ -5,6 +5,17 @@ import TheiaKit
 import XCTest
 @testable import TheiaGTK
 
+@MainActor private func waitForInfoWindow(
+    _ key: String, in controller: GTKApplicationController
+) throws -> GTKInfoWindow {
+    let deadline = Date().addingTimeInterval(2)
+    while controller.infoWindows[key] == nil && Date() < deadline {
+        _ = g_main_context_iteration(nil, 0)
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+    return try XCTUnwrap(controller.infoWindows[key], "\(key) window never appeared")
+}
+
 final class GTKApplicationControllerTests: XCTestCase {
     @MainActor func testRemoteBytesOpenAndReuseDocumentWindow() throws {
         gtk_init()
@@ -155,10 +166,63 @@ final class GTKApplicationControllerTests: XCTestCase {
         let onboarding = try XCTUnwrap(controller.infoWindows["onboarding"])
         XCTAssertEqual(String(cString: gtk_window_get_title(onboarding.widget)),
                        "Welcome to Theia")
+        XCTAssertNil(gtk_window_get_transient_for(onboarding.widget))
         gtk_window_destroy(about.widget)
         XCTAssertNil(controller.infoWindows["about"])
         gtk_window_destroy(scripting.widget)
         gtk_window_destroy(onboarding.widget)
+    }
+
+    @MainActor func testFirstLaunchOnboardingFloatsOverTheOpenedDocument() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-first-launch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appPaths = AppPaths(platform: .linux, homeDirectory: root,
+                                environment: ["XDG_CONFIG_HOME": root.path,
+                                              "XDG_STATE_HOME": root.path])
+        let controller = GTKApplicationController(paths: [fixture.path], appPaths: appPaths)
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+
+        controller.activate()
+        let document = try XCTUnwrap(controller.documentWindowsForScripting.first)
+        defer { gtk_window_destroy(document.widget) }
+        XCTAssertNil(controller.infoWindows["onboarding"], "presented before its parent mapped")
+        let onboarding = try waitForInfoWindow("onboarding", in: controller)
+        defer { gtk_window_destroy(onboarding.widget) }
+        XCTAssertNil(controller.welcomeWindow)
+        XCTAssertEqual(gtk_window_get_transient_for(onboarding.widget), document.widget)
+    }
+
+    @MainActor func testFirstLaunchOnboardingFloatsOverTheWelcomeWindow() async throws {
+        gtk_init()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-first-welcome-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appPaths = AppPaths(platform: .linux, homeDirectory: root,
+                                environment: ["XDG_CONFIG_HOME": root.path,
+                                              "XDG_STATE_HOME": root.path])
+        let controller = GTKApplicationController(paths: [], appPaths: appPaths)
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+
+        controller.activate()
+        let welcome = try XCTUnwrap(controller.welcomeWindow)
+        defer { gtk_window_destroy(welcome) }
+        XCTAssertNil(controller.infoWindows["onboarding"], "presented before its parent mapped")
+        let onboarding = try waitForInfoWindow("onboarding", in: controller)
+        defer { gtk_window_destroy(onboarding.widget) }
+        XCTAssertEqual(gtk_window_get_transient_for(onboarding.widget), welcome)
     }
 
     @MainActor func testChangedFITSOffersRestoreBeforeApplyingSavedState() async throws {

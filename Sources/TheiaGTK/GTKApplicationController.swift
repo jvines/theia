@@ -125,7 +125,7 @@ import XPABridge
         xpaServer = server
     }
 
-    private func activate() {
+    func activate() {
         GTKTranslations.configure()
         for path in paths {
             do {
@@ -149,7 +149,15 @@ import XPABridge
             fputs("Theia: cannot read preferences: \(warning)\n", stderr)
         }
         if !preferences.hasSeenOnboarding {
-            showInfoWindow(.onboarding)
+            // Tied to the window it accompanies so tiling compositors float
+            // it over that window instead of splitting the screen for it.
+            if let parent = documentWindowsForScripting.first?.widget ?? welcomeWindow {
+                GTKFirstFrame.after(parent) { [weak self] in
+                    self?.showInfoWindow(.onboarding, over: parent)
+                }
+            } else {
+                showInfoWindow(.onboarding)
+            }
             do { try preferences.setHasSeenOnboarding(true) }
             catch { fputs("Theia: cannot save onboarding preference: \(error)\n", stderr) }
         }
@@ -409,7 +417,8 @@ import XPABridge
         refreshDocumentMenus()
     }
 
-    private func showInfoWindow(_ kind: AppWindowKind) {
+    private func showInfoWindow(_ kind: AppWindowKind,
+                                over parent: UnsafeMutablePointer<GtkWindow>? = nil) {
         let key: String
         switch kind {
         case .about: key = "about"
@@ -425,6 +434,7 @@ import XPABridge
             self?.infoWindows.removeValue(forKey: key)
         }
         infoWindows[key] = window
+        if let parent { gtk_window_set_transient_for(window.widget, parent) }
         window.present()
     }
 
