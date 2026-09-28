@@ -60,6 +60,9 @@ private final class RenderCancellation: @unchecked Sendable {
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private let onOpenRecent: @MainActor (URL) -> Void
     private let onDrop: @MainActor ([String]) -> Void
+    private let onWorkspaceCommand: @MainActor (WorkspaceCommand) -> Void
+    private let onWorkspaceToolAction: @MainActor (ToolMenuAction, DocumentSession) -> Void
+    private let onFocus: @MainActor () -> Void
     private var observerID: UUID?
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
@@ -80,9 +83,14 @@ private final class RenderCancellation: @unchecked Sendable {
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
          recentFiles: GTKRecentFiles? = nil,
+         workspace: Workspace? = nil,
+         workspaceImageCount: @escaping @MainActor () -> Int = { 1 },
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
          onOpenRecent: @escaping @MainActor (URL) -> Void = { _ in },
          onDrop: @escaping @MainActor ([String]) -> Void = { _ in },
+         onWorkspaceCommand: @escaping @MainActor (WorkspaceCommand) -> Void = { _ in },
+         onWorkspaceToolAction: @escaping @MainActor (ToolMenuAction, DocumentSession) -> Void = { _, _ in },
+         onFocus: @escaping @MainActor () -> Void = {},
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
         interaction = InteractionController(view: session.view, mode: .full, session: session)
@@ -90,10 +98,15 @@ private final class RenderCancellation: @unchecked Sendable {
         self.onOpen = onOpen
         self.onOpenRecent = onOpenRecent
         self.onDrop = onDrop
+        self.onWorkspaceCommand = onWorkspaceCommand
+        self.onWorkspaceToolAction = onWorkspaceToolAction
+        self.onFocus = onFocus
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
         commandMenus = GTKCommandMenuBar(window: widget, session: session,
-                                         recentFiles: recentFiles ?? GTKRecentFiles())
+                                         recentFiles: recentFiles ?? GTKRecentFiles(),
+                                         workspace: workspace,
+                                         workspaceImageCount: workspaceImageCount)
         inspector = GTKInspectorPanel(session: session)
         tablePanel = GTKTablePanel()
         picture = OpaquePointer(gtk_picture_new()!)
@@ -283,6 +296,10 @@ private final class RenderCancellation: @unchecked Sendable {
             self.onOpen(self.widget)
         }
         commandMenus.onOpenRecent = { [weak self] url in self?.onOpenRecent(url) }
+        commandMenus.onWorkspaceCommand = { [weak self] command in
+            self?.onWorkspaceCommand(command)
+        }
+        installFocusObserver()
         frameDriver = SessionFrameDriver(
             session: session,
             startPulses: { [weak self] in self?.startFramePulses() },
@@ -326,6 +343,27 @@ private final class RenderCancellation: @unchecked Sendable {
             guard let self else { return }
             self.handleOutcome(self.session.perform(.setPlaying(!self.session.playing), origin: .user))
         }.connect(to: playButton)
+    }
+
+    private func installFocusObserver() {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let changed: @convention(c) (OpaquePointer?, OpaquePointer?, gpointer?) -> Void = {
+            _, _, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                if !window.destroyed && gtk_window_is_active(window.widget) != 0 {
+                    window.onFocus()
+                }
+            }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(widget), "notify::is-active",
+                              unsafeBitCast(changed, to: GCallback.self), context, release,
+                              GConnectFlags(rawValue: 0))
     }
 
     private func refreshCubeControls() {
@@ -792,7 +830,7 @@ private final class RenderCancellation: @unchecked Sendable {
         case .binary(let operation, let index): command = .binary(operation, index)
         case .clearDerivedImage: command = .clearDerivedImage
         case .stack, .lightCurve:
-            showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
+            onWorkspaceToolAction(action, session)
             return
         }
         handleOutcome(session.perform(command, origin: .user))

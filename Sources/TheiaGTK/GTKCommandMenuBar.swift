@@ -9,10 +9,13 @@ import TheiaKit
     private let window: UnsafeMutablePointer<GtkWindow>
     private let session: DocumentSession
     private let recentFiles: GTKRecentFiles
+    private let workspace: Workspace?
+    private let workspaceImageCount: @MainActor () -> Int
     private var observerID: UUID?
     private var commands: [String: SessionCommand] = [:]
     private var toolActions: [String: ToolMenuAction] = [:]
     private var recentURLs: [String: URL] = [:]
+    private var workspaceActions: [String: WorkspaceCommand] = [:]
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
     private var titles: [String: String] = [:]
@@ -20,6 +23,7 @@ import TheiaKit
     var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
     var onOpen: (@MainActor () -> Void)?
     var onOpenRecent: (@MainActor (URL) -> Void)?
+    var onWorkspaceCommand: (@MainActor (WorkspaceCommand) -> Void)?
 
     var sectionCount: Int {
         Int(g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(model)))
@@ -31,10 +35,13 @@ import TheiaKit
     }
 
     init(window: UnsafeMutablePointer<GtkWindow>, session: DocumentSession,
-         recentFiles: GTKRecentFiles) {
+         recentFiles: GTKRecentFiles, workspace: Workspace? = nil,
+         workspaceImageCount: @escaping @MainActor () -> Int = { 1 }) {
         self.window = window
         self.session = session
         self.recentFiles = recentFiles
+        self.workspace = workspace
+        self.workspaceImageCount = workspaceImageCount
         model = g_menu_new()!
         widget = gtk_popover_menu_bar_new_from_model(UnsafeMutablePointer<GMenuModel>(model))!
         rebuild()
@@ -71,7 +78,9 @@ import TheiaKit
         commands.removeAll()
         toolActions.removeAll()
         recentURLs.removeAll()
+        workspaceActions.removeAll()
         appendFileMenu()
+        if let workspace { appendWorkspaceMenu("App", section: .app, workspace: workspace) }
         let groups: [(String, [CommandMenuEntry])] = [
             ("View", CommandCatalog.viewMenu(for: session)),
             ("Image", CommandCatalog.imageMenu(for: session)),
@@ -123,6 +132,47 @@ import TheiaKit
             g_object_unref(UnsafeMutableRawPointer(submenu))
         }
         appendToolsMenu()
+        if let workspace {
+            appendWorkspaceMenu("Sync", section: .sync, workspace: workspace)
+            appendWorkspaceMenu("Help", section: .help, workspace: workspace)
+        }
+    }
+
+    private func appendWorkspaceMenu(_ title: String, section: WorkspaceMenuSection,
+                                     workspace: Workspace) {
+        let submenu = g_menu_new()!
+        var group = g_menu_new()!
+        func finishGroup() {
+            if g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(group)) > 0 {
+                g_menu_append_section(submenu, nil, UnsafeMutablePointer<GMenuModel>(group))
+            }
+            g_object_unref(UnsafeMutableRawPointer(group))
+        }
+        for entry in CommandCatalog.workspaceMenu(section: section, for: workspace) {
+            switch entry {
+            case .separator:
+                finishGroup()
+                group = g_menu_new()!
+            case .item(let item):
+                guard item.visible else { continue }
+                let label: String
+                switch item.state {
+                case .checked(true), .selected: label = "✓ \(item.title)"
+                default: label = item.title
+                }
+                titles[item.identifier] = label
+                workspaceActions[item.identifier] = item.command
+                let name = item.identifier.replacingOccurrences(of: ".", with: "-")
+                installAction(identifier: item.identifier, name: name)
+                if let action = actions[item.identifier] {
+                    g_simple_action_set_enabled(action, item.enabled ? 1 : 0)
+                }
+                g_menu_append(group, label, "win.\(name)")
+            }
+        }
+        finishGroup()
+        g_menu_append_submenu(model, title, UnsafeMutablePointer<GMenuModel>(submenu))
+        g_object_unref(UnsafeMutableRawPointer(submenu))
     }
 
     private func appendFileMenu() {
@@ -159,7 +209,8 @@ import TheiaKit
             }
             g_object_unref(UnsafeMutableRawPointer(section))
         }
-        for entry in CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1) {
+        for entry in CommandCatalog.toolsMenu(for: session,
+                                              workspaceImageCount: workspaceImageCount()) {
             switch entry {
             case .section(let heading):
                 finishSection()
@@ -218,6 +269,8 @@ import TheiaKit
                     menu.onOutcome?(menu.session.perform(command, origin: .user))
                 } else if let tool = menu.toolActions[identifier] {
                     menu.onToolAction?(tool)
+                } else if let command = menu.workspaceActions[identifier] {
+                    menu.onWorkspaceCommand?(command)
                 }
             }
         }

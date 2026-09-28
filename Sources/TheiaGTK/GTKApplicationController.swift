@@ -105,7 +105,7 @@ import XPABridge
                                    catalogClient: catalogClient)
         }
         recentFiles.record(opened.session.url)
-        for window in windows.values { window.refreshRecentMenu() }
+        refreshDocumentMenus()
         if let existing = windows[opened.session.id] {
             existing.present()
             return existing
@@ -113,18 +113,35 @@ import XPABridge
         let window = GTKDocumentWindow(
             application: application, session: opened.session,
             recentFiles: recentFiles,
+            workspace: workspace,
+            workspaceImageCount: { [weak self] in
+                self?.windows.values.filter { $0.session.displayed != nil }.count ?? 1
+            },
             onOpen: { [weak self] parent in self?.presentOpenDialog(parent: parent) },
             onOpenRecent: { [weak self] url in
                 do { _ = try self?.open(path: url.path) }
                 catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
             },
-            onDrop: { [weak self] paths in self?.openDropped(paths) }
+            onDrop: { [weak self] paths in self?.openDropped(paths) },
+            onWorkspaceCommand: { [weak self, weak session = opened.session] command in
+                guard let self, let session else { return }
+                self.performWorkspaceCommand(command, from: session)
+            },
+            onWorkspaceToolAction: { [weak self] action, session in
+                self?.performWorkspaceToolAction(action, from: session)
+            },
+            onFocus: { [weak self, weak session = opened.session] in
+                guard let self, let session else { return }
+                self.workspace.focus(session)
+            }
         ) { [weak self, weak session = opened.session] in
             guard let self, let session else { return }
             self.windows.removeValue(forKey: session.id)
             self.workspace.unregister(session)
+            self.refreshDocumentMenus()
         }
         windows[opened.session.id] = window
+        refreshDocumentMenus()
         window.present()
         if let welcomeWindow {
             self.welcomeWindow = nil
@@ -176,6 +193,42 @@ import XPABridge
             do { _ = try open(path: path) }
             catch { fputs("Theia: cannot open \(path): \(error)\n", stderr) }
         }
+    }
+
+    private func refreshDocumentMenus() {
+        for window in windows.values { window.refreshRecentMenu() }
+    }
+
+    private func performWorkspaceToolAction(_ action: ToolMenuAction,
+                                            from session: DocumentSession) {
+        guard let id = workspace.id(of: session) else { return }
+        let command: WorkspaceCommand
+        switch action {
+        case .stack(let mode): command = .stack(documentID: id, mode: mode)
+        case .lightCurve: command = .lightCurve(documentID: id)
+        default: return
+        }
+        performWorkspaceCommand(command, from: session)
+    }
+
+    private func performWorkspaceCommand(_ command: WorkspaceCommand,
+                                         from session: DocumentSession) {
+        let outcome = workspace.perform(command, origin: .user)
+        let source = windows[session.id]
+        if let failure = outcome.failure, outcome.effects.isEmpty {
+            source?.handleOutcome(CommandOutcome(failure: failure))
+        }
+        for effect in outcome.effects {
+            switch effect {
+            case .showAppWindow(.welcome): showWelcomeWindow()
+            case .quit: quitForScripting()
+            case .tileWindows:
+                for window in documentWindowsForScripting { window.present() }
+            default:
+                source?.handleOutcome(CommandOutcome(effects: [effect]))
+            }
+        }
+        refreshDocumentMenus()
     }
 
     func presentOpenDialog(parent: UnsafeMutablePointer<GtkWindow>?) {
