@@ -1,0 +1,78 @@
+# Build GTK 4.22.5 and its newer dependencies on the same EL8/Swift base used
+# for the shared code. GTK's Meson wraps pin source and patch SHA-256 values.
+ARG SWIFT_BASE=theia-ci-almalinux8-swift63:latest
+FROM ${SWIFT_BASE}
+
+RUN dnf install -y epel-release dnf-plugins-core \
+    && dnf config-manager --set-enabled powertools \
+    && dnf install -y \
+        gcc-toolset-13 gcc-toolset-13-gcc-c++ \
+        ninja-build python3.11 python3.11-pip pkgconf-pkg-config \
+        which tar xz file wget patch diffutils \
+        zlib-devel libpng-devel libjpeg-turbo-devel libtiff-devel \
+        gettext-devel pcre2-devel libffi-devel expat-devel bzip2-devel \
+        libX11-devel libXext-devel libXrender-devel libXi-devel \
+        libXrandr-devel libXcursor-devel libXdamage-devel libXfixes-devel \
+        libXcomposite-devel libXtst-devel libXinerama-devel libxml2-devel \
+        mesa-libGL-devel mesa-libEGL-devel \
+        fontconfig-devel freetype-devel \
+        cairo-devel pixman-devel \
+        glib2-devel pango-devel harfbuzz-devel fribidi-devel \
+        wayland-devel libxkbcommon-devel \
+        shared-mime-info xorg-x11-server-Xvfb xorg-x11-utils xdotool \
+        mesa-dri-drivers \
+    && dnf clean all
+
+RUN python3.11 -m pip install --no-cache-dir 'meson==1.12.1' 'ninja==1.13.0'
+
+RUN git clone --branch 4.22.5 --depth 1 https://gitlab.gnome.org/GNOME/gtk.git /tmp/gtk-src \
+    && test "$(git -C /tmp/gtk-src rev-parse HEAD)" = bd25f1e2dc2c2fbf3b8864e61afe642910ba359c
+
+ENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/share/pkgconfig
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN source /opt/rh/gcc-toolset-13/enable \
+    && export PATH="/root/.local/bin:$PATH" \
+    && meson setup /tmp/gtk-build /tmp/gtk-src \
+        --buildtype=release \
+        --force-fallback-for=glib,pango,harfbuzz,fribidi,cairo,graphene,libepoxy,gdk-pixbuf,wayland,wayland-protocols,libpng,libjpeg-turbo,libtiff,freetype2,pcre2 \
+        -Dglib:sysprof=disabled \
+        -Dglib:tests=false \
+        -Dglib:introspection=disabled \
+        -Dglib:documentation=false \
+        -Dglib:man-pages=disabled \
+        -Dintrospection=disabled \
+        -Ddocumentation=false \
+        -Dscreenshots=false \
+        -Dman-pages=false \
+        -Dbuild-tests=false \
+        -Dbuild-testsuite=false \
+        -Dbuild-examples=false \
+        -Dbuild-demos=false \
+        -Dmedia-gstreamer=disabled \
+        -Dvulkan=disabled \
+        -Dprint-cups=disabled \
+        -Dprint-cpdb=disabled \
+        -Dcloudproviders=disabled \
+        -Dsysprof=disabled \
+        -Dtracker=disabled \
+        -Dcolord=disabled \
+        -Daccesskit=disabled \
+        -Dx11-backend=true \
+        -Dwayland-backend=true \
+        -Dbroadway-backend=false \
+        -Dwin32-backend=false \
+        -Dmacos-backend=false \
+        -Dandroid-backend=false \
+    && ninja -C /tmp/gtk-build -j 4 \
+    && ninja -C /tmp/gtk-build install
+
+RUN echo /usr/local/lib64 > /etc/ld.so.conf.d/theia-gtk.conf \
+    && ldconfig \
+    && pkg-config --modversion gtk4 | grep -qx 4.22.5 \
+    && rm -rf /tmp/gtk-build /tmp/gtk-src
+
+ENV LD_LIBRARY_PATH=/usr/local/lib64:/opt/rh/gcc-toolset-13/root/usr/lib64
+ENV FONTCONFIG_FILE=/etc/fonts/fonts.conf
+ENV GSK_RENDERER=cairo
+ENV LC_ALL=C.utf8
+WORKDIR /src

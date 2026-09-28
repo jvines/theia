@@ -44,7 +44,7 @@ jobs:
         run: swift test --parallel
 
   neutral-linux:
-    name: shared Swift (AlmaLinux 8, x86_64)
+    name: Swift + GTK4 (AlmaLinux 8, x86_64)
     runs-on: checo
     steps:
       - name: Checkout with host Git
@@ -55,9 +55,12 @@ jobs:
           git checkout --detach FETCH_HEAD
 
       - name: Build Swift 6.3.3 AlmaLinux 8 image
-        run: docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci --iidfile ci-image-id -f ci/Dockerfile.almalinux8-swift63 ci
+        run: docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci -t theia-ci-almalinux8-swift63:latest -f ci/Dockerfile.almalinux8-swift63 ci
 
-      - name: Build and test neutral targets
+      - name: Build pinned GTK4 stack
+        run: docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci --iidfile ci-image-id -f ci/Dockerfile.almalinux8-gtk4 ci
+
+      - name: Build and test Linux app and shared targets
         run: |
           docker run --rm --platform linux/amd64 --label cl.jvines.owner=theia-ci \
             --mount type=bind,source="$PWD",target=/src,readonly \
@@ -69,7 +72,8 @@ jobs:
               swift scripts/make_sample_fits.swift > sample.fits
               scripts/check_shared_api.sh
               swift build -j 2
-              swift test -j 2
+              xvfb-run -a swift test -j 2
+              xvfb-run -a ci/smoke-gtk.sh "$(swift build --show-bin-path)/theia-gtk" Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
               scripts/test_xpa_local_security.sh "$(swift build --show-bin-path)"
             '
 
