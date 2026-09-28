@@ -684,6 +684,23 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertTrue(window.commandMenus.isEnabled("region.clear"))
     }
 
+    @MainActor func testHeaderCardsKeepOneLineLikeTheMacTable() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+
+        let header = UnsafeMutablePointer<GtkTextView>(window.inspector.headerView)
+        XCTAssertEqual(gtk_text_view_get_wrap_mode(header), GTK_WRAP_NONE)
+        XCTAssertEqual(gtk_text_view_get_monospace(header), 1)
+    }
+
     @MainActor func testInspectorTracksSharedTabVisibilityAndRegions() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(

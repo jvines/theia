@@ -52,7 +52,7 @@ import TheiaKit
     let notebook: OpaquePointer
     let regionList: OpaquePointer
     private let session: DocumentSession
-    private let headerView: OpaquePointer
+    let headerView: OpaquePointer
     private let headerSearch: OpaquePointer
     private let headerEditButton: UnsafeMutablePointer<GtkWidget>
     private let headerSaveButton: UnsafeMutablePointer<GtkWidget>
@@ -90,7 +90,9 @@ import TheiaKit
             gtk_text_view_set_editable(textView, 0)
             gtk_text_view_set_cursor_visible(textView, 0)
             gtk_text_view_set_monospace(textView, 1)
-            gtk_text_view_set_wrap_mode(textView, GTK_WRAP_WORD_CHAR)
+            // Header cards stay one per line, as in the Mac table; the
+            // scroller pans across long comments.
+            gtk_text_view_set_wrap_mode(textView, view == headerView ? GTK_WRAP_NONE : GTK_WRAP_WORD_CHAR)
         }
         appendHeaderPage()
         appendPage(regionList, title: "Regions")
