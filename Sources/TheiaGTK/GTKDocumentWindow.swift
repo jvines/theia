@@ -1272,6 +1272,12 @@ private final class RenderCancellation: @unchecked Sendable {
                 do { try snapshot.writeImage(to: url) }
                 catch { await self?.showAlert(title: "Image not exported", message: error.localizedDescription) }
             }
+        case .exportCube(let snapshot, let url):
+            Task.detached { [weak self] in
+                do { try GTKCubeVideoExport.write(snapshot, to: url) }
+                catch { await self?.showAlert(title: "Cube video not exported",
+                                              message: error.localizedDescription) }
+            }
         case .saveImage(let snapshot, let url):
             Task.detached { [weak self] in
                 do { try snapshot.writeFITS(to: url) }
@@ -1336,7 +1342,7 @@ private final class RenderCancellation: @unchecked Sendable {
             ) { [weak self] in self?.scaleParametersWindow = nil }
             scaleParametersWindow = window
             window.present()
-        case .exportCube, .openLightCurve,
+        case .openLightCurve,
              .showAppWindow, .tileWindows:
             showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
         case .documentOpened, .noteRecent:

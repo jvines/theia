@@ -5,6 +5,8 @@ swift_args=()
 if [[ -n "${THEIA_SWIFT_SCRATCH_PATH:-}" ]]; then
     swift_args+=(--scratch-path "$THEIA_SWIFT_SCRATCH_PATH")
 fi
+THEIA_TEST_FFMPEG="${THEIA_TEST_FFMPEG:-$(command -v ffmpeg)}"
+export THEIA_TEST_FFMPEG
 swift test "${swift_args[@]}" -j "${THEIA_SWIFT_JOBS:-2}"
 bin_path=$(swift build "${swift_args[@]}" --show-bin-path)
 fixture=Tests/TheiaGTKTests/Fixtures/uint8_simple.fits

@@ -1,6 +1,8 @@
 # Build GTK 4.22.5 and its newer dependencies on the same EL8/Swift base used
 # for the shared code. GTK's Meson wraps pin source and patch SHA-256 values.
 ARG SWIFT_BASE=theia-ci-almalinux8-swift63:latest
+FROM mwader/static-ffmpeg:9.0@sha256:b90574a4e2ae62b763c39c384526689e7eb435da6398f4fb3f6c3f1c6a14ce33 AS video_encoder
+
 FROM ${SWIFT_BASE}
 
 RUN dnf install -y dnf-plugins-core \
@@ -81,6 +83,9 @@ RUN echo /usr/local/lib64 > /etc/ld.so.conf.d/theia-gtk.conf \
     && ldconfig \
     && pkg-config --modversion gtk4 | grep -qx 4.22.5 \
     && rm -rf /tmp/gtk-build /tmp/gtk-src
+
+COPY --from=video_encoder /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=video_encoder /ffprobe /usr/local/bin/ffprobe
 
 ENV LD_LIBRARY_PATH=/usr/local/lib64:/opt/rh/gcc-toolset-13/root/usr/lib64
 ENV FONTCONFIG_FILE=/etc/fonts/fonts.conf
