@@ -15,6 +15,7 @@ import XPABridge
     private lazy var xpaBridge = GTKXPACommandBridge(controller: self)
     private var xpaServer: XPAServer?
     private var windows: [UUID: GTKDocumentWindow] = [:]
+    private var lightCurveWindow: GTKLightCurveWindow?
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
     private var exitStatus: Int32 = 0
@@ -221,6 +222,16 @@ import XPABridge
         for effect in outcome.effects {
             switch effect {
             case .showAppWindow(.welcome): showWelcomeWindow()
+            case .openLightCurve(let model):
+                if let lightCurveWindow {
+                    lightCurveWindow.update(model)
+                } else {
+                    let window = GTKLightCurveWindow(
+                        application: application, model: model, sourceSession: session
+                    ) { [weak self] in self?.lightCurveWindow = nil }
+                    lightCurveWindow = window
+                    window.present()
+                }
             case .quit: quitForScripting()
             case .tileWindows:
                 for window in documentWindowsForScripting { window.present() }
