@@ -1,6 +1,50 @@
 import CGtk4
+import FITSCore
 import Foundation
 import TheiaKit
+
+@MainActor private final class GTKHeaderEntryAction {
+    private let onChange: @MainActor (String) -> Void
+
+    init(_ onChange: @escaping @MainActor (String) -> Void) { self.onChange = onChange }
+
+    func connect(to entry: OpaquePointer) {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let callback: @convention(c) (OpaquePointer?, gpointer?) -> Void = { entry, userData in
+            guard let entry, let userData else { return }
+            let action = Unmanaged<GTKHeaderEntryAction>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                action.onChange(String(cString: gtk_editable_get_text(entry)))
+            }
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(entry), "changed",
+                              unsafeBitCast(callback, to: GCallback.self), context,
+                              { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKHeaderEntryAction>.fromOpaque(userData).release()
+        }, GConnectFlags(rawValue: 0))
+    }
+}
+
+@MainActor private final class GTKHeaderToggleAction {
+    private let onToggle: @MainActor () -> Void
+    init(_ onToggle: @escaping @MainActor () -> Void) { self.onToggle = onToggle }
+
+    func connect(to toggle: UnsafeMutablePointer<GtkWidget>) {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let callback: @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, userData in
+            guard let userData else { return }
+            let action = Unmanaged<GTKHeaderToggleAction>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { action.onToggle() }
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(toggle), "toggled",
+                              unsafeBitCast(callback, to: GCallback.self), context,
+                              { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKHeaderToggleAction>.fromOpaque(userData).release()
+        }, GConnectFlags(rawValue: 0))
+    }
+}
 
 /// GTK document sidebar backed by the shared inspector models.
 @MainActor final class GTKInspectorPanel {
@@ -9,11 +53,18 @@ import TheiaKit
     let regionList: OpaquePointer
     private let session: DocumentSession
     private let headerView: OpaquePointer
+    private let headerSearch: OpaquePointer
+    private let headerEditButton: UnsafeMutablePointer<GtkWidget>
+    private let headerSaveButton: UnsafeMutablePointer<GtkWidget>
+    private let headerReadScroller: UnsafeMutablePointer<GtkWidget>
+    private let headerEditScroller: UnsafeMutablePointer<GtkWidget>
+    let headerEditList: OpaquePointer
     private let photometryView: OpaquePointer
     private let statsView: OpaquePointer
     private var observerID: UUID?
     private var analysisTask: Task<Void, Never>?
     private var syncing = false
+    var onSaveHeader: @MainActor (Int, [String]) -> Void = { _, _ in }
     private(set) var headerText = ""
     private(set) var photometryText = ""
     private(set) var statsText = ""
@@ -24,6 +75,12 @@ import TheiaKit
         widget = UnsafeMutablePointer<GtkWidget>(notebook)
         regionList = OpaquePointer(gtk_list_box_new()!)
         headerView = OpaquePointer(gtk_text_view_new()!)
+        headerSearch = OpaquePointer(gtk_entry_new()!)
+        headerEditButton = gtk_toggle_button_new_with_label("Edit")!
+        headerSaveButton = gtk_button_new_with_label("Save modified…")!
+        headerReadScroller = gtk_scrolled_window_new()!
+        headerEditScroller = gtk_scrolled_window_new()!
+        headerEditList = OpaquePointer(gtk_list_box_new()!)
         photometryView = OpaquePointer(gtk_text_view_new()!)
         statsView = OpaquePointer(gtk_text_view_new()!)
         gtk_widget_set_size_request(widget, 260, -1)
@@ -35,7 +92,7 @@ import TheiaKit
             gtk_text_view_set_monospace(textView, 1)
             gtk_text_view_set_wrap_mode(textView, GTK_WRAP_WORD_CHAR)
         }
-        appendPage(headerView, title: "Header")
+        appendHeaderPage()
         appendPage(regionList, title: "Regions")
         appendPage(photometryView, title: "Photometry")
         appendPage(statsView, title: "Stats")
@@ -72,6 +129,44 @@ import TheiaKit
         let scroller = gtk_scrolled_window_new()!
         gtk_scrolled_window_set_child(OpaquePointer(scroller), UnsafeMutablePointer<GtkWidget>(child))
         gtk_notebook_append_page(notebook, scroller, gtk_label_new(title))
+    }
+
+    private func appendHeaderPage() {
+        let page = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
+        ))
+        let toolbar = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+        ))
+        gtk_entry_set_placeholder_text(UnsafeMutablePointer<GtkEntry>(headerSearch), "Filter…")
+        gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(headerSearch), 1)
+        gtk_box_append(toolbar, UnsafeMutablePointer<GtkWidget>(headerSearch))
+        gtk_box_append(toolbar, headerEditButton)
+        gtk_box_append(toolbar, headerSaveButton)
+        gtk_box_append(page, UnsafeMutablePointer<GtkWidget>(OpaquePointer(toolbar)))
+        gtk_scrolled_window_set_child(OpaquePointer(headerReadScroller),
+                                      UnsafeMutablePointer<GtkWidget>(headerView))
+        gtk_scrolled_window_set_child(OpaquePointer(headerEditScroller),
+                                      UnsafeMutablePointer<GtkWidget>(headerEditList))
+        for scroller in [headerReadScroller, headerEditScroller] {
+            gtk_widget_set_vexpand(scroller, 1)
+            gtk_box_append(page, scroller)
+        }
+        gtk_notebook_append_page(notebook, UnsafeMutablePointer<GtkWidget>(OpaquePointer(page)),
+                                 gtk_label_new("Header"))
+        GTKHeaderEntryAction { [weak self] value in
+            guard let self else { return }
+            self.session.headerEditor.search = value
+            self.refreshHeader()
+        }.connect(to: headerSearch)
+        GTKHeaderToggleAction { [weak self] in
+            guard let self else { return }
+            self.session.headerEditor.editing = gtk_toggle_button_get_active(
+                UnsafeMutablePointer<GtkToggleButton>(OpaquePointer(self.headerEditButton))
+            ) != 0
+            self.refreshHeader()
+        }.connect(to: headerEditButton)
+        GTKButtonAction { [weak self] in self?.saveHeader() }.connect(to: headerSaveButton)
     }
 
     private func connectSignals() {
@@ -114,12 +209,80 @@ import TheiaKit
     }
 
     private func refreshHeader() {
-        headerText = session.file.hdus[session.hdu].header.cards.map { card in
-            let value = card.value?.displayString ?? ""
-            let comment = card.comment.map { " / \($0)" } ?? ""
-            return "\(card.keyword.padding(toLength: 8, withPad: " ", startingAt: 0))  \(value)\(comment)"
+        let hdu = session.hdu
+        let editor = session.headerEditor
+        let header = session.file.hdus[hdu].header
+        let rows = editor.filteredRows(in: header)
+        headerText = rows.map { row in
+            let value = editor.valueText(for: row.card, at: row.id, hdu: hdu)
+            let comment = editor.commentText(for: row.card, at: row.id, hdu: hdu)
+            return "\(row.card.keyword.padding(toLength: 8, withPad: " ", startingAt: 0))  \(value)\(comment.isEmpty ? "" : " / \(comment)")"
         }.joined(separator: "\n")
         setText(headerText, in: headerView)
+        gtk_widget_set_visible(headerReadScroller, editor.editing ? 0 : 1)
+        gtk_widget_set_visible(headerEditScroller, editor.editing ? 1 : 0)
+        let list = UnsafeMutablePointer<GtkWidget>(headerEditList)
+        while let child = gtk_widget_get_first_child(list) {
+            gtk_list_box_remove(headerEditList, child)
+        }
+        if editor.editing {
+            for row in rows { appendEditableHeaderRow(row, hdu: hdu) }
+        }
+        refreshHeaderSaveButton()
+    }
+
+    private func appendEditableHeaderRow(_ row: HeaderRow, hdu: Int) {
+        let content = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+        ))
+        let keyword = gtk_label_new(row.card.keyword)!
+        gtk_widget_set_size_request(keyword, 75, -1)
+        gtk_label_set_xalign(OpaquePointer(keyword), 0)
+        gtk_box_append(content, keyword)
+        let value = OpaquePointer(gtk_entry_new()!)
+        let comment = OpaquePointer(gtk_entry_new()!)
+        gtk_editable_set_text(value, session.headerEditor.valueText(
+            for: row.card, at: row.id, hdu: hdu
+        ))
+        gtk_editable_set_text(comment, session.headerEditor.commentText(
+            for: row.card, at: row.id, hdu: hdu
+        ))
+        gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(value), 110, -1)
+        gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(comment), 1)
+        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(value))
+        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(comment))
+        gtk_list_box_append(headerEditList, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
+        GTKHeaderEntryAction { [weak self] text in
+            guard let self else { return }
+            self.session.headerEditor.setValue(text, for: row.card, at: row.id, hdu: hdu)
+            self.refreshHeaderSaveButton()
+        }.connect(to: value)
+        GTKHeaderEntryAction { [weak self] text in
+            guard let self else { return }
+            self.session.headerEditor.setComment(text, for: row.card, at: row.id, hdu: hdu)
+            self.refreshHeaderSaveButton()
+        }.connect(to: comment)
+    }
+
+    private func refreshHeaderSaveButton() {
+        gtk_widget_set_sensitive(headerSaveButton,
+                                 session.displayed != nil &&
+                                 session.headerEditor.editCount(for: session.hdu) > 0 ? 1 : 0)
+    }
+
+    private func saveHeader() {
+        guard session.displayed != nil else { return }
+        let hdu = session.hdu
+        guard session.headerEditor.editCount(for: hdu) > 0 else { return }
+        let extra = session.headerEditor.serializedExtraCards(
+            from: session.file.hdus[hdu].header, hdu: hdu
+        )
+        onSaveHeader(hdu, extra)
+    }
+
+    func didSaveHeader(hdu: Int) {
+        session.headerEditor.clearEdits(for: hdu)
+        refreshHeader()
     }
 
     private func refreshRegions() {

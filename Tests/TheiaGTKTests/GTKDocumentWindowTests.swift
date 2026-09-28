@@ -100,6 +100,75 @@ import XCTest
 }
 
 final class GTKDocumentWindowTests: XCTestCase {
+    @MainActor func testHeaderInspectorFiltersEditsAndRequestsModifiedFITS() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fixture,
+                                      file: try FITSFile(data: Data(contentsOf: fixture)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+        let page = try XCTUnwrap(gtk_notebook_get_nth_page(window.inspector.notebook, 0))
+        let toolbar = try XCTUnwrap(gtk_widget_get_first_child(page))
+        let search = try XCTUnwrap(gtk_widget_get_first_child(toolbar))
+        let edit = try XCTUnwrap(gtk_widget_get_next_sibling(search))
+        let save = try XCTUnwrap(gtk_widget_get_next_sibling(edit))
+        XCTAssertEqual(gtk_widget_get_sensitive(save), 0)
+        gtk_editable_set_text(OpaquePointer(search), "OBJECT")
+        XCTAssertTrue(window.inspector.headerText.contains("OBJECT"))
+        XCTAssertFalse(window.inspector.headerText.contains("BITPIX"))
+        gtk_toggle_button_set_active(
+            UnsafeMutablePointer<GtkToggleButton>(OpaquePointer(edit)), 1
+        )
+        XCTAssertTrue(session.headerEditor.editing)
+        let row = try XCTUnwrap(gtk_list_box_get_row_at_index(window.inspector.headerEditList, 0))
+        let content = try XCTUnwrap(gtk_list_box_row_get_child(row))
+        let keyword = try XCTUnwrap(gtk_widget_get_first_child(content))
+        let value = try XCTUnwrap(gtk_widget_get_next_sibling(keyword))
+        gtk_editable_set_text(OpaquePointer(value), "'Linux edit'")
+        XCTAssertEqual(session.headerEditor.editCount(for: 0), 1)
+        XCTAssertEqual(gtk_widget_get_sensitive(save), 1)
+        var requestedHDU: Int?
+        var requestedCards: [String] = []
+        window.inspector.onSaveHeader = { hdu, cards in
+            requestedHDU = hdu
+            requestedCards = cards
+        }
+        let id = try documentWindowID()
+        var saveX = 0.0, saveY = 0.0
+        XCTAssertEqual(gtk_widget_translate_coordinates(
+            save, UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)),
+            Double(gtk_widget_get_width(save)) / 2,
+            Double(gtk_widget_get_height(save)) / 2,
+            &saveX, &saveY
+        ), 1)
+        let click = Process()
+        click.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+        click.arguments = ["mousemove", "--window", id, String(Int(saveX)),
+                           String(Int(saveY)), "click", "1"]
+        try click.run()
+        let deadline = Date().addingTimeInterval(2)
+        while (click.isRunning || requestedHDU == nil) && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        click.waitUntilExit()
+        XCTAssertEqual(click.terminationStatus, 0)
+        XCTAssertEqual(requestedHDU, 0)
+        XCTAssertTrue(requestedCards.contains { $0.contains("OBJECT") && $0.contains("Linux edit") })
+        window.inspector.didSaveHeader(hdu: 0)
+        XCTAssertEqual(session.headerEditor.editCount(for: 0), 0)
+        XCTAssertEqual(gtk_widget_get_sensitive(save), 0)
+    }
+
     @MainActor func testCubeLineDragOpensRenderedPVDiagram() async throws {
         gtk_init()
         let session = try gtkCubeSession()

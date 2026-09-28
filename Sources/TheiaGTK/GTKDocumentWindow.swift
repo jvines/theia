@@ -226,6 +226,9 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(statusLabel))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
+        inspector.onSaveHeader = { [weak self] hdu, extraCards in
+            self?.startHeaderSave(hdu: hdu, extraCards: extraCards)
+        }
         refreshDisplayedContent()
         refreshCubeControls()
         if let row = gtk_list_box_get_row_at_index(hduList, gint(session.hdu)) {
@@ -1345,6 +1348,29 @@ private final class RenderCancellation: @unchecked Sendable {
         guard !destroyed else { return }
         let outcome = session.perform(.completeRegionLoad(request, regions), origin: .user)
         if outcome.failure != .supersededRegionLoad { handleOutcome(outcome) }
+    }
+
+    private func startHeaderSave(hdu: Int, extraCards: [String]) {
+        guard let image = session.displayed else { return }
+        guard activePathDialog == nil else { activePathDialog?.present(); return }
+        let dialog = GTKPathDialog(
+            parent: widget, question: .savePath(suggestedName: "modified.fits", types: ["fits"])
+        ) { [weak self] answer in
+            guard let self else { return }
+            self.activePathDialog = nil
+            guard case .path(let url) = answer else { return }
+            Task.detached(priority: .userInitiated) { [weak self] in
+                do {
+                    try FITSWriter.write(image, to: url, extraCards: extraCards)
+                    await self?.inspector.didSaveHeader(hdu: hdu)
+                } catch {
+                    await self?.showAlert(title: "FITS header not saved",
+                                          message: error.localizedDescription)
+                }
+            }
+        }
+        activePathDialog = dialog
+        dialog.present()
     }
 
     private func startPrint() {
