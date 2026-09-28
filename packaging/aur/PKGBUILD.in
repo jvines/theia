@@ -1,0 +1,37 @@
+# Generated with scripts/generate_aur_pkgbuild.py after both Linux archives are built.
+pkgname=theia-fits-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Native FITS image viewer and analysis app'
+arch=('x86_64' 'aarch64')
+url='https://git.jvines.cl/jayvains/theia'
+license=('BSD-3-Clause' 'GPL-3.0-only')
+depends=('bash' 'glibc')
+provides=('theia-fits')
+conflicts=('theia-fits')
+options=('!strip' '!debug')
+source_x86_64=("Theia-${pkgver}-linux-x86_64.tar.xz::${url}/releases/download/v${pkgver}/Theia-${pkgver}-linux-x86_64.tar.xz")
+source_aarch64=("Theia-${pkgver}-linux-aarch64.tar.xz::${url}/releases/download/v${pkgver}/Theia-${pkgver}-linux-aarch64.tar.xz")
+sha256sums_x86_64=('@X86_SHA256@')
+sha256sums_aarch64=('@ARM_SHA256@')
+
+package() {
+    local source_dir="${srcdir}/Theia-${pkgver}-linux-${CARCH}"
+    install -d "${pkgdir}/opt/theia-fits" "${pkgdir}/usr/bin"
+    cp -a "${source_dir}/." "${pkgdir}/opt/theia-fits/"
+    ln -s /opt/theia-fits/bin/theia "${pkgdir}/usr/bin/theia-fits"
+    install -Dm644 "${source_dir}/share/applications/cl.jvines.theia.desktop" \
+        "${pkgdir}/usr/share/applications/cl.jvines.theia.desktop"
+    sed -i 's/^Exec=theia %F$/Exec=theia-fits %F/' \
+        "${pkgdir}/usr/share/applications/cl.jvines.theia.desktop"
+    install -Dm644 "${source_dir}/share/icons/hicolor/scalable/apps/cl.jvines.theia.svg" \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/cl.jvines.theia.svg"
+    install -Dm644 "${source_dir}/share/mime/packages/cl.jvines.theia.mime.xml" \
+        "${pkgdir}/usr/share/mime/packages/cl.jvines.theia.mime.xml"
+    install -Dm644 "${source_dir}/share/doc/theia/LICENSE" \
+        "${pkgdir}/usr/share/licenses/theia-fits-bin/LICENSE"
+    install -Dm644 "${source_dir}/share/doc/theia/FFmpeg-GPL-3.0.txt" \
+        "${pkgdir}/usr/share/licenses/theia-fits-bin/FFmpeg-GPL-3.0.txt"
+    install -Dm644 "${source_dir}/share/doc/theia/DejaVu-LICENSE" \
+        "${pkgdir}/usr/share/licenses/theia-fits-bin/DejaVu-LICENSE"
+}

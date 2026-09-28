@@ -55,12 +55,15 @@ XPA tools, and FFmpeg for MP4 export. CI verifies the package under Xvfb on
 AlmaLinux 8. The AppImage can use `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
 unavailable.
 
+The Arch `theia-fits-bin` recipe is generated from release archive hashes; see
+the [AUR packaging instructions](packaging/aur/README.md).
+
 ## Design notes
 
 - **FITS parsing**: pure Swift for uncompressed data (`BITPIX` 8/16/32/-32/-64, BSCALE/BZERO, multi-HDU). Tile-compressed (`.fz`) images are decompressed by a vendored, statically-linked CFITSIO 4.6.4 (`Sources/CFITSIO/`) and swapped in as native image HDUs at parse time, so the rest of the pipeline never sees compression.
-- **Rendering**: Metal-backed view. `FITSCore` produces a normalized `Float32` texture; the app layer applies stretches and palettes via Metal shaders.
+- **Rendering**: the Mac app uses Metal shaders; the Linux app rasterizes on the CPU and presents a `GdkMemoryTexture`. Both use the shared stretch and colormap logic.
 - **WCS**: pure-Swift implementation of common projections (TAN/SIN/ZEA/STG/CAR/MER/AIT/MOL) plus SIP distortion, rather than bridging WCSlib.
-- **Toolchain**: `swift-tools-version:5.10`, macOS 14+.
+- **Toolchain**: `swift-tools-version:5.10`; macOS 14+ or the pinned AlmaLinux 8 / Swift 6.3.3 / GTK4 Linux build image.
 - **Distribution**: free; notarized DMG on macOS and relocatable tarball and AppImage on Linux.
 
 ## License
