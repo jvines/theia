@@ -100,6 +100,150 @@ import XCTest
 }
 
 final class GTKDocumentWindowTests: XCTestCase {
+    @MainActor func testCircularProfileDragsAndControlsUpdateSharedModels() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fixture,
+                                      file: try FITSFile(data: Data(contentsOf: fixture)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let bridge = GTKMainLoopBridge()
+        XCTAssertTrue(bridge.install())
+        defer { bridge.remove() }
+        let window = GTKDocumentWindow(application: application, session: session)
+        window.present()
+        let id = try documentWindowID()
+        for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+
+        for mode in [DrawMode.radialProfile, .growthCurve] {
+            _ = session.perform(.setDrawMode(mode), origin: .user)
+            XCTAssertEqual(session.mode, mode)
+            XCTAssertEqual(window.interaction.drawMode, mode)
+            let (x, y) = canvasCenter(in: window)
+            let drag = Process()
+            drag.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            drag.arguments = [
+                "mousemove", "--window", id, String(x), String(y), "sleep", "0.1",
+                "mousedown", "1", "sleep", "0.1",
+                "mousemove", "--window", id, String(x + 30), String(y),
+                "sleep", "0.1", "mouseup", "1",
+            ]
+            try drag.run()
+            let deadline = Date().addingTimeInterval(3)
+            func activePlot() -> GTKPlotWindow? {
+                mode == .radialProfile ? window.radialProfileWindow : window.growthCurveWindow
+            }
+            while (drag.isRunning || (activePlot()?.sampleCount ?? 0) == 0) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            drag.waitUntilExit()
+            XCTAssertEqual(drag.terminationStatus, 0)
+            let plot = try XCTUnwrap(activePlot(), "\(mode): marker=\(String(describing: session.profileMarker))")
+            XCTAssertGreaterThan(plot.sampleCount, 0)
+            XCTAssertNil(gtk_window_get_transient_for(plot.widget))
+
+            let label = try XCTUnwrap(gtk_widget_get_first_child(
+                UnsafeMutablePointer<GtkWidget>(OpaquePointer(plot.controls))
+            ))
+            let radiusSpin = try XCTUnwrap(gtk_widget_get_next_sibling(label))
+            gtk_spin_button_set_value(OpaquePointer(radiusSpin), 1.5)
+            _ = g_main_context_iteration(nil, 0)
+            switch mode {
+            case .radialProfile:
+                XCTAssertEqual(window.radialProfileModel?.radius, 1.5)
+                guard case .radial(_, let markerRadius) = session.profileMarker else {
+                    return XCTFail("Expected radial marker")
+                }
+                XCTAssertEqual(markerRadius, 1.5)
+            case .growthCurve:
+                XCTAssertEqual(window.growthCurveModel?.radius, 1.5)
+                guard case .growth(_, let markerRadius) = session.profileMarker else {
+                    return XCTFail("Expected growth marker")
+                }
+                XCTAssertEqual(markerRadius, 1.5)
+            default: break
+            }
+            let nextLabel = try XCTUnwrap(gtk_widget_get_next_sibling(radiusSpin))
+            let nextSpin = try XCTUnwrap(gtk_widget_get_next_sibling(nextLabel))
+            gtk_spin_button_set_value(OpaquePointer(nextSpin), 0.5)
+            _ = g_main_context_iteration(nil, 0)
+            if mode == .radialProfile {
+                XCTAssertEqual(window.radialProfileModel?.binWidth, 0.5)
+            } else {
+                XCTAssertEqual(window.growthCurveModel?.step, 0.5)
+            }
+            let updateDeadline = Date().addingTimeInterval(2)
+            while plot.sampleCount == 0 && Date() < updateDeadline {
+                _ = g_main_context_iteration(nil, 0)
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            XCTAssertGreaterThan(plot.sampleCount, 0)
+            gtk_window_destroy(plot.widget)
+            XCTAssertNil(session.profileMarker)
+        }
+        gtk_window_destroy(window.widget)
+        XCTAssertNil(window.radialProfileWindow)
+        XCTAssertNil(window.growthCurveWindow)
+        XCTAssertNil(window.radialProfileModel)
+        XCTAssertNil(window.growthCurveModel)
+        XCTAssertNil(session.profileMarker)
+    }
+
+    @MainActor func testLineProfileDragOpensIndependentPlotWindow() async throws {
+            gtk_init()
+            let fixture = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fixture,
+                                          file: try FITSFile(data: Data(contentsOf: fixture)))
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(
+                UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+            ), 1)
+            let bridge = GTKMainLoopBridge()
+            XCTAssertTrue(bridge.install())
+            defer { bridge.remove() }
+            let window = GTKDocumentWindow(application: application, session: session)
+            window.present()
+            let id = try documentWindowID()
+            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            _ = session.perform(.setDrawMode(.lineProfile), origin: .user)
+            let (x, y) = canvasCenter(in: window)
+            let drag = Process()
+            drag.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            drag.arguments = [
+                "mousemove", "--window", id, String(x), String(y), "sleep", "0.1",
+                "mousedown", "1", "sleep", "0.1",
+                "mousemove", "--window", id, String(x + 30), String(y),
+                "sleep", "0.1", "mouseup", "1",
+            ]
+            try drag.run()
+            let deadline = Date().addingTimeInterval(3)
+            while (drag.isRunning || window.lineProfileWindow == nil ||
+                   window.lineProfileWindow?.sampleCount == 0) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            drag.waitUntilExit()
+            XCTAssertEqual(drag.terminationStatus, 0)
+            let plot = try XCTUnwrap(window.lineProfileWindow)
+            XCTAssertGreaterThanOrEqual(plot.sampleCount, 64)
+            XCTAssertNil(gtk_window_get_transient_for(plot.widget))
+            guard case .line = session.profileMarker else {
+                return XCTFail("Expected the shared line marker")
+            }
+            gtk_window_destroy(window.widget)
+            XCTAssertNil(window.lineProfileWindow)
+            XCTAssertNil(session.profileMarker)
+    }
+
     func testRegionRightClickOpensSharedContextActions() async throws {
         try await MainActor.run {
             gtk_init()
@@ -132,15 +276,7 @@ final class GTKDocumentWindowTests: XCTestCase {
                                 Double(gtk_widget_get_height(picture))), backingScale: 1
             )
             let point = mapping.imageToView(target)
-            _ = window.interaction.pointer(PointerEvent(
-                phase: .down, button: .secondary, location: point
-            ))
-            XCTAssertEqual(session.selectedRegionIndex, 0)
-            _ = window.interaction.takeEffects()
-            _ = window.interaction.pointer(PointerEvent(
-                phase: .up, button: .secondary, location: point
-            ))
-            session.selectedRegionIndex = nil
+            XCTAssertEqual(gtk_widget_contains(picture, point.x, point.y), 1)
             var x = 0.0, y = 0.0
             XCTAssertEqual(gtk_widget_translate_coordinates(
                 picture, UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)),
@@ -819,7 +955,17 @@ final class GTKDocumentWindowTests: XCTestCase {
             defer { gtk_window_destroy(window.widget) }
             window.present()
             let id = try documentWindowID()
-            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            let picture = UnsafeMutablePointer<GtkWidget>(window.picture)
+            let layoutDeadline = Date().addingTimeInterval(2)
+            while Date() < layoutDeadline {
+                _ = g_main_context_iteration(nil, 0)
+                if gtk_widget_get_width(picture) > 0,
+                   session.view.viewSizePoints.width == Double(gtk_widget_get_width(picture)) {
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            let initialCanvasWidth = gtk_widget_get_width(picture)
             let (x, y) = canvasCenter(in: window)
 
             let motion = Process()
@@ -835,6 +981,11 @@ final class GTKDocumentWindowTests: XCTestCase {
             let cursor = try XCTUnwrap(session.cursor)
             let status = String(cString: gtk_label_get_text(window.statusLabel))
             XCTAssertTrue(status.contains("\(cursor.fitsX), \(cursor.fitsY)"))
+            for _ in 0..<20 {
+                _ = g_main_context_iteration(nil, 0)
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            XCTAssertEqual(gtk_widget_get_width(picture), initialCanvasWidth)
         }
     }
 

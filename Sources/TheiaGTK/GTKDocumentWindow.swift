@@ -57,6 +57,11 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var pixelTableWindow: GTKPixelTableWindow?
     private(set) var contourLevelsWindow: GTKContourLevelsWindow?
     private(set) var scaleParametersWindow: GTKScaleParametersWindow?
+    private(set) var lineProfileWindow: GTKPlotWindow?
+    private(set) var radialProfileWindow: GTKPlotWindow?
+    private(set) var growthCurveWindow: GTKPlotWindow?
+    private(set) var radialProfileModel: RadialProfileModel?
+    private(set) var growthCurveModel: GrowthCurveModel?
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
     private(set) var activeNumberDialog: GTKNumberDialog?
@@ -86,6 +91,7 @@ private final class RenderCancellation: @unchecked Sendable {
     private let displayBuilder = DisplayImageBuilder()
     private var cachedDisplay: DisplayImage?
     private var renderTask: Task<Void, Never>?
+    private var lineProfileTask: Task<Void, Never>?
     private var renderGeneration = 0
     private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
@@ -129,6 +135,9 @@ private final class RenderCancellation: @unchecked Sendable {
         imageOverlay = OpaquePointer(gtk_overlay_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
         statusLabel = OpaquePointer(gtk_label_new(session.url.path)!)
+        gtk_label_set_ellipsize(statusLabel, PANGO_ELLIPSIZE_END)
+        gtk_label_set_max_width_chars(statusLabel, 64)
+        gtk_label_set_xalign(statusLabel, 0)
         cubeControls = UnsafeMutablePointer<GtkBox>(OpaquePointer(
             gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         ))
@@ -627,9 +636,130 @@ private final class RenderCancellation: @unchecked Sendable {
             switch effect {
             case .showContextMenu(let index, let point):
                 showRegionContextMenu(index: index, at: point)
-            case .openAnalysis:
-                showAlert(title: "Theia", message: "This analysis view is not available in the Linux app yet")
+            case .openAnalysis(let request):
+                openAnalysis(request)
             }
+        }
+    }
+
+    private func openAnalysis(_ request: AnalysisRequest) {
+        switch request {
+        case .lineProfile(let from, let to):
+            guard let image = session.displayed else { return }
+            guard session.file.hdus[session.hdu].naxis != 3 else {
+                showAlert(title: "Theia", message: "Cube PV diagrams are not available in the Linux app yet")
+                return
+            }
+            lineProfileTask?.cancel()
+            if let lineProfileWindow { gtk_window_destroy(lineProfileWindow.widget) }
+            let marker = ProfileGeometry.line(from: from, to: to)
+            session.profileMarker = marker
+            let plot = GTKPlotWindow(
+                application: gtk_window_get_application(widget)!, sourceSession: session,
+                title: "Line Profile — \(session.url.lastPathComponent)",
+                xLabel: "distance (px)", yLabel: "value"
+            ) { [weak self] in
+                guard let self else { return }
+                self.lineProfileWindow = nil
+                if self.session.profileMarker == marker { self.session.profileMarker = nil }
+            }
+            lineProfileWindow = plot
+            plot.present()
+            lineProfileTask = Task.detached(priority: .userInitiated) { [weak plot] in
+                let model = LineProfileModel(image: image, from: from, to: to)
+                await plot?.setSeries(x: model.xValues, y: model.yValues)
+            }
+        case .radialProfile(let center, let radius):
+            guard let image = session.displayed else { return }
+            if let radialProfileWindow { gtk_window_destroy(radialProfileWindow.widget) }
+            let initialRadius = radius > 0 ? radius : Double(min(image.width, image.height)) / 2
+            let model = RadialProfileModel(image: image, center: center,
+                                           initialRadius: initialRadius)
+            radialProfileModel = model
+            session.profileMarker = .radial(center: center, maxRadius: model.radius)
+            let plot = GTKPlotWindow(
+                application: gtk_window_get_application(widget)!, sourceSession: session,
+                title: "Radial Profile — \(session.url.lastPathComponent)",
+                xLabel: "radius (px)", yLabel: "mean value"
+            ) { [weak self, weak model] in
+                model?.cancel()
+                guard let self else { return }
+                self.radialProfileWindow = nil
+                self.radialProfileModel = nil
+                if case .radial(let markerCenter, _) = self.session.profileMarker,
+                   markerCenter == center { self.session.profileMarker = nil }
+            }
+            radialProfileWindow = plot
+            plot.addSpin(label: "max r", value: model.radius, minimum: 1,
+                         maximum: model.maxAllowedRadius, step: 0.5) { [weak self, weak plot] value in
+                model.setRadius(value)
+                _ = self?.session.perform(.setProfileRadius(model.radius), origin: .user)
+                Self.updateRadialPlot(model, in: plot)
+            }
+            plot.addSpin(label: "bin", value: model.binWidth, minimum: 0.5,
+                         maximum: 10, step: 0.5) { [weak plot] value in
+                model.setBinWidth(value)
+                Self.updateRadialPlot(model, in: plot)
+            }
+            plot.present()
+            Self.updateRadialPlot(model, in: plot)
+        case .growthCurve(let center, let radius):
+            guard let image = session.displayed else { return }
+            if let growthCurveWindow { gtk_window_destroy(growthCurveWindow.widget) }
+            let initialRadius = radius > 0 ? radius : Double(min(image.width, image.height)) / 2
+            let model = GrowthCurveModel(image: image, center: center,
+                                         initialRadius: initialRadius)
+            growthCurveModel = model
+            session.profileMarker = .growth(center: center, maxRadius: model.radius)
+            let plot = GTKPlotWindow(
+                application: gtk_window_get_application(widget)!, sourceSession: session,
+                title: "Growth Curve — \(session.url.lastPathComponent)",
+                xLabel: "aperture radius (px)", yLabel: "cumulative flux"
+            ) { [weak self, weak model] in
+                model?.cancel()
+                guard let self else { return }
+                self.growthCurveWindow = nil
+                self.growthCurveModel = nil
+                if case .growth(let markerCenter, _) = self.session.profileMarker,
+                   markerCenter == center { self.session.profileMarker = nil }
+            }
+            growthCurveWindow = plot
+            plot.addSpin(label: "max r", value: model.radius, minimum: 1,
+                         maximum: model.maxAllowedRadius, step: 0.5) { [weak self, weak plot] value in
+                model.setRadius(value)
+                _ = self?.session.perform(.setProfileRadius(model.radius), origin: .user)
+                Self.updateGrowthPlot(model, in: plot)
+            }
+            plot.addSpin(label: "step", value: model.step, minimum: 0.5,
+                         maximum: 10, step: 0.5) { [weak plot] value in
+                model.setStep(value)
+                Self.updateGrowthPlot(model, in: plot)
+            }
+            plot.present()
+            Self.updateGrowthPlot(model, in: plot)
+        case .measure(let from, let to):
+            let measurement = Measurements.between(
+                from: from, to: to, wcs: session.displayedWCS
+            )
+            showAlert(title: "Measurement", message: measurement.lines.joined(separator: "\n"))
+        case .cubeSpectrum:
+            showAlert(title: "Theia", message: "This analysis view is not available in the Linux app yet")
+        }
+    }
+
+    private static func updateRadialPlot(_ model: RadialProfileModel, in plot: GTKPlotWindow?) {
+        Task { @MainActor [weak plot] in
+            await model.idle()
+            guard !Task.isCancelled else { return }
+            plot?.setSeries(x: model.xValues, y: model.yValues)
+        }
+    }
+
+    private static func updateGrowthPlot(_ model: GrowthCurveModel, in plot: GTKPlotWindow?) {
+        Task { @MainActor [weak plot] in
+            await model.idle()
+            guard !Task.isCancelled else { return }
+            plot?.setSeries(x: model.xValues, y: model.yValues)
         }
     }
 
@@ -773,6 +903,20 @@ private final class RenderCancellation: @unchecked Sendable {
         activePrintJob?.cancel()
         activePrintJob = nil
         dismissRegionPopover()
+        lineProfileTask?.cancel()
+        lineProfileTask = nil
+        if let lineProfileWindow {
+            self.lineProfileWindow = nil
+            gtk_window_destroy(lineProfileWindow.widget)
+        }
+        if let radialProfileWindow {
+            self.radialProfileWindow = nil
+            gtk_window_destroy(radialProfileWindow.widget)
+        }
+        if let growthCurveWindow {
+            self.growthCurveWindow = nil
+            gtk_window_destroy(growthCurveWindow.widget)
+        }
         if let pixelTableWindow {
             self.pixelTableWindow = nil
             gtk_window_destroy(pixelTableWindow.widget)
