@@ -57,7 +57,7 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
     binary_dir.mkdir(parents=True)
     library_dir.mkdir()
     binaries = []
-    for name in ("theia-gtk", "xpans", "xpaget", "xpaset"):
+    for name in ("theia-gtk", "theia-remote-helper", "xpans", "xpaget", "xpaset"):
         source = bin_dir / name
         if not source.is_file():
             raise FileNotFoundError(source)

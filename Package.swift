@@ -68,6 +68,8 @@ let package = Package(
         .library(name: "FITSRaster", targets: ["FITSRaster"]),
         .library(name: "TheiaKit", targets: ["TheiaKit"]),
         .library(name: "XPABridge", targets: ["XPABridge"]),
+        .library(name: "TheiaRemote", targets: ["TheiaRemote"]),
+        .executable(name: "theia-remote-helper", targets: ["TheiaRemoteHelper"]),
     ] + platformProducts,
     dependencies: [],
     targets: [
@@ -144,6 +146,9 @@ let package = Package(
         ),
         .target(name: "FITSRaster", dependencies: ["FITSCore", "CZlib"], path: "Sources/FITSRaster"),
         .target(name: "TheiaKit", dependencies: ["FITSCore", "FITSRaster"], path: "Sources/TheiaKit"),
+        .target(name: "TheiaRemote", path: "Sources/TheiaRemote"),
+        .executableTarget(name: "TheiaRemoteHelper", dependencies: ["TheiaRemote"],
+                          path: "Sources/TheiaRemoteHelper"),
         .testTarget(
             name: "FITSCoreTests",
             dependencies: ["FITSCore"],
@@ -152,6 +157,7 @@ let package = Package(
         ),
         .testTarget(name: "FITSRasterTests", dependencies: ["FITSRaster", "CZlib"], path: "Tests/FITSRasterTests"),
         .testTarget(name: "TheiaKitTests", dependencies: ["TheiaKit", "FITSCore"], path: "Tests/TheiaKitTests"),
+        .testTarget(name: "TheiaRemoteTests", dependencies: ["TheiaRemote"], path: "Tests/TheiaRemoteTests"),
         .testTarget(
             name: "XPABridgeTests",
             dependencies: ["XPABridge"],

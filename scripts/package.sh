@@ -56,6 +56,11 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "${BUILD_DIR}/${BIN_NAME}" "${APP_DIR}/Contents/MacOS/${BIN_NAME}"
+if [ ! -x "${BUILD_DIR}/theia-remote-helper" ]; then
+    echo "error: ${BUILD_DIR}/theia-remote-helper not found after build" >&2
+    exit 1
+fi
+cp "${BUILD_DIR}/theia-remote-helper" "${APP_DIR}/Contents/MacOS/theia-remote-helper"
 cp "scripts/Info.plist" "${APP_DIR}/Contents/Info.plist"
 printf "APPL????" > "${APP_DIR}/Contents/PkgInfo"
 
@@ -90,6 +95,7 @@ if [ -n "${SIGNING_IDENTITY:-}" ]; then
     if [ -f "${APP_DIR}/Contents/MacOS/xpans" ]; then
         codesign "${SIGN_OPTS[@]}" "${APP_DIR}/Contents/MacOS/xpans"
     fi
+    codesign "${SIGN_OPTS[@]}" "${APP_DIR}/Contents/MacOS/theia-remote-helper"
     # Outer app last (signs the main executable + seals nested resources).
     codesign "${SIGN_OPTS[@]}" "${APP_DIR}"
     # Fail fast on a malformed signature before the slow notarytool round-trip.
