@@ -41,6 +41,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let picture: OpaquePointer
     let overlayArea: OpaquePointer
     let hduList: OpaquePointer
+    let statusLabel: OpaquePointer
     let session: DocumentSession
     let interaction: InteractionController
     let commandMenus: GTKCommandMenuBar
@@ -77,6 +78,7 @@ private final class RenderCancellation: @unchecked Sendable {
         picture = OpaquePointer(gtk_picture_new()!)
         overlayArea = OpaquePointer(gtk_drawing_area_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
+        statusLabel = OpaquePointer(gtk_label_new(session.url.path)!)
         gtk_window_set_title(widget, "\(session.url.lastPathComponent) — Theia")
         gtk_window_set_default_size(widget, 1100, 720)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
@@ -131,7 +133,7 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(imageOverlay))
         gtk_box_append(content, inspector.widget)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
-        gtk_box_append(root, gtk_label_new(session.url.path))
+        gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(statusLabel))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
         if let row = gtk_list_box_get_row_at_index(hduList, gint(session.hdu)) {
             gtk_list_box_select_row(hduList, row)
@@ -165,6 +167,7 @@ private final class RenderCancellation: @unchecked Sendable {
             case .displayParametersChanged, .transformChanged, .imageRevisionChanged:
                 self?.renderCanvas()
                 self?.refreshOverlay()
+                if event.kind == .imageRevisionChanged { self?.refreshStatus() }
                 if event.kind == .imageRevisionChanged { self?.refreshViewButtons() }
             case .selectionChanged:
                 self?.syncHDUSelection()
@@ -173,6 +176,7 @@ private final class RenderCancellation: @unchecked Sendable {
                 self?.refreshOverlay()
             case .regionsChanged, .overlaysChanged, .cursorMoved:
                 self?.refreshOverlay()
+                if event.kind == .cursorMoved { self?.refreshStatus() }
             default: break
             }
         }
@@ -212,6 +216,7 @@ private final class RenderCancellation: @unchecked Sendable {
         )
         installScrollController()
         installDragGesture()
+        installMotionController()
         commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
     }
 
@@ -251,6 +256,76 @@ private final class RenderCancellation: @unchecked Sendable {
             )
         }
         gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), gesture)
+    }
+
+    private func installMotionController() {
+        let controller = gtk_event_controller_motion_new()!
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let callback: @convention(c) (OpaquePointer?, gdouble, gdouble, gpointer?) -> Void = {
+            _, x, y, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { window.handleMotion(x: x, y: y) }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        g_signal_connect_data(
+            UnsafeMutableRawPointer(controller), "motion",
+            unsafeBitCast(callback, to: GCallback.self), context, release,
+            GConnectFlags(rawValue: 0)
+        )
+        gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), controller)
+    }
+
+    private func handleMotion(x: Double, y: Double) {
+        let pictureWidget = UnsafeMutablePointer<GtkWidget>(picture)
+        var localX = 0.0
+        var localY = 0.0
+        guard gtk_widget_translate_coordinates(
+            UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), pictureWidget,
+            x, y, &localX, &localY
+        ) != 0, gtk_widget_contains(pictureWidget, localX, localY) != 0,
+        let image = session.displayed else {
+            session.cursor = nil
+            return
+        }
+        let mapping = ViewMapping(
+            transform: session.view.transform,
+            viewSize: SIMD2(Double(session.view.viewSizePoints.width),
+                            Double(session.view.viewSizePoints.height)),
+            backingScale: session.view.backingScale
+        )
+        let pixel = mapping.nearestImagePixel(toView: SIMD2(localX, localY))
+        guard pixel.x >= 0, pixel.y >= 0,
+              pixel.x < image.width, pixel.y < image.height else {
+            session.cursor = nil
+            return
+        }
+        session.cursor = CursorInfo(
+            imageX: pixel.x, imageY: pixel.y,
+            value: image.physicalValue(x: pixel.x, y: pixel.y)
+        )
+        _ = interaction.pointer(PointerEvent(
+            phase: .moved, button: .primary, location: SIMD2(localX, localY)
+        ))
+    }
+
+    private func refreshStatus() {
+        var value: String
+        if let cursor = session.cursor {
+            value = String(format: "Pixel %d, %d    Value %.6g",
+                           cursor.fitsX, cursor.fitsY, cursor.value)
+            if let sky = session.displayedWCS?.pixelToSky(
+                imageX: cursor.imageX, imageY: cursor.imageY
+            ) {
+                value += String(format: "    RA %.6f°  Dec %.6f°", sky.ra, sky.dec)
+            }
+        } else {
+            value = session.url.path
+        }
+        gtk_label_set_text(statusLabel, value)
     }
 
     private func beginDrag(gesture: OpaquePointer, x: Double, y: Double) {

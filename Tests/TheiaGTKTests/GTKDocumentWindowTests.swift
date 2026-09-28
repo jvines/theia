@@ -447,6 +447,39 @@ final class GTKDocumentWindowTests: XCTestCase {
         }
     }
 
+    func testMouseMotionUpdatesSharedCursorAndStatus() async throws {
+        try await MainActor.run {
+            gtk_init()
+            let fileURL = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            window.present()
+            let id = try documentWindowID()
+            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            let (x, y) = canvasCenter(in: window)
+
+            let motion = Process()
+            motion.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            motion.arguments = ["mousemove", "--window", id, String(x), String(y)]
+            try motion.run()
+            let deadline = Date().addingTimeInterval(2)
+            while (motion.isRunning || session.cursor == nil) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+            }
+            motion.waitUntilExit()
+            XCTAssertEqual(motion.terminationStatus, 0)
+            let cursor = try XCTUnwrap(session.cursor)
+            let status = String(cString: gtk_label_get_text(window.statusLabel))
+            XCTAssertTrue(status.contains("\(cursor.fitsX), \(cursor.fitsY)"))
+        }
+    }
+
     func testMouseDragPansSharedViewport() async throws {
         try await MainActor.run {
             gtk_init()
