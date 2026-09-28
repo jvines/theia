@@ -21,6 +21,7 @@ import TheiaKit
 @MainActor final class GTKDocumentWindow {
     let widget: UnsafeMutablePointer<GtkWindow>
     let picture: OpaquePointer
+    let overlayArea: OpaquePointer
     let hduList: OpaquePointer
     let session: DocumentSession
     let interaction: InteractionController
@@ -33,6 +34,9 @@ import TheiaKit
     private var destroyed = false
     private var dragStart: SIMD2<Double>?
     private var dragButton: PointerEvent.Button = .primary
+    private let overlayScene = OverlayScene()
+    private let gridCache = WCSGridCache()
+    private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
@@ -44,6 +48,7 @@ import TheiaKit
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
         picture = OpaquePointer(gtk_picture_new()!)
+        overlayArea = OpaquePointer(gtk_drawing_area_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
         gtk_window_set_title(widget, "\(session.url.lastPathComponent) — Theia")
         gtk_window_set_default_size(widget, 640, 480)
@@ -89,7 +94,13 @@ import TheiaKit
         }
         gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(hduList), 160, -1)
         gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(hduList))
-        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(picture))
+        let imageOverlay = OpaquePointer(gtk_overlay_new()!)
+        gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
+        gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
+        gtk_overlay_set_child(imageOverlay, UnsafeMutablePointer<GtkWidget>(picture))
+        gtk_overlay_add_overlay(imageOverlay, UnsafeMutablePointer<GtkWidget>(overlayArea))
+        gtk_widget_set_can_target(UnsafeMutablePointer<GtkWidget>(overlayArea), 0)
+        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(imageOverlay))
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
         gtk_box_append(root, gtk_label_new(session.url.path))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
@@ -119,18 +130,34 @@ import TheiaKit
         session.view.backingScale = 1
         session.view.fitDisplayedImage()
         renderCanvas()
+        refreshOverlay()
         observerID = session.addEventObserver { [weak self] event in
             switch event.kind {
             case .displayParametersChanged, .transformChanged, .imageRevisionChanged:
                 self?.renderCanvas()
+                self?.refreshOverlay()
                 if event.kind == .imageRevisionChanged { self?.refreshViewButtons() }
             case .selectionChanged:
                 self?.syncHDUSelection()
                 self?.refreshViewButtons()
                 self?.interaction.drawMode = self?.session.mode ?? .pan
+                self?.refreshOverlay()
+            case .regionsChanged, .overlaysChanged, .cursorMoved:
+                self?.refreshOverlay()
             default: break
             }
         }
+        let drawContext = Unmanaged.passRetained(self).toOpaque()
+        gtk_drawing_area_set_draw_func(UnsafeMutablePointer<GtkDrawingArea>(overlayArea), { _, cairo, _, _, userData in
+            guard let cairo, let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                GTKOverlayPainter.draw(window.overlayPrimitives, in: cairo)
+            }
+        }, drawContext, { userData in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        })
         let context = Unmanaged.passRetained(self).toOpaque()
         let callback: @convention(c) (UnsafeMutablePointer<GtkWidget>?, gpointer?) -> Void = { _, userData in
             guard let userData else { return }
@@ -378,6 +405,37 @@ import TheiaKit
         }
     }
 
+    private func refreshOverlay() {
+        guard !destroyed else { return }
+        let viewSize = SIMD2(Double(session.view.viewSizePoints.width),
+                             Double(session.view.viewSizePoints.height))
+        let mapping = ViewMapping(transform: session.view.transform,
+                                  viewSize: viewSize, backingScale: 1)
+        var primitives: [OverlayPrimitive] = []
+        if let image = session.displayed, let wcs = session.displayedWCS {
+            if session.showGrid {
+                let lines = gridCache.gridlines(wcs: wcs, imageWidth: image.width,
+                                                imageHeight: image.height)
+                primitives += OverlayScene.gridPrimitives(lines, mapping: mapping)
+            }
+            if session.showCompass {
+                primitives += OverlayScene.compassAndScaleBar(
+                    wcs: wcs, viewSize: viewSize,
+                    viewportScale: session.view.transform.scale
+                )
+            }
+        }
+        primitives += OverlayScene.contours(session.contourSegments, mapping: mapping)
+        primitives += overlayScene.regionPrimitives(
+            session.regions, selectedIndex: session.selectedRegionIndex,
+            preview: session.previewRegion, wcs: session.displayedWCS, mapping: mapping
+        )
+        primitives += OverlayScene.profile(session.profileMarker, mapping: mapping)
+        primitives += OverlayScene.crosshair(at: session.remoteCrosshair, mapping: mapping)
+        overlayPrimitives = primitives
+        gtk_widget_queue_draw(UnsafeMutablePointer<GtkWidget>(overlayArea))
+    }
+
     private func refreshViewButtons() {
         for entry in CommandCatalog.viewMenu(for: session) {
             guard case .item(let item) = entry,
@@ -397,6 +455,7 @@ import TheiaKit
         session.view.viewSizePoints = CGSize(width: width, height: height)
         session.view.backingScale = scale
         renderCanvas()
+        refreshOverlay()
     }
 
     func present() {

@@ -79,6 +79,27 @@ final class GTKDocumentWindowTests: XCTestCase {
         }
     }
 
+    func testRegionChangesUpdateOverlayWithoutReplacingImageTexture() async throws {
+        try await MainActor.run {
+            gtk_init()
+            let fileURL = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            let texture = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
+
+            session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+
+            XCTAssertFalse(window.overlayPrimitives.isEmpty)
+            XCTAssertEqual(gtk_picture_get_paintable(window.picture), texture)
+        }
+    }
+
     func testFractionalScaleAllocatesExactDevicePixels() async throws {
         try await MainActor.run {
             gtk_init()
