@@ -62,6 +62,21 @@ import XCTest
     return (x, y)
 }
 
+@MainActor private func gtkCubeSession() throws -> DocumentSession {
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                    8",
+        "NAXIS   =                    3", "NAXIS1  =                    1",
+        "NAXIS2  =                    1", "NAXIS3  =                    3", "END",
+    ]
+    var header = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+    header += String(repeating: " ", count: 2880 - header.utf8.count)
+    var data = Data(header.utf8)
+    data.append(contentsOf: [2, 3, 5])
+    data.append(Data(repeating: 0, count: 2880 - 3))
+    return DocumentSession(url: URL(fileURLWithPath: "/tmp/theia-gtk-cube.fits"),
+                           file: try FITSFile(data: data))
+}
+
 final class GTKDocumentWindowTests: XCTestCase {
     @MainActor func testFITSWindowHasTitleAndRenderedCanvas() async throws {
         gtk_init()
@@ -142,7 +157,7 @@ final class GTKDocumentWindowTests: XCTestCase {
         let window = GTKDocumentWindow(application: application, session: session)
         defer { gtk_window_destroy(window.widget) }
 
-        XCTAssertEqual(window.commandMenus.sectionCount, 9)
+        XCTAssertEqual(window.commandMenus.sectionCount, 10)
         XCTAssertNotNil(gtk_widget_get_parent(window.commandMenus.widget))
         XCTAssertEqual(window.commandMenus.title(for: "map.viridis"), "Viridis")
         XCTAssertFalse(window.commandMenus.isEnabled("region.clear"))
@@ -216,6 +231,35 @@ final class GTKDocumentWindowTests: XCTestCase {
         let dialog = try XCTUnwrap(window.activePathDialog)
         XCTAssertEqual(String(cString: gtk_native_dialog_get_title(dialog.native)), "Save Regions")
         XCTAssertEqual(String(cString: gtk_file_chooser_get_current_name(dialog.chooser)), "regions.reg")
+    }
+
+    @MainActor func testCubeSlabQuestionUsesNumericDialogAndSharedOperation() async throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+
+        window.commandMenus.activate("tools.extractSlab")
+
+        let dialog = try XCTUnwrap(window.activeNumberDialog)
+        XCTAssertEqual(dialog.entries.count, 2)
+        XCTAssertEqual(String(cString: gtk_editable_get_text(dialog.entries[0])), "0")
+        XCTAssertEqual(String(cString: gtk_editable_get_text(dialog.entries[1])), "2")
+        gtk_editable_set_text(dialog.entries[0], "1")
+        XCTAssertEqual(gtk_widget_activate(dialog.acceptButton), 1)
+        let deadline = Date().addingTimeInterval(2)
+        while window.activeNumberDialog != nil && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertNil(window.activeNumberDialog)
+
+        await session.idle()
+        XCTAssertEqual(session.derived?.label, "Slab 1…2 (sum)")
+        XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 8)
     }
 
     @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {

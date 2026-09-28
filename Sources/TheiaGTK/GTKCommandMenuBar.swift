@@ -10,10 +10,12 @@ import TheiaKit
     private let session: DocumentSession
     private var observerID: UUID?
     private var commands: [String: SessionCommand] = [:]
+    private var toolActions: [String: ToolMenuAction] = [:]
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
     private var titles: [String: String] = [:]
     var onOutcome: (@MainActor (CommandOutcome) -> Void)?
+    var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
 
     var sectionCount: Int {
         Int(g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(model)))
@@ -59,6 +61,7 @@ import TheiaKit
         g_menu_remove_all(model)
         titles.removeAll()
         commands.removeAll()
+        toolActions.removeAll()
         let groups: [(String, [CommandMenuEntry])] = [
             ("View", CommandCatalog.viewMenu(for: session)),
             ("Image", CommandCatalog.imageMenu(for: session)),
@@ -109,6 +112,57 @@ import TheiaKit
             g_menu_append_submenu(model, title, UnsafeMutablePointer<GMenuModel>(submenu))
             g_object_unref(UnsafeMutableRawPointer(submenu))
         }
+        appendToolsMenu()
+    }
+
+    private func appendToolsMenu() {
+        let submenu = g_menu_new()!
+        var section = g_menu_new()!
+        var sectionTitle: String?
+        func finishSection() {
+            if g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(section)) > 0 {
+                g_menu_append_section(submenu, sectionTitle,
+                                      UnsafeMutablePointer<GMenuModel>(section))
+            }
+            g_object_unref(UnsafeMutableRawPointer(section))
+        }
+        for entry in CommandCatalog.toolsMenu(for: session, workspaceImageCount: 1) {
+            switch entry {
+            case .section(let heading):
+                finishSection()
+                section = g_menu_new()!
+                sectionTitle = heading.title
+            case .separator:
+                finishSection()
+                section = g_menu_new()!
+                sectionTitle = nil
+            case .item(let item):
+                appendToolItem(item, to: section)
+            }
+        }
+        finishSection()
+        g_menu_append_submenu(model, "Tools", UnsafeMutablePointer<GMenuModel>(submenu))
+        g_object_unref(UnsafeMutableRawPointer(submenu))
+    }
+
+    private func appendToolItem(_ item: ToolMenuItem, to menu: OpaquePointer) {
+        guard item.visible else { return }
+        titles[item.identifier] = item.title
+        if !item.children.isEmpty {
+            let submenu = g_menu_new()!
+            for child in item.children { appendToolItem(child, to: submenu) }
+            g_menu_append_submenu(menu, item.title, UnsafeMutablePointer<GMenuModel>(submenu))
+            g_object_unref(UnsafeMutableRawPointer(submenu))
+            return
+        }
+        guard let action = item.action else { return }
+        toolActions[item.identifier] = action
+        let actionName = item.identifier.replacingOccurrences(of: ".", with: "-")
+        installAction(identifier: item.identifier, name: actionName)
+        if let installed = actions[item.identifier] {
+            g_simple_action_set_enabled(installed, item.enabled ? 1 : 0)
+        }
+        g_menu_append(menu, item.title, "win.\(actionName)")
     }
 
     private func installAction(identifier: String, name: String) {
@@ -122,9 +176,12 @@ import TheiaKit
             let menu = Unmanaged<GTKCommandMenuBar>.fromOpaque(userData).takeUnretainedValue()
             MainActor.assumeIsolated {
                 guard let name = g_action_get_name(action).map(String.init(cString:)),
-                      let identifier = menu.actionIDs[name],
-                      let command = menu.commands[identifier] else { return }
-                menu.onOutcome?(menu.session.perform(command, origin: .user))
+                      let identifier = menu.actionIDs[name] else { return }
+                if let command = menu.commands[identifier] {
+                    menu.onOutcome?(menu.session.perform(command, origin: .user))
+                } else if let tool = menu.toolActions[identifier] {
+                    menu.onToolAction?(tool)
+                }
             }
         }
         let release: GClosureNotify = { userData, _ in

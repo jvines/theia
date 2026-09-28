@@ -48,6 +48,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let inspector: GTKInspectorPanel
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
+    private(set) var activeNumberDialog: GTKNumberDialog?
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private var observerID: UUID?
@@ -218,6 +219,7 @@ private final class RenderCancellation: @unchecked Sendable {
         installDragGesture()
         installMotionController()
         commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
+        commandMenus.onToolAction = { [weak self] action in self?.handleToolAction(action) }
     }
 
     private func installDragGesture() {
@@ -426,6 +428,8 @@ private final class RenderCancellation: @unchecked Sendable {
         inspector.stop()
         activePathDialog?.dismiss()
         activePathDialog = nil
+        activeNumberDialog?.dismiss()
+        activeNumberDialog = nil
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0
@@ -568,22 +572,58 @@ private final class RenderCancellation: @unchecked Sendable {
         for effect in outcome.effects { handleEffect(effect) }
     }
 
+    private func handleToolAction(_ action: ToolMenuAction) {
+        let command: SessionCommand
+        switch action {
+        case .collapse(let mode): command = .collapseCube(mode)
+        case .extractSlab: command = .extractSlab
+        case .exportCube: command = .exportCube
+        case .detectSources: command = .detectSources
+        case .crop: command = .cropToSelection
+        case .filter(let spec): command = .filter(spec)
+        case .unary(let operation): command = .unary(operation)
+        case .subtractBackground: command = .subtractBackground
+        case .bin(let size): command = .bin(size)
+        case .reproject(let index): command = .reproject(index)
+        case .binary(let operation, let index): command = .binary(operation, index)
+        case .clearDerivedImage: command = .clearDerivedImage
+        case .stack, .lightCurve:
+            showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
+            return
+        }
+        handleOutcome(session.perform(command, origin: .user))
+    }
+
     private func handleEffect(_ effect: Effect) {
         switch effect {
         case .ask(let question, let request):
-            guard activePathDialog == nil else { activePathDialog?.present(); return }
-            guard case .numbers = question else {
-                let dialog = GTKPathDialog(parent: widget, question: question) { [weak self] answer in
+            if case .numbers(let prompt, let fields) = question {
+                guard activeNumberDialog == nil else { activeNumberDialog?.present(); return }
+                let defaults: [String]
+                if case .slab(let slab) = request {
+                    defaults = ["0", "\(slab.planeCount - 1)"]
+                } else {
+                    defaults = Array(repeating: "0", count: fields.count)
+                }
+                let dialog = GTKNumberDialog(
+                    parent: widget, prompt: prompt, fields: fields, defaults: defaults
+                ) { [weak self] answer in
                     guard let self else { return }
-                    self.activePathDialog = nil
+                    self.activeNumberDialog = nil
                     self.handleOutcome(self.session.perform(.answer(request, answer), origin: .user))
                 }
-                activePathDialog = dialog
+                activeNumberDialog = dialog
                 dialog.present()
                 return
             }
-            showAlert(title: "Theia", message: "Numeric input is not available yet")
-            handleOutcome(session.perform(.answer(request, .cancelled), origin: .user))
+            guard activePathDialog == nil else { activePathDialog?.present(); return }
+            let dialog = GTKPathDialog(parent: widget, question: question) { [weak self] answer in
+                guard let self else { return }
+                self.activePathDialog = nil
+                self.handleOutcome(self.session.perform(.answer(request, answer), origin: .user))
+            }
+            activePathDialog = dialog
+            dialog.present()
         case .exportImage(let snapshot, let url):
             Task.detached { [weak self] in
                 do { try snapshot.writeImage(to: url) }
@@ -617,7 +657,12 @@ private final class RenderCancellation: @unchecked Sendable {
             showAlert(title: title, message: message)
         case .quit:
             gtk_window_destroy(widget)
-        case .showPanel, .exportCube, .extractSlab, .openLightCurve,
+        case .extractSlab(let request, let from, let to):
+            guard request.documentID == session.id,
+                  request.hduIndex == session.hdu,
+                  request.imageRevision == session.imageRevision else { return }
+            handleOutcome(session.perform(.applySlab(from: from, to: to), origin: .user))
+        case .showPanel, .exportCube, .openLightCurve,
              .showAppWindow, .openURL, .tileWindows:
             showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
         case .documentOpened, .noteRecent:
