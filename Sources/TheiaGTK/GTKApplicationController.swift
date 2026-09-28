@@ -2,6 +2,7 @@ import CGtk4
 import FITSCore
 import Foundation
 import TheiaKit
+import XPABridge
 
 @MainActor final class GTKApplicationController {
     let application: UnsafeMutablePointer<GtkApplication>
@@ -9,6 +10,8 @@ import TheiaKit
     private let workspace = Workspace()
     private let bridge = GTKMainLoopBridge()
     private lazy var scriptingServer = GTKScriptingServer(controller: self)
+    private lazy var xpaBridge = GTKXPACommandBridge(controller: self)
+    private var xpaServer: XPAServer?
     private var windows: [UUID: GTKDocumentWindow] = [:]
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
@@ -24,6 +27,9 @@ import TheiaKit
     func quitForScripting() {
         g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
     }
+    func scheduleQuitForXPA() {
+        Task { @MainActor [weak self] in self?.quitForScripting() }
+    }
 
     init(paths: [String]) {
         self.paths = paths
@@ -37,6 +43,7 @@ import TheiaKit
         } catch {
             fputs("Theia: scripting server unavailable: \(error)\n", stderr)
         }
+        startXPAServer()
         let context = Unmanaged.passRetained(self).toOpaque()
         let activate: @convention(c) (UnsafeMutablePointer<GtkApplication>?, gpointer?) -> Void = { _, userData in
             guard let userData else { return }
@@ -55,10 +62,22 @@ import TheiaKit
         let status = g_application_run(
             UnsafeMutablePointer<GApplication>(OpaquePointer(application)), 0, nil
         )
+        xpaServer?.stop()
+        xpaServer = nil
         scriptingServer.stop()
         bridge.remove()
         g_object_unref(UnsafeMutableRawPointer(application))
         return exitStatus == 0 ? status : exitStatus
+    }
+
+    private func startXPAServer() {
+        if let directory = Bundle.main.executableURL?.deletingLastPathComponent().path {
+            let previous = ProcessInfo.processInfo.environment["PATH"] ?? ""
+            setenv("PATH", previous.isEmpty ? directory : "\(directory):\(previous)", 1)
+        }
+        let server = XPAServer(delegate: xpaBridge)
+        server.start()
+        xpaServer = server
     }
 
     private func activate() {
