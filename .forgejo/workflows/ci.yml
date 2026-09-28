@@ -89,18 +89,22 @@ jobs:
 
           docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci \
             -t theia-runtime-smoke:ci -f ci/Dockerfile.almalinux8-runtime ci
+          docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci \
+            -t theia-rocky-runtime-smoke:ci -f ci/Dockerfile.rockylinux8-runtime ci
           for candidate in "$release_dir"/Theia-*-linux-x86_64; do
             if [ -d "$candidate" ]; then stage=$candidate; break; fi
           done
           test -n "${stage:-}"
-          docker run --rm --platform linux/amd64 --user 1000:1000 \
-            --mount type=bind,source="$PWD",target=/src,readonly \
-            --mount type=bind,source="$stage",target=/opt/theia,readonly \
-            --workdir /src theia-runtime-smoke:ci sh -ec '
-              xvfb-run -a ci/smoke-gtk.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-              xvfb-run -a ci/smoke-gtk-http.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-              xvfb-run -a ci/smoke-gtk-multi-instance.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-            '
+          for runtime_image in theia-runtime-smoke:ci theia-rocky-runtime-smoke:ci; do
+            docker run --rm --platform linux/amd64 --user 1000:1000 \
+              --mount type=bind,source="$PWD",target=/src,readonly \
+              --mount type=bind,source="$stage",target=/opt/theia,readonly \
+              --workdir /src "$runtime_image" sh -ec '
+                xvfb-run -a ci/smoke-gtk.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+                xvfb-run -a ci/smoke-gtk-http.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+                xvfb-run -a ci/smoke-gtk-multi-instance.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              '
+          done
           docker run --rm --platform linux/amd64 \
             --mount type=bind,source="$PWD",target=/src,readonly \
             --mount type=bind,source="$stage",target=/opt/theia,readonly \
@@ -108,13 +112,15 @@ jobs:
               xvfb-run -a ci/smoke-gtk-xpa.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
               xvfb-run -a ci/smoke-gtk-xpa-unix.sh /opt/theia/bin/theia
             '
-          docker run --rm --platform linux/amd64 --user 1000:1000 \
-            --mount type=bind,source="$PWD",target=/src,readonly \
-            --mount type=bind,source="$stage.AppImage",target=/opt/theia.AppImage,readonly \
-            --workdir /src -e APPIMAGE_EXTRACT_AND_RUN=1 \
-            theia-runtime-smoke:ci sh -ec '
-              xvfb-run -a ci/smoke-gtk.sh /opt/theia.AppImage Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-            '
+          for runtime_image in theia-runtime-smoke:ci theia-rocky-runtime-smoke:ci; do
+            docker run --rm --platform linux/amd64 --user 1000:1000 \
+              --mount type=bind,source="$PWD",target=/src,readonly \
+              --mount type=bind,source="$stage.AppImage",target=/opt/theia.AppImage,readonly \
+              --workdir /src -e APPIMAGE_EXTRACT_AND_RUN=1 \
+              "$runtime_image" sh -ec '
+                xvfb-run -a ci/smoke-gtk.sh /opt/theia.AppImage Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              '
+          done
 
   smoke:
     name: app smoke test (launch + scripting API)

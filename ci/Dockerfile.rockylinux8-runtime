@@ -1,0 +1,9 @@
+# Clean Rocky Linux 8 launch target: Xvfb and CLI smoke tools, without Swift or GTK.
+FROM rockylinux:8@sha256:9794037624aaa6212aeada1d28861ef5e0a935adaf93e4ef79837119f2a2d04c
+
+RUN dnf install -y \
+        xorg-x11-server-Xvfb xorg-x11-utils xorg-x11-xauth \
+        curl util-linux python3 \
+    && dnf clean all
+
+WORKDIR /src
