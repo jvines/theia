@@ -42,6 +42,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let hduList: OpaquePointer
     let session: DocumentSession
     let interaction: InteractionController
+    let commandMenus: GTKCommandMenuBar
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
@@ -68,6 +69,7 @@ private final class RenderCancellation: @unchecked Sendable {
         self.onOpen = onOpen
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
+        commandMenus = GTKCommandMenuBar(window: widget, session: session)
         picture = OpaquePointer(gtk_picture_new()!)
         overlayArea = OpaquePointer(gtk_drawing_area_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
@@ -109,6 +111,7 @@ private final class RenderCancellation: @unchecked Sendable {
             )
         }
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(toolbar)))
+        gtk_box_append(root, commandMenus.widget)
         for (index, hdu) in session.file.hdus.enumerated() {
             let title = hdu.name ?? (hdu.isImage ? "Image" : "Table")
             gtk_list_box_append(hduList, gtk_label_new("HDU \(index)  \(title)"))
@@ -330,6 +333,7 @@ private final class RenderCancellation: @unchecked Sendable {
         renderTask?.cancel()
         renderTask = nil
         cachedDisplay = nil
+        commandMenus.stop()
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0

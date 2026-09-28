@@ -117,6 +117,31 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(gtk_picture_get_paintable(window.picture), texture)
     }
 
+    @MainActor func testNativeMenusUseSharedCommandsAndRefreshSelection() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+
+        XCTAssertEqual(window.commandMenus.sectionCount, 9)
+        XCTAssertNotNil(gtk_widget_get_parent(window.commandMenus.widget))
+        XCTAssertEqual(window.commandMenus.title(for: "map.viridis"), "Viridis")
+        XCTAssertFalse(window.commandMenus.isEnabled("region.clear"))
+
+        window.commandMenus.activate("map.viridis")
+
+        XCTAssertEqual(session.view.colorMap.rawValue, "viridis")
+        XCTAssertEqual(window.commandMenus.title(for: "map.viridis"), "✓ Viridis")
+        session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+        XCTAssertTrue(window.commandMenus.isEnabled("region.clear"))
+    }
+
     @MainActor func testFractionalScaleAllocatesExactDevicePixels() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
