@@ -43,6 +43,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let session: DocumentSession
     let interaction: InteractionController
     let commandMenus: GTKCommandMenuBar
+    let inspector: GTKInspectorPanel
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
@@ -70,11 +71,12 @@ private final class RenderCancellation: @unchecked Sendable {
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
         commandMenus = GTKCommandMenuBar(window: widget, session: session)
+        inspector = GTKInspectorPanel(session: session)
         picture = OpaquePointer(gtk_picture_new()!)
         overlayArea = OpaquePointer(gtk_drawing_area_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
         gtk_window_set_title(widget, "\(session.url.lastPathComponent) — Theia")
-        gtk_window_set_default_size(widget, 640, 480)
+        gtk_window_set_default_size(widget, 1100, 720)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
 
@@ -125,6 +127,7 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_overlay_add_overlay(imageOverlay, UnsafeMutablePointer<GtkWidget>(overlayArea))
         gtk_widget_set_can_target(UnsafeMutablePointer<GtkWidget>(overlayArea), 0)
         gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(imageOverlay))
+        gtk_box_append(content, inspector.widget)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
         gtk_box_append(root, gtk_label_new(session.url.path))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
@@ -342,6 +345,7 @@ private final class RenderCancellation: @unchecked Sendable {
         renderTask = nil
         cachedDisplay = nil
         commandMenus.stop()
+        inspector.stop()
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0

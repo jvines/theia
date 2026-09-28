@@ -49,6 +49,19 @@ import XCTest
     return try XCTUnwrap(nil as OpaquePointer?, "GTK canvas did not finish rendering")
 }
 
+@MainActor private func canvasCenter(in window: GTKDocumentWindow) -> (Int, Int) {
+    let picture = UnsafeMutablePointer<GtkWidget>(window.picture)
+    var originX = 0.0
+    var originY = 0.0
+    XCTAssertEqual(gtk_widget_translate_coordinates(
+        picture, UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)),
+        0, 0, &originX, &originY
+    ), 1)
+    let x = Int((originX + Double(gtk_widget_get_width(picture)) / 2).rounded())
+    let y = Int((originY + Double(gtk_widget_get_height(picture)) / 2).rounded())
+    return (x, y)
+}
+
 final class GTKDocumentWindowTests: XCTestCase {
     @MainActor func testFITSWindowHasTitleAndRenderedCanvas() async throws {
         gtk_init()
@@ -144,6 +157,47 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertTrue(window.commandMenus.isEnabled("region.clear"))
     }
 
+    @MainActor func testInspectorTracksSharedTabVisibilityAndRegions() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+
+        XCTAssertEqual(gtk_widget_get_visible(window.inspector.widget), 1)
+        XCTAssertTrue(window.inspector.headerText.contains("SIMPLE"))
+        _ = session.perform(.setInspectorVisible(false), origin: .user)
+        XCTAssertEqual(gtk_widget_get_visible(window.inspector.widget), 0)
+
+        _ = session.perform(.showInspectorTab(.regions), origin: .user)
+        XCTAssertEqual(gtk_widget_get_visible(window.inspector.widget), 1)
+        XCTAssertEqual(gtk_notebook_get_current_page(window.inspector.notebook), 1)
+        session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+        XCTAssertNotNil(gtk_list_box_get_row_at_index(window.inspector.regionList, 0))
+        let row = try XCTUnwrap(gtk_list_box_get_row_at_index(window.inspector.regionList, 0))
+        gtk_list_box_select_row(window.inspector.regionList, row)
+        XCTAssertEqual(session.selectedRegionIndex, 0)
+
+        _ = session.perform(.showInspectorTab(.photometry), origin: .user)
+        await session.photometry.idle()
+        for _ in 0..<20 where !window.inspector.photometryText.contains("sum") {
+            await Task.yield()
+        }
+        XCTAssertTrue(window.inspector.photometryText.contains("sum"))
+
+        _ = session.perform(.showInspectorTab(.stats), origin: .user)
+        await session.statistics.idle()
+        for _ in 0..<20 where !window.inspector.statsText.contains("Pixels") {
+            await Task.yield()
+        }
+        XCTAssertTrue(window.inspector.statsText.contains("Pixels"))
+    }
+
     @MainActor func testFractionalScaleAllocatesExactDevicePixels() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
@@ -199,23 +253,24 @@ final class GTKDocumentWindowTests: XCTestCase {
             if identifier == nil { try await Task.sleep(nanoseconds: 5_000_000) }
         }
         let windowID = try XCTUnwrap(identifier)
+        let pictureWidget = UnsafeMutablePointer<GtkWidget>(window.picture)
+        let initialWidth = gtk_widget_get_width(pictureWidget)
         let resize = Process()
         resize.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
-        resize.arguments = ["windowsize", windowID, "1000", "700"]
+        resize.arguments = ["windowsize", windowID, "1200", "780"]
         try resize.run()
         resize.waitUntilExit()
         XCTAssertEqual(resize.terminationStatus, 0)
 
         let deadline = Date().addingTimeInterval(2)
-        let pictureWidget = UnsafeMutablePointer<GtkWidget>(window.picture)
         while Date() < deadline {
             _ = g_main_context_iteration(nil, 0)
             let width = gtk_widget_get_width(pictureWidget)
-            if width > 640, session.view.viewSizePoints.width == Double(width) { break }
+            if width > initialWidth, session.view.viewSizePoints.width == Double(width) { break }
         }
 
         let allocatedWidth = gtk_widget_get_width(pictureWidget)
-        XCTAssertGreaterThan(allocatedWidth, 640)
+        XCTAssertGreaterThan(allocatedWidth, initialWidth)
         XCTAssertEqual(session.view.viewSizePoints.width, Double(allocatedWidth))
         let texture = try await waitForCanvas(window) {
             $0 != nil && gdk_texture_get_width($0) == allocatedWidth
@@ -314,11 +369,12 @@ final class GTKDocumentWindowTests: XCTestCase {
             let id = try documentWindowID()
             for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
             let initialScale = session.view.transform.scale
+            let (x, y) = canvasCenter(in: window)
 
             let wheel = Process()
             wheel.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
             wheel.arguments = [
-                "mousemove", "--window", id, "320", "240", "sleep", "0.1", "click", "4",
+                "mousemove", "--window", id, String(x), String(y), "sleep", "0.1", "click", "4",
             ]
             try wheel.run()
             let deadline = Date().addingTimeInterval(2)
@@ -347,13 +403,16 @@ final class GTKDocumentWindowTests: XCTestCase {
             let id = try documentWindowID()
             for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
             let initialCentre = session.view.transform.centre
+            let (x, y) = canvasCenter(in: window)
+            let endX = String(x + 40)
+            let endY = String(y + 20)
 
             let drag = Process()
             drag.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
             drag.arguments = [
-                "mousemove", "--window", id, "320", "240", "sleep", "0.1",
+                "mousemove", "--window", id, String(x), String(y), "sleep", "0.1",
                 "mousedown", "1", "sleep", "0.1",
-                "mousemove", "--window", id, "360", "260", "sleep", "0.1", "mouseup", "1",
+                "mousemove", "--window", id, endX, endY, "sleep", "0.1", "mouseup", "1",
             ]
             try drag.run()
             let deadline = Date().addingTimeInterval(2)
