@@ -53,6 +53,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let commandMenus: GTKCommandMenuBar
     let inspector: GTKInspectorPanel
     let tablePanel: GTKTablePanel
+    private let preferences: GTKPreferences?
     private(set) var pixelTableWindow: GTKPixelTableWindow?
     private(set) var contourLevelsWindow: GTKContourLevelsWindow?
     private(set) var scaleParametersWindow: GTKScaleParametersWindow?
@@ -62,6 +63,7 @@ private final class RenderCancellation: @unchecked Sendable {
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private let onOpenRecent: @MainActor (URL) -> Void
+    private let onSettings: @MainActor () -> Void
     private let onDrop: @MainActor ([String]) -> Void
     private let onWorkspaceCommand: @MainActor (WorkspaceCommand) -> Void
     private let onWorkspaceToolAction: @MainActor (ToolMenuAction, DocumentSession) -> Void
@@ -85,21 +87,28 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
+         preferences: GTKPreferences? = nil,
          recentFiles: GTKRecentFiles? = nil,
          workspace: Workspace? = nil,
          workspaceImageCount: @escaping @MainActor () -> Int = { 1 },
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
          onOpenRecent: @escaping @MainActor (URL) -> Void = { _ in },
+         onSettings: @escaping @MainActor () -> Void = {},
          onDrop: @escaping @MainActor ([String]) -> Void = { _ in },
          onWorkspaceCommand: @escaping @MainActor (WorkspaceCommand) -> Void = { _ in },
          onWorkspaceToolAction: @escaping @MainActor (ToolMenuAction, DocumentSession) -> Void = { _, _ in },
          onFocus: @escaping @MainActor () -> Void = {},
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
+        self.preferences = preferences
         interaction = InteractionController(view: session.view, mode: .full, session: session)
         interaction.drawMode = session.mode
+        interaction.regionColorProvider = { [weak preferences] in
+            preferences?.regionColor ?? RegionList.defaultColor
+        }
         self.onOpen = onOpen
         self.onOpenRecent = onOpenRecent
+        self.onSettings = onSettings
         self.onDrop = onDrop
         self.onWorkspaceCommand = onWorkspaceCommand
         self.onWorkspaceToolAction = onWorkspaceToolAction
@@ -299,6 +308,7 @@ private final class RenderCancellation: @unchecked Sendable {
             self.onOpen(self.widget)
         }
         commandMenus.onOpenRecent = { [weak self] url in self?.onOpenRecent(url) }
+        commandMenus.onSettings = { [weak self] in self?.onSettings() }
         commandMenus.onWorkspaceCommand = { [weak self] command in
             self?.onWorkspaceCommand(command)
         }
@@ -926,7 +936,13 @@ private final class RenderCancellation: @unchecked Sendable {
         case .showPanel(.pixelTable):
             if let pixelTableWindow { pixelTableWindow.present(); return }
             let window = GTKPixelTableWindow(
-                application: gtk_window_get_application(widget)!, session: session
+                application: gtk_window_get_application(widget)!, session: session,
+                initialSize: preferences?.pixelTableSize ?? 7,
+                onSizeChange: { [weak self] size in
+                    guard let self else { return }
+                    do { try self.preferences?.setPixelTableSize(size) }
+                    catch { self.showAlert(title: "Preference not saved", message: error.localizedDescription) }
+                }
             ) { [weak self] in self?.pixelTableWindow = nil }
             pixelTableWindow = window
             window.present()

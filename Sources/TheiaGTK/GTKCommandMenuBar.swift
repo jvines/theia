@@ -23,6 +23,7 @@ import TheiaKit
     var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
     var onOpen: (@MainActor () -> Void)?
     var onOpenRecent: (@MainActor (URL) -> Void)?
+    var onSettings: (@MainActor () -> Void)?
     var onWorkspaceCommand: (@MainActor (WorkspaceCommand) -> Void)?
 
     var sectionCount: Int {
@@ -170,6 +171,13 @@ import TheiaKit
                 g_menu_append(group, label, "win.\(name)")
             }
         }
+        switch section {
+        case .app:
+            titles["app.settings"] = "Settings…"
+            installAction(identifier: "app.settings", name: "app-settings")
+            g_menu_append(group, "Settings…", "win.app-settings")
+        default: break
+        }
         finishGroup()
         g_menu_append_submenu(model, title, UnsafeMutablePointer<GMenuModel>(submenu))
         g_object_unref(UnsafeMutableRawPointer(submenu))
@@ -263,6 +271,8 @@ import TheiaKit
                       let identifier = menu.actionIDs[name] else { return }
                 if identifier == "file.open" {
                     menu.onOpen?()
+                } else if identifier == "app.settings" {
+                    menu.onSettings?()
                 } else if let url = menu.recentURLs[identifier] {
                     menu.onOpenRecent?(url)
                 } else if let command = menu.commands[identifier] {

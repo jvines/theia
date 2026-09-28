@@ -10,6 +10,26 @@ import Glibc
 #endif
 
 final class SessionStoreTests: XCTestCase {
+    func testDefaultContourNaNSurvivesSessionStoreAndSidecarJSON() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("contour.fits")
+        let data = primary()
+        try data.write(to: source)
+        var state = session()
+        state.contour = .init(enabled: false, count: 5, minValue: .nan,
+                              maxValue: .nan, spacing: "linear")
+        let persistence = store(root)
+        try persistence.save(state, for: source, fileData: data)
+        guard case .restored(let restored) = try persistence.load(for: source, fileData: data) else {
+            return XCTFail("Expected saved session")
+        }
+        XCTAssertTrue(try XCTUnwrap(restored.contour).minValue.isNaN)
+        XCTAssertTrue(try XCTUnwrap(restored.contour).maxValue.isNaN)
+        let sidecar = try SessionState.fromJSON(state.toJSON())
+        XCTAssertTrue(try XCTUnwrap(sidecar.contour).minValue.isNaN)
+    }
+
     func testFNV1a64HasPinnedVector() {
         XCTAssertEqual(SessionStore.fnv1a64Hex(Data("hello".utf8)), "a430d84680aabd0b")
     }

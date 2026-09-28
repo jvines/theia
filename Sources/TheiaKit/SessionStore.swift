@@ -76,6 +76,9 @@ public struct SessionStore {
         try FileManager.default.createDirectory(at: sessionsDirectory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN"
+        )
         try encoder.encode(record).write(to: url, options: .atomic)
     }
 
@@ -129,7 +132,11 @@ public struct SessionStore {
 
     private func readRecord(at url: URL) throws -> Record? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try JSONDecoder().decode(Record.self, from: Data(contentsOf: url))
+        let decoder = JSONDecoder()
+        decoder.nonConformingFloatDecodingStrategy = .convertFromString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN"
+        )
+        return try decoder.decode(Record.self, from: Data(contentsOf: url))
     }
 
     private func canonicalPath(for url: URL) throws -> String {

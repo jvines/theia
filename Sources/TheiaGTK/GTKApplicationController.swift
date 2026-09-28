@@ -7,6 +7,8 @@ import XPABridge
 @MainActor final class GTKApplicationController {
     let application: UnsafeMutablePointer<GtkApplication>
     private let paths: [String]
+    private let appPaths: AppPaths
+    private let preferences: GTKPreferences
     private let workspace = Workspace()
     private let recentFiles = GTKRecentFiles()
     private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
@@ -16,7 +18,10 @@ import XPABridge
     private var xpaServer: XPAServer?
     private var windows: [UUID: GTKDocumentWindow] = [:]
     private var lightCurveWindow: GTKLightCurveWindow?
+    private(set) var settingsWindow: GTKSettingsWindow?
     private(set) var infoWindows: [String: GTKInfoWindow] = [:]
+    private var sessionPersistence: [UUID: GTKSessionPersistence] = [:]
+    private(set) var staleDialogs: [UUID: GTKStaleSessionDialog] = [:]
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
     private var exitStatus: Int32 = 0
@@ -35,8 +40,10 @@ import XPABridge
         Task { @MainActor [weak self] in self?.quitForScripting() }
     }
 
-    init(paths: [String]) {
+    init(paths: [String], appPaths: AppPaths = AppPaths(platform: .linux)) {
         self.paths = paths
+        self.appPaths = appPaths
+        preferences = GTKPreferences(paths: appPaths)
         application = gtk_application_new("cl.jvines.theia", GApplicationFlags(rawValue: 1 << 5))!
     }
 
@@ -97,14 +104,32 @@ import XPABridge
             showWelcomeWindow()
         } else if windows.isEmpty {
             g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
+            return
+        }
+        if let warning = preferences.warningMessage {
+            fputs("Theia: cannot read preferences: \(warning)\n", stderr)
+        }
+        if !preferences.hasSeenOnboarding {
+            showInfoWindow(.onboarding)
+            do { try preferences.setHasSeenOnboarding(true) }
+            catch { fputs("Theia: cannot save onboarding preference: \(error)\n", stderr) }
         }
     }
 
     @discardableResult func open(path: String) throws -> GTKDocumentWindow {
+        var newPersistence: GTKSessionPersistence?
         let opened = try workspace.open(path: path) { url in
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            return DocumentSession(url: url, file: try FITSFile(data: data),
-                                   catalogClient: catalogClient)
+            let session = DocumentSession(
+                url: url, file: try FITSFile(data: data),
+                stretch: preferences.defaultStretch,
+                colorMap: preferences.defaultColorMap,
+                zscaleContrast: { [preferences] in preferences.zscaleContrast },
+                catalogClient: catalogClient
+            )
+            newPersistence = GTKSessionPersistence(session: session, fileData: data,
+                                                   paths: appPaths)
+            return session
         }
         recentFiles.record(opened.session.url)
         refreshDocumentMenus()
@@ -112,8 +137,12 @@ import XPABridge
             existing.present()
             return existing
         }
+        if let newPersistence {
+            sessionPersistence[opened.session.id] = newPersistence
+        }
         let window = GTKDocumentWindow(
             application: application, session: opened.session,
+            preferences: preferences,
             recentFiles: recentFiles,
             workspace: workspace,
             workspaceImageCount: { [weak self] in
@@ -124,6 +153,7 @@ import XPABridge
                 do { _ = try self?.open(path: url.path) }
                 catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
             },
+            onSettings: { [weak self] in self?.showSettingsWindow() },
             onDrop: { [weak self] paths in self?.openDropped(paths) },
             onWorkspaceCommand: { [weak self, weak session = opened.session] command in
                 guard let self, let session else { return }
@@ -138,6 +168,8 @@ import XPABridge
             }
         ) { [weak self, weak session = opened.session] in
             guard let self, let session else { return }
+            self.staleDialogs.removeValue(forKey: session.id)?.dismiss()
+            self.sessionPersistence.removeValue(forKey: session.id)?.close()
             self.windows.removeValue(forKey: session.id)
             self.workspace.unregister(session)
             self.refreshDocumentMenus()
@@ -145,6 +177,29 @@ import XPABridge
         windows[opened.session.id] = window
         refreshDocumentMenus()
         window.present()
+        if let newPersistence {
+            newPersistence.onWarning = { [weak window] message in
+                window?.handleOutcome(CommandOutcome(effects: [
+                    .alert(title: "Session not saved", message: message, style: .warning)
+                ]))
+            }
+            newPersistence.start()
+            if let warning = newPersistence.warningMessage {
+                newPersistence.onWarning?(warning)
+            }
+            if newPersistence.staleState != nil {
+                let dialog = GTKStaleSessionDialog(
+                    parent: window.widget,
+                    onRestore: { [weak newPersistence] in newPersistence?.restoreStale() },
+                    onDiscard: { [weak newPersistence] in newPersistence?.discardStale() },
+                    onClose: { [weak self, id = opened.session.id] in
+                        self?.staleDialogs.removeValue(forKey: id)
+                    }
+                )
+                staleDialogs[opened.session.id] = dialog
+                dialog.present()
+            }
+        }
         if let welcomeWindow {
             self.welcomeWindow = nil
             gtk_window_destroy(welcomeWindow)
@@ -262,6 +317,15 @@ import XPABridge
             self?.infoWindows.removeValue(forKey: key)
         }
         infoWindows[key] = window
+        window.present()
+    }
+
+    private func showSettingsWindow() {
+        if let settingsWindow { settingsWindow.present(); return }
+        let window = GTKSettingsWindow(application: application, preferences: preferences) {
+            [weak self] in self?.settingsWindow = nil
+        }
+        settingsWindow = window
         window.present()
     }
 

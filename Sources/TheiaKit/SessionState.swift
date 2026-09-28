@@ -46,11 +46,18 @@ public struct SessionState: Codable, Equatable {
     public func toJSON() throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN"
+        )
         return try encoder.encode(self)
     }
 
     public static func fromJSON(_ data: Data) throws -> SessionState {
-        try JSONDecoder().decode(SessionState.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.nonConformingFloatDecodingStrategy = .convertFromString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN"
+        )
+        return try decoder.decode(SessionState.self, from: data)
     }
 
     public static func sidecarURL(for fitsURL: URL) -> URL {

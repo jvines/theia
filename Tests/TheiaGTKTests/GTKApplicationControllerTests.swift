@@ -1,5 +1,7 @@
 import CGtk4
+import FITSCore
 import Foundation
+import TheiaKit
 import XCTest
 @testable import TheiaGTK
 
@@ -92,5 +94,81 @@ final class GTKApplicationControllerTests: XCTestCase {
         XCTAssertNil(controller.infoWindows["about"])
         gtk_window_destroy(scripting.widget)
         gtk_window_destroy(onboarding.widget)
+    }
+
+    @MainActor func testChangedFITSOffersRestoreBeforeApplyingSavedState() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-stale-dialog-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("source.fits")
+        let data = try Data(contentsOf: fixture)
+        try data.write(to: fileURL)
+        let appPaths = AppPaths(platform: .linux, homeDirectory: root,
+                                environment: ["XDG_STATE_HOME": root.path])
+        let savedSession = DocumentSession(url: fileURL, file: try FITSFile(data: data))
+        let persistence = GTKSessionPersistence(session: savedSession, fileData: data, paths: appPaths)
+        persistence.start()
+        _ = savedSession.perform(.setLevels(min: 10, max: 40), origin: .user)
+        persistence.close()
+        var changed = data
+        let note = "COMMENT GTK dialog check".padding(toLength: 80, withPad: " ", startingAt: 0)
+        changed.replaceSubrange(800..<880, with: note.utf8)
+        try changed.write(to: fileURL)
+
+        let controller = GTKApplicationController(paths: [], appPaths: appPaths)
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+        let document = try controller.open(path: fileURL.path)
+        defer { gtk_window_destroy(document.widget) }
+        let dialog = try XCTUnwrap(controller.staleDialogs[document.session.id])
+        XCTAssertNotEqual(document.session.view.vmin, 10)
+        _ = gtk_widget_activate(dialog.restoreButton)
+        let deadline = Date().addingTimeInterval(1)
+        while controller.staleDialogs[document.session.id] != nil && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertNil(controller.staleDialogs[document.session.id])
+        XCTAssertEqual(document.session.view.vmin, 10)
+        XCTAssertEqual(document.session.view.vmax, 40)
+    }
+
+    @MainActor func testSettingsMenuPersistsDefaultsForNextDocument() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-settings-menu-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appPaths = AppPaths(platform: .linux, homeDirectory: root,
+                                environment: ["XDG_CONFIG_HOME": root.path,
+                                              "XDG_STATE_HOME": root.path])
+        let controller = GTKApplicationController(paths: [], appPaths: appPaths)
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+        let first = try controller.open(path: fixture.path)
+        defer { gtk_window_destroy(first.widget) }
+        first.commandMenus.activate("app.settings")
+        let settings = try XCTUnwrap(controller.settingsWindow)
+        settings.set(group: "stretch", value: "asinh")
+        settings.set(group: "colormap", value: "viridis")
+        let secondURL = root.appendingPathComponent("second.fits")
+        try FileManager.default.copyItem(at: fixture, to: secondURL)
+        let second = try controller.open(path: secondURL.path)
+        defer { gtk_window_destroy(second.widget) }
+        XCTAssertEqual(second.session.view.stretch, .asinh)
+        XCTAssertEqual(second.session.view.colorMap, .viridis)
+        gtk_window_destroy(settings.widget)
+        XCTAssertNil(controller.settingsWindow)
     }
 }

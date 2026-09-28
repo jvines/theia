@@ -9,15 +9,19 @@ import TheiaKit
     let sizeSpin: OpaquePointer
     let footer: OpaquePointer
     private let session: DocumentSession
+    private let onSizeChange: @MainActor (Int) -> Void
     private let onDestroy: @MainActor () -> Void
     private var observerID: UUID?
     private(set) var gridSize = 7
     private var cellLabels: [[OpaquePointer]] = []
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
+         initialSize: Int = 7, onSizeChange: @escaping @MainActor (Int) -> Void = { _ in },
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
+        self.onSizeChange = onSizeChange
         self.onDestroy = onDestroy
+        gridSize = PixelTableModel(size: initialSize).size
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(
             gtk_application_window_new(application)!
         ))
@@ -63,6 +67,7 @@ import TheiaKit
                 if Int(gtk_spin_button_get_value(window.sizeSpin)) != size {
                     gtk_spin_button_set_value(window.sizeSpin, Double(size))
                 }
+                window.onSizeChange(size)
                 window.refresh()
             }
         }
