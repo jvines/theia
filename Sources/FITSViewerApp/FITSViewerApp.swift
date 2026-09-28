@@ -17,6 +17,10 @@ struct FITSViewerApp: App {
                     AppDelegate.shared?.openDocumentAction(nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                Button("Open Remote…") {
+                    AppDelegate.shared?.presentRemoteOpenPanel()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             }
             CommandGroup(after: .saveItem) {
                 Button("Save Image as FITS…") {

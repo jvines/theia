@@ -72,6 +72,7 @@ private final class RenderCancellation: @unchecked Sendable {
     private(set) var regionPopover: UnsafeMutablePointer<GtkPopover>?
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
+    private let onOpenRemote: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private let onOpenRecent: @MainActor (URL) -> Void
     private let onSettings: @MainActor () -> Void
     private let onDrop: @MainActor ([String]) -> Void
@@ -111,6 +112,7 @@ private final class RenderCancellation: @unchecked Sendable {
          workspace: Workspace? = nil,
          workspaceImageCount: @escaping @MainActor () -> Int = { 1 },
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
+         onOpenRemote: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
          onOpenRecent: @escaping @MainActor (URL) -> Void = { _ in },
          onSettings: @escaping @MainActor () -> Void = {},
          onDrop: @escaping @MainActor ([String]) -> Void = { _ in },
@@ -126,6 +128,7 @@ private final class RenderCancellation: @unchecked Sendable {
             preferences?.regionColor ?? RegionList.defaultColor
         }
         self.onOpen = onOpen
+        self.onOpenRemote = onOpenRemote
         self.onOpenRecent = onOpenRecent
         self.onSettings = onSettings
         self.onDrop = onDrop
@@ -332,6 +335,10 @@ private final class RenderCancellation: @unchecked Sendable {
         commandMenus.onOpen = { [weak self] in
             guard let self else { return }
             self.onOpen(self.widget)
+        }
+        commandMenus.onOpenRemote = { [weak self] in
+            guard let self else { return }
+            self.onOpenRemote(self.widget)
         }
         commandMenus.onOpenRecent = { [weak self] url in self?.onOpenRecent(url) }
         commandMenus.onSettings = { [weak self] in self?.onSettings() }

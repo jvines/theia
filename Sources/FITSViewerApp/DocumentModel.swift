@@ -15,9 +15,8 @@ import TheiaKit
     let fileIdentity: SessionStore.FileIdentity?
     let persistenceErrorMessage: String?
 
-    init(url: URL, paths: AppPaths = AppPaths()) throws {
-        self.url = url
-        self.sessionStore = SessionStore(paths: paths)
+    convenience init(url: URL, paths: AppPaths = AppPaths()) throws {
+        guard url.isFileURL else { throw URLError(.unsupportedURL) }
         // mmap large files (≥ 50 MB) so we don't double the file size in RAM and so
         // page cache absorbs OS-level access patterns. Small files use the regular
         // path — the dispatch_io machinery has overhead that isn't worth it for
@@ -30,6 +29,12 @@ import TheiaKit
         } else {
             data = try Data(contentsOf: url)
         }
+        try self.init(url: url, data: data, paths: paths)
+    }
+
+    init(url: URL, data: Data, paths: AppPaths = AppPaths()) throws {
+        self.url = url
+        self.sessionStore = SessionStore(paths: paths)
         self.file = try FITSFile(data: data)
         self.session = DocumentSession(
             url: url, file: file,

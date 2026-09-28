@@ -22,6 +22,7 @@ import TheiaKit
     var onOutcome: (@MainActor (CommandOutcome) -> Void)?
     var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
     var onOpen: (@MainActor () -> Void)?
+    var onOpenRemote: (@MainActor () -> Void)?
     var onOpenRecent: (@MainActor (URL) -> Void)?
     var onSettings: (@MainActor () -> Void)?
     var onPrint: (@MainActor () -> Void)?
@@ -189,6 +190,8 @@ import TheiaKit
         let openName = "file-open"
         installAction(identifier: "file.open", name: openName)
         g_menu_append(submenu, "Open…", "win.\(openName)")
+        installAction(identifier: "file.openRemote", name: "file-open-remote")
+        g_menu_append(submenu, "Open Remote…", "win.file-open-remote")
         let recent = recentFiles.urls()
         if !recent.isEmpty {
             let section = g_menu_new()!
@@ -277,6 +280,8 @@ import TheiaKit
                       let identifier = menu.actionIDs[name] else { return }
                 if identifier == "file.open" {
                     menu.onOpen?()
+                } else if identifier == "file.openRemote" {
+                    menu.onOpenRemote?()
                 } else if identifier == "app.settings" {
                     menu.onSettings?()
                 } else if identifier == "file.print" {

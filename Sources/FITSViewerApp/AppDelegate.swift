@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import FITSCore
 import FITSRender
 import TheiaKit
+import TheiaRemote
 import XPABridge
 
 /// App-level coordinator: handles file opens from Finder / drag-and-drop / the
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let xpaBridge = XPACommandBridge()
     private var xpaServer: XPAServer?
     private let viewCommandsMenu = ViewCommandsMenuController()
+    private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
     private var workspace: Workspace { WindowSyncCoordinator.shared.workspace }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -43,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startXPAServer()
         // If launched with a file path on argv (rare with .app bundles), open it.
         for arg in CommandLine.arguments.dropFirst() {
+            if let remoteURL = URL(string: arg), remoteURL.scheme?.lowercased() == "ssh" {
+                openDocument(at: remoteURL)
+                continue
+            }
             let url = URL(fileURLWithPath: arg)
             if FileManager.default.fileExists(atPath: url.path) {
                 openDocument(at: url)
@@ -88,6 +94,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        for task in remoteOpenTasks.values { task.cancel() }
+        remoteOpenTasks.removeAll()
+    }
+
     // MARK: - Open paths
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -106,9 +117,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Apply settings to the resulting document window. From AppleScript or shell:
     ///   open "fitsviewer://open?path=/tmp/x.fits&stretch=asinh"
     private func handleFITSViewerURL(_ url: URL) {
-        log("handling fitsviewer URL: \(url.absoluteString)")
+        log("handling fitsviewer open URL")
         guard let request = FITSViewerURLParser.parse(url) else {
             log("invalid fitsviewer open URL")
+            return
+        }
+        if request.fileURL.scheme?.lowercased() == "ssh" {
+            openRemoteDocument(at: request.fileURL, request: request)
             return
         }
         let controller: DocumentWindowController
@@ -127,6 +142,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openDocumentAction(_ sender: Any?) {
         presentOpenPanel()
+    }
+
+    func presentRemoteOpenPanel() {
+        let alert = NSAlert()
+        alert.messageText = "Open Remote FITS File"
+        alert.informativeText = "Enter an SSH URL for a file on the cluster."
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "ssh://user@host/absolute/path/image.fits"
+        alert.accessoryView = field
+        let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: text) else {
+                self?.presentOpenError(RemoteWireError.invalidLocation,
+                                       url: URL(fileURLWithPath: text))
+                return
+            }
+            self?.openDocument(at: url)
+        }
+        if let host = NSApp.keyWindow {
+            alert.beginSheetModal(for: host, completionHandler: complete)
+        } else {
+            DispatchQueue.main.async { complete(alert.runModal()) }
+        }
     }
 
     private func presentOpenPanel() {
@@ -175,10 +216,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// clicks OK. Returns the controller now showing `url`.
     @discardableResult
     func openDocumentThrowing(at url: URL) throws -> DocumentWindowController {
-        log("openDocument at \(url.path)")
+        try openDocumentThrowing(at: url, remoteData: nil)
+    }
+
+    @discardableResult
+    private func openDocumentThrowing(at url: URL, remoteData: Data?) throws -> DocumentWindowController {
+        log("openDocument at \(url.absoluteString)")
         var loadedDocument: DocumentModel?
-        let result = try workspace.open(path: url.path) { resolvedURL in
-            let document = try DocumentModel(url: resolvedURL)
+        let result = try workspace.open(url: url) { resolvedURL in
+            let document: DocumentModel
+            if let remoteData { document = try DocumentModel(url: resolvedURL, data: remoteData) }
+            else { document = try DocumentModel(url: resolvedURL) }
             loadedDocument = document
             return document.session
         }
@@ -219,11 +267,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// alert. Only user-initiated paths (menu, drag-and-drop, Welcome window,
     /// argv) call this; scripted callers use `openDocumentThrowing` directly.
     func openDocument(at url: URL) {
+        if url.scheme?.lowercased() == "ssh" {
+            openRemoteDocument(at: url)
+            return
+        }
         do {
             try openDocumentThrowing(at: url)
         } catch {
             log("open failed: \(error)")
             presentOpenError(error, url: url)
+        }
+    }
+
+    private func openRemoteDocument(at url: URL, request: FITSViewerURLRequest? = nil) {
+        let location: RemoteFileLocation
+        do { location = try RemoteFileLocation(url: url) }
+        catch { presentOpenError(error, url: url); return }
+        let id = UUID()
+        remoteOpenTasks[id] = Task { [weak self] in
+            defer { self?.remoteOpenTasks[id] = nil }
+            do {
+                let data = try await SSHRemoteFileClient().readAsync(location)
+                guard let self else { return }
+                let controller = try self.openDocumentThrowing(at: url, remoteData: data)
+                if let request {
+                    let session = controller.documentModel.session
+                    for command in request.commands(currentVmin: session.view.vmin,
+                                                    currentVmax: session.view.vmax) {
+                        _ = session.perform(command, origin: .script)
+                    }
+                }
+            } catch {
+                self?.log("remote open failed: \(error)")
+                self?.presentOpenError(error, url: url)
+            }
         }
     }
 

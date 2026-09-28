@@ -6,6 +6,31 @@ import XCTest
 @testable import TheiaGTK
 
 final class GTKApplicationControllerTests: XCTestCase {
+    @MainActor func testRemoteBytesOpenAndReuseDocumentWindow() throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let url = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/image.fits"))
+        let bytes = try Data(contentsOf: fixture)
+        let controller = GTKApplicationController(paths: [])
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+        let first = try controller.open(url: url, remoteData: bytes)
+        defer { gtk_window_destroy(first.widget) }
+        XCTAssertEqual(first.session.url, url)
+        XCTAssertEqual(first.session.file.hdus.count, 1)
+        let again = try controller.open(url: url, remoteData: bytes)
+        XCTAssertTrue(first === again)
+        XCTAssertEqual(controller.documentWindowCount, 1)
+        first.commandMenus.activate("file.openRemote")
+        let dialog = try XCTUnwrap(controller.remoteDialog)
+        gtk_window_destroy(dialog.widget)
+        XCTAssertNil(controller.remoteDialog)
+    }
+
     @MainActor func testWorkspaceSyncAndStackToolsUseOpenGTKDocuments() async throws {
         gtk_init()
         let fixture = try XCTUnwrap(Bundle.module.url(

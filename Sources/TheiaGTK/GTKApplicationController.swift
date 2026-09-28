@@ -2,6 +2,7 @@ import CGtk4
 import FITSCore
 import Foundation
 import TheiaKit
+import TheiaRemote
 import XPABridge
 
 @MainActor final class GTKApplicationController {
@@ -28,6 +29,8 @@ import XPABridge
     private(set) var staleDialogs: [UUID: GTKStaleSessionDialog] = [:]
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
+    private(set) var remoteDialog: GTKRemoteOpenDialog?
+    private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
     private var exitStatus: Int32 = 0
 
     var documentWindowCount: Int { windows.count }
@@ -78,6 +81,8 @@ import XPABridge
         let status = g_application_run(
             UnsafeMutablePointer<GApplication>(OpaquePointer(application)), 0, nil
         )
+        for task in remoteOpenTasks.values { task.cancel() }
+        remoteOpenTasks.removeAll()
         xpaServer?.stop()
         xpaServer = nil
         xpaRuntime?.stop()
@@ -120,13 +125,17 @@ import XPABridge
         GTKTranslations.configure()
         for path in paths {
             do {
-                _ = try open(path: path)
+                if let url = URL(string: path), url.scheme?.lowercased() == "ssh" {
+                    try beginRemoteOpen(at: url)
+                } else {
+                    _ = try open(path: path)
+                }
             } catch {
                 fputs("Theia: cannot open \(path): \(error)\n", stderr)
                 exitStatus = 1
             }
         }
-        if paths.isEmpty {
+        if paths.isEmpty || (windows.isEmpty && !remoteOpenTasks.isEmpty) {
             showWelcomeWindow()
         } else if windows.isEmpty {
             g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
@@ -143,9 +152,15 @@ import XPABridge
     }
 
     @discardableResult func open(path: String) throws -> GTKDocumentWindow {
+        try open(url: URL(fileURLWithPath: path))
+    }
+
+    @discardableResult func open(url: URL, remoteData: Data? = nil) throws -> GTKDocumentWindow {
         var newPersistence: GTKSessionPersistence?
-        let opened = try workspace.open(path: path) { url in
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        let opened = try workspace.open(url: url) { url in
+            let data: Data
+            if let remoteData { data = remoteData }
+            else { data = try Data(contentsOf: url, options: .mappedIfSafe) }
             let session = DocumentSession(
                 url: url, file: try FITSFile(data: data),
                 stretch: preferences.defaultStretch,
@@ -175,6 +190,9 @@ import XPABridge
                 self?.windows.values.filter { $0.session.displayed != nil }.count ?? 1
             },
             onOpen: { [weak self] parent in self?.presentOpenDialog(parent: parent) },
+            onOpenRemote: { [weak self] parent in
+                self?.presentRemoteOpenDialog(parent: parent)
+            },
             onOpenRecent: { [weak self] url in
                 do { _ = try self?.open(path: url.path) }
                 catch { fputs("Theia: cannot open \(url.path): \(error)\n", stderr) }
@@ -233,6 +251,25 @@ import XPABridge
         return window
     }
 
+    func beginRemoteOpen(at url: URL) throws {
+        let location = try RemoteFileLocation(url: url)
+        let id = UUID()
+        remoteOpenTasks[id] = Task { [weak self] in
+            defer { self?.remoteOpenTasks[id] = nil }
+            do {
+                let data = try await SSHRemoteFileClient().readAsync(location)
+                guard let self else { return }
+                _ = try self.open(url: url, remoteData: data)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                fputs("Theia: cannot open \(url.absoluteString): \(error)\n", stderr)
+                self.showOpenError(error, url: url)
+            }
+        }
+    }
+
     func showWelcomeWindow() {
         if let welcomeWindow {
             gtk_window_present(welcomeWindow)
@@ -252,6 +289,12 @@ import XPABridge
             self.presentOpenDialog(parent: parent)
         }.connect(to: openButton)
         gtk_box_append(box, openButton)
+        let remoteButton = gtk_button_new_with_label("Open Remote…")!
+        GTKButtonAction { [weak self] in
+            guard let self, let parent = self.welcomeWindow else { return }
+            self.presentRemoteOpenDialog(parent: parent)
+        }.connect(to: remoteButton)
+        gtk_box_append(box, remoteButton)
         let recent = recentFiles.urls(limit: 5)
         if !recent.isEmpty {
             gtk_box_append(box, gtk_label_new("Recent FITS files"))
@@ -374,5 +417,52 @@ import XPABridge
         }
         openDialog = dialog
         dialog.present()
+    }
+
+    func presentRemoteOpenDialog(parent: UnsafeMutablePointer<GtkWindow>?) {
+        if let remoteDialog {
+            remoteDialog.present()
+            return
+        }
+        let dialog = GTKRemoteOpenDialog(parent: parent) { [weak self] text in
+            guard let self else { return }
+            self.remoteDialog = nil
+            guard let text else { return }
+            guard let url = URL(string: text) else {
+                self.showOpenError(RemoteWireError.invalidLocation,
+                                   url: URL(fileURLWithPath: text))
+                return
+            }
+            do { try self.beginRemoteOpen(at: url) }
+            catch { self.showOpenError(error, url: url) }
+        }
+        remoteDialog = dialog
+        dialog.present()
+    }
+
+    private func showOpenError(_ error: Error, url: URL) {
+        let alert = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_window_new()!))
+        gtk_window_set_title(alert, "Could not open \(url.lastPathComponent)")
+        if let parent = documentWindowsForScripting.last?.widget ?? welcomeWindow {
+            gtk_window_set_transient_for(alert, parent)
+        }
+        gtk_window_set_modal(alert, 1)
+        gtk_window_set_default_size(alert, 400, 140)
+        let box = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
+        ))
+        let content = UnsafeMutablePointer<GtkWidget>(OpaquePointer(box))
+        gtk_widget_set_margin_top(content, 16)
+        gtk_widget_set_margin_bottom(content, 16)
+        gtk_widget_set_margin_start(content, 16)
+        gtk_widget_set_margin_end(content, 16)
+        let label = OpaquePointer(gtk_label_new(error.localizedDescription)!)
+        gtk_label_set_wrap(label, 1)
+        gtk_box_append(box, UnsafeMutablePointer<GtkWidget>(label))
+        let close = gtk_button_new_with_label("Close")!
+        GTKButtonAction { gtk_window_destroy(alert) }.connect(to: close)
+        gtk_box_append(box, close)
+        gtk_window_set_child(alert, content)
+        gtk_window_present(alert)
     }
 }

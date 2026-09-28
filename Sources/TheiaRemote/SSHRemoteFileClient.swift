@@ -116,7 +116,7 @@ public struct SSHRemoteFileClient: Sendable {
         process.environment = environment
         process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
             + (location.port.map { ["-p", String($0)] } ?? [])
-            + ["--", location.sshTarget, "theia-remote-helper"]
+            + ["--", location.sshTarget, "~/.local/bin/theia-remote-helper"]
         let input = Pipe()
         let output = Pipe()
         let errors = Pipe()

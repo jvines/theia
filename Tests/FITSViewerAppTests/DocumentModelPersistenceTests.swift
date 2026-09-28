@@ -6,6 +6,22 @@ import TheiaKit
 
 @MainActor
 final class DocumentModelPersistenceTests: XCTestCase {
+    func testRemoteBytesOpenAndRestoreWithoutLocalFile() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/image.fits"))
+        let data = fits(date: "2026-09-28")
+        let paths = pathsForTests(root)
+        let saved = savedState()
+        try SessionStore(paths: paths).save(saved, for: url, fileData: data)
+
+        let model = try DocumentModel(url: url, data: data, paths: paths)
+        XCTAssertEqual(model.url, url)
+        XCTAssertEqual(model.session.url, url)
+        XCTAssertEqual(model.restoredState, saved)
+        XCTAssertEqual(model.file.hdus.count, 1)
+    }
+
     func testOpenRestoresCurrentStoreRecord() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

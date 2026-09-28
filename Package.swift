@@ -13,7 +13,7 @@ let platformProducts: [Product] = [
 let platformTargets: [Target] = [
     .executableTarget(
         name: "FITSViewerApp",
-        dependencies: ["FITSCore", "FITSRaster", "TheiaKit", "FITSRender", "XPABridge"],
+        dependencies: ["FITSCore", "FITSRaster", "TheiaKit", "TheiaRemote", "FITSRender", "XPABridge"],
         path: "Sources/FITSViewerApp"
     ),
     .target(
@@ -45,7 +45,7 @@ let platformTargets: [Target] = [
     ),
     .executableTarget(
         name: "TheiaGTK",
-        dependencies: ["CGtk4", "CTheiaCurl", "FITSCore", "TheiaKit", "FITSRaster", "XPABridge"],
+        dependencies: ["CGtk4", "CTheiaCurl", "FITSCore", "TheiaKit", "TheiaRemote", "FITSRaster", "XPABridge"],
         path: "Sources/TheiaGTK"
     ),
     .testTarget(

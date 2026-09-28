@@ -18,6 +18,7 @@ Core viewing, multi-extension navigation, WCS, regions, catalogs, photometry, pr
 - **Blink**: multi-frame blink for difference imaging
 - **Export**: PNG/TIFF image export, MPEG export, save as FITS
 - **Scripting**: local HTTP server (`/status`, `/open`, `/document/...`, `/quit`) with token auth
+- **Remote files**: forward the Linux window with SSH, or open `ssh://` FITS files in a local Mac or Linux window through the cluster helper
 - **XPA scripting**: registers `DS9:ds9` and `DS9:fitsviewer` access points (vendored libxpa), so `xpaget`/`xpaset` (and pyds9 against those commands) can drive it. Implemented subset: `file`/`fits`, `scale`, `cmap`, `regions`, `zscale`, `frame`, `version`, `exit`. Not a full DS9 XPA reimplementation.
 
 ## Layout
@@ -46,17 +47,41 @@ Test data lives outside the repo; fetch it with `scripts/fetch_test_data.sh`. Un
 The Linux build uses the pinned AlmaLinux 8, Swift 6.3.3, and GTK4 toolchain in
 `ci/Dockerfile.almalinux8-swift63` and `ci/Dockerfile.almalinux8-gtk4`. The CI job
 builds and tests the app, creates a relocatable tarball and AppImage, then runs
-both on a clean AlmaLinux 8 image without the build toolchain.
+both on clean AlmaLinux 8 and Rocky Linux 8 images without the build toolchain.
 
 Extract `Theia-<version>-linux-<architecture>.tar.xz` and run its `bin/theia`
 launcher, or make the matching `.AppImage` executable and run it directly. The
 archive includes the GTK runtime, FITS desktop integration, fallback fonts,
 XPA tools, and FFmpeg for MP4 export. CI verifies the package under Xvfb on
-AlmaLinux 8. The AppImage can use `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
+AlmaLinux 8 and Rocky Linux 8. The AppImage can use `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
 unavailable.
 
 The Arch `theia-fits-bin` recipe is generated from release archive hashes; see
 the [AUR packaging instructions](packaging/aur/README.md).
+
+### Remote FITS files
+
+Theia can run on the cluster with its window forwarded over `ssh -X`. It can also
+keep the Mac or Linux window local and fetch a FITS file through SSH. For the
+local-window mode, install the Linux package on the cluster without root access:
+
+```bash
+mkdir -p "$HOME/.local/opt/theia" "$HOME/.local/bin"
+tar -xJf "Theia-<version>-linux-<architecture>.tar.xz" \
+    --strip-components=1 -C "$HOME/.local/opt/theia"
+cat > "$HOME/.local/bin/theia-remote-helper" <<'SH'
+#!/bin/sh
+exec "$HOME/.local/opt/theia/bin/theia-remote-helper" "$@"
+SH
+chmod 755 "$HOME/.local/bin/theia-remote-helper"
+```
+
+Trust the cluster's SSH host key and set up key or agent authentication with
+`ssh user@host` first. Then choose **File → Open Remote…** in either app and
+enter `ssh://user@host/absolute/path/image.fits`. The Linux launcher also
+accepts that URL as an argument. Use URL escapes such as `%20` for spaces.
+SSH verifies `known_hosts` and does not prompt for a password during the file
+transfer. The file path is sent to the helper over SSH's input stream.
 
 ## Design notes
 
