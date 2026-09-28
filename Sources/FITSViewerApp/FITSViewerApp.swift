@@ -21,6 +21,15 @@ struct FITSViewerApp: App {
                     AppDelegate.shared?.presentRemoteOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+                if !BundledSamples.discover().isEmpty {
+                    Menu("Open Sample") {
+                        ForEach(BundledSamples.discover(), id: \.fileName) { sample in
+                            Button(sample.title) {
+                                AppDelegate.shared?.openDocument(at: sample.url)
+                            }
+                        }
+                    }
+                }
             }
             CommandGroup(after: .saveItem) {
                 Button("Save Image as FITS…") {

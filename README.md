@@ -19,6 +19,7 @@ Core viewing, multi-extension navigation, WCS, regions, catalogs, photometry, pr
 - **Export**: PNG/TIFF image export, MPEG export, save as FITS
 - **Scripting**: local HTTP server (`/status`, `/open`, `/document/...`, `/quit`) with token auth
 - **Remote files**: forward the Linux window with SSH, or open `ssh://` FITS files in a local Mac or Linux window through the cluster helper
+- **Bundled samples**: open Hubble image, cube and table examples from **Open Sample** in the welcome window or File menu
 - **XPA scripting**: registers `DS9:ds9` and `DS9:fitsviewer` access points (vendored libxpa), so `xpaget`/`xpaset` (and pyds9 against those commands) can drive it. Implemented subset: `file`/`fits`, `scale`, `cmap`, `regions`, `zscale`, `frame`, `version`, `exit`. Not a full DS9 XPA reimplementation.
 
 ## Layout
@@ -52,7 +53,8 @@ both on clean AlmaLinux 8 and Rocky Linux 8 images without the build toolchain.
 Extract `Theia-<version>-linux-<architecture>.tar.xz` and run its `bin/theia`
 launcher, or make the matching `.AppImage` executable and run it directly. The
 archive includes the GTK runtime, FITS desktop integration, fallback fonts,
-XPA tools, and FFmpeg for MP4 export. CI verifies the package under Xvfb on
+XPA tools, FFmpeg for MP4 export, and sample FITS files in `share/theia/samples/`.
+CI verifies the package under Xvfb on
 AlmaLinux 8 and Rocky Linux 8. The AppImage can use `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
 unavailable.
 

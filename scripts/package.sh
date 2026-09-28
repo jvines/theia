@@ -54,6 +54,7 @@ echo "Assembling ${APP_DIR}..."
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
+cp -R resources/samples "${APP_DIR}/Contents/Resources/samples"
 
 cp "${BUILD_DIR}/${BIN_NAME}" "${APP_DIR}/Contents/MacOS/${BIN_NAME}"
 if [ ! -x "${BUILD_DIR}/theia-remote-helper" ]; then

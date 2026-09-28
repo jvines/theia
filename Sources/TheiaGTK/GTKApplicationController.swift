@@ -308,6 +308,16 @@ import XPABridge
             self.presentRemoteOpenDialog(parent: parent)
         }.connect(to: remoteButton)
         gtk_box_append(box, remoteButton)
+        let samples = BundledSamples.discover()
+        if !samples.isEmpty {
+            gtk_box_append(box, gtk_label_new("Samples"))
+            for sample in samples {
+                let button = gtk_button_new_with_label(sample.title)!
+                GTKButtonAction { [weak self] in self?.openRecent(sample.url) }
+                    .connect(to: button)
+                gtk_box_append(box, button)
+            }
+        }
         let recent = recentFiles.urls(limit: 5)
         if !recent.isEmpty {
             gtk_box_append(box, gtk_label_new("Recent FITS files"))
@@ -321,7 +331,10 @@ import XPABridge
                 gtk_box_append(box, button)
             }
         }
-        gtk_window_set_child(window, UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)))
+        let scroll = gtk_scrolled_window_new()!
+        gtk_scrolled_window_set_child(OpaquePointer(scroll),
+                                      UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)))
+        gtk_window_set_child(window, scroll)
         GTKFileDropTarget.install(on: UnsafeMutablePointer<GtkWidget>(OpaquePointer(window))) {
             [weak self] paths in self?.openDropped(paths)
         }

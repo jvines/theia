@@ -155,6 +155,7 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
 
     metadata = stage / "share/theia"
     metadata.mkdir(parents=True)
+    shutil.copytree(ROOT / "resources/samples", metadata / "samples")
     swift_version = subprocess.run(
         ["swift", "--version"], check=True, capture_output=True, text=True
     ).stdout.splitlines()[0]

@@ -6,6 +6,31 @@ import XCTest
 @testable import TheiaGTK
 
 final class GTKRecentFilesTests: XCTestCase {
+    @MainActor func testBundledSampleAppearsInMenuAndOpens() throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fixture,
+                                      file: try FITSFile(data: Data(contentsOf: fixture)))
+        let application = gtk_application_new("cl.jvines.theia.tests",
+                                               GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        var opened: URL?
+        let window = GTKDocumentWindow(
+            application: application, session: session,
+            onOpenRecent: { opened = $0 }
+        )
+        defer { gtk_window_destroy(window.widget) }
+
+        XCTAssertEqual(window.commandMenus.title(for: "file.sample.0"), "Hubble NICMOS image")
+        window.commandMenus.activate("file.sample.0")
+        XCTAssertEqual(opened?.lastPathComponent, "nicmos_mosaic.fits")
+    }
+
     @MainActor func testRemoteRecentAppearsInMenuWithHostIdentity() async throws {
         gtk_init()
         let root = FileManager.default.temporaryDirectory

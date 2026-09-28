@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import TheiaKit
 
 /// Shown on launch when no documents are open. Big icon, drop target, recent files,
 /// a few helpful tips. Closes automatically when the first document opens.
@@ -99,9 +100,11 @@ private struct WelcomeView: View {
                         .controlSize(.large)
                         .buttonStyle(.borderedProminent)
                         .tint(AppTheme.accent)
-                    if let sample = sampleFITS {
-                        Button {
-                            openURL(sample)
+                    if !BundledSamples.discover().isEmpty {
+                        Menu {
+                            ForEach(BundledSamples.discover(), id: \.fileName) { sample in
+                                Button(sample.title) { openURL(sample.url) }
+                            }
                         } label: {
                             Label("Open Sample", systemImage: "sparkles")
                         }
@@ -201,19 +204,4 @@ private struct WelcomeView: View {
         return remote + local
     }
 
-    /// First FITS we find in the project's `test_data/` folder (handy for dev launches),
-    /// otherwise nil. In a notarized build this returns nil — the button just hides.
-    private var sampleFITS: URL? {
-        let candidates = [
-            "test_data/simple_image/nicmos_mosaic.fits",
-            "test_data/simple_image/foc_image.fits",
-            "test_data/cubes/wfpc2_cube.fits",
-        ]
-        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        for c in candidates {
-            let u = cwd.appendingPathComponent(c)
-            if FileManager.default.fileExists(atPath: u.path) { return u }
-        }
-        return nil
-    }
 }

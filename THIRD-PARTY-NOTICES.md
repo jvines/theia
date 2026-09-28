@@ -4,6 +4,11 @@ This project is licensed under the [BSD 3-Clause License](LICENSE). It vendors
 CFITSIO and XPA under `Sources/` and bundles a separate FFmpeg executable in the
 Linux package. Each component retains its own license.
 
+The Mac and Linux packages also contain three Hubble FITS examples from the
+[NASA FITS Support Office](https://fits.gsfc.nasa.gov/fits_samples.html), credited
+to NASA/STScI. File-level provenance is in
+[`resources/samples/README.md`](resources/samples/README.md).
+
 ## CFITSIO — `Sources/CFITSIO`
 
 FITS file I/O library by William Pence, High Energy Astrophysics Science Archive

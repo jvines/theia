@@ -15,6 +15,7 @@ import TheiaKit
     private var commands: [String: SessionCommand] = [:]
     private var toolActions: [String: ToolMenuAction] = [:]
     private var recentURLs: [String: URL] = [:]
+    private var sampleURLs: [String: URL] = [:]
     private var workspaceActions: [String: WorkspaceCommand] = [:]
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
@@ -81,6 +82,7 @@ import TheiaKit
         commands.removeAll()
         toolActions.removeAll()
         recentURLs.removeAll()
+        sampleURLs.removeAll()
         workspaceActions.removeAll()
         appendFileMenu()
         if let workspace { appendWorkspaceMenu("App", section: .app, workspace: workspace) }
@@ -192,6 +194,21 @@ import TheiaKit
         g_menu_append(submenu, "Open…", "win.\(openName)")
         installAction(identifier: "file.openRemote", name: "file-open-remote")
         g_menu_append(submenu, "Open Remote…", "win.file-open-remote")
+        let samples = BundledSamples.discover()
+        if !samples.isEmpty {
+            let section = g_menu_new()!
+            for (index, sample) in samples.enumerated() {
+                let identifier = "file.sample.\(index)"
+                let name = identifier.replacingOccurrences(of: ".", with: "-")
+                sampleURLs[identifier] = sample.url
+                installAction(identifier: identifier, name: name)
+                titles[identifier] = sample.title
+                g_menu_append(section, sample.title, "win.\(name)")
+            }
+            g_menu_append_submenu(submenu, "Open Sample",
+                                  UnsafeMutablePointer<GMenuModel>(section))
+            g_object_unref(UnsafeMutableRawPointer(section))
+        }
         let recent = recentFiles.urls()
         if !recent.isEmpty {
             let section = g_menu_new()!
@@ -290,6 +307,8 @@ import TheiaKit
                 } else if identifier == "file.print" {
                     menu.onPrint?()
                 } else if let url = menu.recentURLs[identifier] {
+                    menu.onOpenRecent?(url)
+                } else if let url = menu.sampleURLs[identifier] {
                     menu.onOpenRecent?(url)
                 } else if let command = menu.commands[identifier] {
                     menu.onOutcome?(menu.session.perform(command, origin: .user))

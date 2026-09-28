@@ -84,6 +84,9 @@ jobs:
                 if [ -d "$candidate" ]; then stage=$candidate; break; fi
               done
               test -n "${stage:-}"
+              for sample in nicmos_mosaic.fits wfpc2_cube.fits fos_bintable.fits; do
+                test -s "$stage/share/theia/samples/$sample"
+              done
               scripts/package_appimage.sh "$stage" "$stage.AppImage"
             '
 
