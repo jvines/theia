@@ -42,6 +42,11 @@ private final class RenderCancellation: @unchecked Sendable {
     let overlayArea: OpaquePointer
     let hduList: OpaquePointer
     let statusLabel: OpaquePointer
+    let cubeControls: UnsafeMutablePointer<GtkBox>
+    let planeScale: UnsafeMutablePointer<GtkRange>
+    let planeLabel: OpaquePointer
+    let playButton: UnsafeMutablePointer<GtkWidget>
+    let fpsSpin: OpaquePointer
     let session: DocumentSession
     let interaction: InteractionController
     let commandMenus: GTKCommandMenuBar
@@ -55,6 +60,9 @@ private final class RenderCancellation: @unchecked Sendable {
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
     private var destroyed = false
+    private var syncingCubeControls = false
+    private var framePulseSourceID: guint = 0
+    private var frameDriver: SessionFrameDriver?
     private var dragStart: SIMD2<Double>?
     private var dragButton: PointerEvent.Button = .primary
     private let overlayScene = OverlayScene()
@@ -80,6 +88,15 @@ private final class RenderCancellation: @unchecked Sendable {
         overlayArea = OpaquePointer(gtk_drawing_area_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
         statusLabel = OpaquePointer(gtk_label_new(session.url.path)!)
+        cubeControls = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        ))
+        planeScale = UnsafeMutablePointer<GtkRange>(OpaquePointer(
+            gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 1, 1)!
+        ))
+        planeLabel = OpaquePointer(gtk_label_new("")!)
+        playButton = gtk_button_new_with_label("Play")!
+        fpsSpin = OpaquePointer(gtk_spin_button_new_with_range(1, 30, 1)!)
         gtk_window_set_title(widget, "\(session.url.lastPathComponent) — Theia")
         gtk_window_set_default_size(widget, 1100, 720)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(picture), 1)
@@ -118,6 +135,15 @@ private final class RenderCancellation: @unchecked Sendable {
             )
         }
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(toolbar)))
+        gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(planeScale)), 1)
+        gtk_scale_set_draw_value(UnsafeMutablePointer<GtkScale>(OpaquePointer(planeScale)), 0)
+        gtk_box_append(cubeControls, gtk_label_new("Plane"))
+        gtk_box_append(cubeControls, UnsafeMutablePointer<GtkWidget>(OpaquePointer(planeScale)))
+        gtk_box_append(cubeControls, UnsafeMutablePointer<GtkWidget>(planeLabel))
+        gtk_box_append(cubeControls, playButton)
+        gtk_box_append(cubeControls, UnsafeMutablePointer<GtkWidget>(fpsSpin))
+        gtk_box_append(cubeControls, gtk_label_new("fps"))
+        gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(cubeControls)))
         gtk_box_append(root, commandMenus.widget)
         for (index, hdu) in session.file.hdus.enumerated() {
             let title = hdu.name ?? (hdu.isImage ? "Image" : "Table")
@@ -136,6 +162,7 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(statusLabel))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
+        refreshCubeControls()
         if let row = gtk_list_box_get_row_at_index(hduList, gint(session.hdu)) {
             gtk_list_box_select_row(hduList, row)
         }
@@ -170,14 +197,18 @@ private final class RenderCancellation: @unchecked Sendable {
                 self?.refreshOverlay()
                 if event.kind == .imageRevisionChanged { self?.refreshStatus() }
                 if event.kind == .imageRevisionChanged { self?.refreshViewButtons() }
+                if event.kind == .imageRevisionChanged { self?.refreshCubeControls() }
             case .selectionChanged:
                 self?.syncHDUSelection()
                 self?.refreshViewButtons()
                 self?.interaction.drawMode = self?.session.mode ?? .pan
                 self?.refreshOverlay()
+                self?.refreshCubeControls()
             case .regionsChanged, .overlaysChanged, .cursorMoved:
                 self?.refreshOverlay()
                 if event.kind == .cursorMoved { self?.refreshStatus() }
+            case .playbackChanged:
+                self?.refreshCubeControls()
             default: break
             }
         }
@@ -218,8 +249,88 @@ private final class RenderCancellation: @unchecked Sendable {
         installScrollController()
         installDragGesture()
         installMotionController()
+        installCubeControls()
         commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
         commandMenus.onToolAction = { [weak self] action in self?.handleToolAction(action) }
+        frameDriver = SessionFrameDriver(
+            session: session,
+            startPulses: { [weak self] in self?.startFramePulses() },
+            stopPulses: { [weak self] in self?.stopFramePulses() }
+        )
+    }
+
+    private func installCubeControls() {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let changed: @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                guard !window.syncingCubeControls else { return }
+                let index = Int(gtk_range_get_value(window.planeScale).rounded())
+                window.handleOutcome(window.session.perform(.selectPlane(index), origin: .user))
+            }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(planeScale), "value-changed",
+                              unsafeBitCast(changed, to: GCallback.self), context, release,
+                              GConnectFlags(rawValue: 0))
+        let fpsContext = Unmanaged.passRetained(self).toOpaque()
+        let fpsChanged: @convention(c) (OpaquePointer?, gpointer?) -> Void = { _, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                guard !window.syncingCubeControls else { return }
+                window.handleOutcome(window.session.perform(
+                    .setFPS(gtk_spin_button_get_value(window.fpsSpin)), origin: .user
+                ))
+            }
+        }
+        g_signal_connect_data(UnsafeMutableRawPointer(fpsSpin), "value-changed",
+                              unsafeBitCast(fpsChanged, to: GCallback.self), fpsContext, release,
+                              GConnectFlags(rawValue: 0))
+        GTKButtonAction { [weak self] in
+            guard let self else { return }
+            self.handleOutcome(self.session.perform(.setPlaying(!self.session.playing), origin: .user))
+        }.connect(to: playButton)
+    }
+
+    private func refreshCubeControls() {
+        guard !destroyed else { return }
+        let count = session.file.hdus[session.hdu].planeCount
+        gtk_widget_set_visible(UnsafeMutablePointer<GtkWidget>(OpaquePointer(cubeControls)), count > 1 ? 1 : 0)
+        syncingCubeControls = true
+        gtk_range_set_range(planeScale, 0, Double(max(1, count - 1)))
+        gtk_range_set_value(planeScale, Double(session.plane))
+        gtk_spin_button_set_value(fpsSpin, session.fps)
+        syncingCubeControls = false
+        gtk_label_set_text(planeLabel, "\(session.plane + 1) / \(count)")
+        gtk_button_set_label(UnsafeMutablePointer<GtkButton>(OpaquePointer(playButton)),
+                             session.playing ? "Pause" : "Play")
+    }
+
+    private func startFramePulses() {
+        guard framePulseSourceID == 0, !destroyed else { return }
+        let context = Unmanaged.passRetained(self).toOpaque()
+        framePulseSourceID = g_timeout_add_full(G_PRIORITY_DEFAULT, 16, { userData in
+            guard let userData else { return 0 }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            return MainActor.assumeIsolated {
+                window.frameDriver?.pulse(now: .now)
+                return window.destroyed ? 0 : 1
+            }
+        }, context, { userData in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        })
+    }
+
+    private func stopFramePulses() {
+        guard framePulseSourceID != 0 else { return }
+        g_source_remove(framePulseSourceID)
+        framePulseSourceID = 0
     }
 
     private func installDragGesture() {
@@ -421,6 +532,9 @@ private final class RenderCancellation: @unchecked Sendable {
     private func handleDestroy() {
         guard !destroyed else { return }
         destroyed = true
+        frameDriver?.close()
+        frameDriver = nil
+        stopFramePulses()
         renderTask?.cancel()
         renderTask = nil
         cachedDisplay = nil

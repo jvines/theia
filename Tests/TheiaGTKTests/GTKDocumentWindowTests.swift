@@ -262,6 +262,37 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(session.displayed?.physicalValue(x: 0, y: 0), 8)
     }
 
+    @MainActor func testCubeControlsScrubAndDrivePlayback() throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+
+        XCTAssertEqual(gtk_widget_get_visible(UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.cubeControls))), 1)
+        gtk_range_set_value(window.planeScale, 2)
+        XCTAssertEqual(session.plane, 2)
+        XCTAssertEqual(String(cString: gtk_label_get_text(window.planeLabel)), "3 / 3")
+        gtk_spin_button_set_value(window.fpsSpin, 30)
+        XCTAssertEqual(session.fps, 30)
+
+        XCTAssertEqual(gtk_widget_activate(window.playButton), 1)
+        let deadline = Date().addingTimeInterval(2)
+        while (!session.playing || session.plane == 2) && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        XCTAssertTrue(session.playing)
+        XCTAssertNotEqual(session.plane, 2)
+        XCTAssertEqual(String(cString: gtk_button_get_label(
+            UnsafeMutablePointer<GtkButton>(OpaquePointer(window.playButton))
+        )), "Pause")
+        _ = session.perform(.setPlaying(false), origin: .user)
+    }
+
     @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(
