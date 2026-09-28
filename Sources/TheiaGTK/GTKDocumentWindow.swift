@@ -53,6 +53,9 @@ private final class RenderCancellation: @unchecked Sendable {
     let commandMenus: GTKCommandMenuBar
     let inspector: GTKInspectorPanel
     let tablePanel: GTKTablePanel
+    private(set) var pixelTableWindow: GTKPixelTableWindow?
+    private(set) var contourLevelsWindow: GTKContourLevelsWindow?
+    private(set) var scaleParametersWindow: GTKScaleParametersWindow?
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
     private(set) var activeNumberDialog: GTKNumberDialog?
@@ -672,6 +675,18 @@ private final class RenderCancellation: @unchecked Sendable {
         activePathDialog = nil
         activeNumberDialog?.dismiss()
         activeNumberDialog = nil
+        if let pixelTableWindow {
+            self.pixelTableWindow = nil
+            gtk_window_destroy(pixelTableWindow.widget)
+        }
+        if let contourLevelsWindow {
+            self.contourLevelsWindow = nil
+            gtk_window_destroy(contourLevelsWindow.widget)
+        }
+        if let scaleParametersWindow {
+            self.scaleParametersWindow = nil
+            gtk_window_destroy(scaleParametersWindow.widget)
+        }
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0
@@ -908,7 +923,28 @@ private final class RenderCancellation: @unchecked Sendable {
             GTKURLOpener.open(url, parent: widget) { [weak self] message in
                 self?.showAlert(title: "Link not opened", message: message)
             }
-        case .showPanel, .exportCube, .openLightCurve,
+        case .showPanel(.pixelTable):
+            if let pixelTableWindow { pixelTableWindow.present(); return }
+            let window = GTKPixelTableWindow(
+                application: gtk_window_get_application(widget)!, session: session
+            ) { [weak self] in self?.pixelTableWindow = nil }
+            pixelTableWindow = window
+            window.present()
+        case .showPanel(.contourLevels):
+            if let contourLevelsWindow { contourLevelsWindow.present(); return }
+            let window = GTKContourLevelsWindow(
+                application: gtk_window_get_application(widget)!, session: session
+            ) { [weak self] in self?.contourLevelsWindow = nil }
+            contourLevelsWindow = window
+            window.present()
+        case .showPanel(.scaleParameters):
+            if let scaleParametersWindow { scaleParametersWindow.present(); return }
+            let window = GTKScaleParametersWindow(
+                application: gtk_window_get_application(widget)!, session: session
+            ) { [weak self] in self?.scaleParametersWindow = nil }
+            scaleParametersWindow = window
+            window.present()
+        case .exportCube, .openLightCurve,
              .showAppWindow, .tileWindows:
             showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
         case .documentOpened, .noteRecent:

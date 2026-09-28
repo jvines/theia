@@ -100,6 +100,95 @@ import XCTest
 }
 
 final class GTKDocumentWindowTests: XCTestCase {
+    @MainActor func testPixelTableMenuTracksCursorAndClosesWithDocument() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL,
+                                      file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let document = GTKDocumentWindow(application: application, session: session)
+        document.commandMenus.activate("image.pixelTable")
+        let table = try XCTUnwrap(document.pixelTableWindow)
+        XCTAssertEqual(String(cString: gtk_window_get_title(table.widget)), "Pixel Table")
+        XCTAssertTrue(String(cString: gtk_label_get_text(table.footer)).contains("Move the cursor"))
+
+        let value = try XCTUnwrap(session.displayed).physicalValue(x: 0, y: 0)
+        session.cursor = CursorInfo(imageX: 0, imageY: 0, value: value)
+        XCTAssertTrue(String(cString: gtk_label_get_text(table.footer)).contains("(1, 1)"))
+        let firstCell = try XCTUnwrap(gtk_widget_get_first_child(
+            UnsafeMutablePointer<GtkWidget>(OpaquePointer(table.grid))
+        ))
+        session.cursor = CursorInfo(imageX: 1, imageY: 0,
+                                    value: try XCTUnwrap(session.displayed).physicalValue(x: 1, y: 0))
+        XCTAssertEqual(gtk_widget_get_first_child(
+            UnsafeMutablePointer<GtkWidget>(OpaquePointer(table.grid))
+        ), firstCell)
+        document.commandMenus.activate("image.pixelTable")
+        XCTAssertTrue(table === document.pixelTableWindow)
+        gtk_window_destroy(document.widget)
+        XCTAssertNil(document.pixelTableWindow)
+    }
+
+    @MainActor func testContourPanelAppliesSpecificationToSourceDocument() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL,
+                                      file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let document = GTKDocumentWindow(application: application, session: session)
+        document.commandMenus.activate("image.contours")
+        let panel = try XCTUnwrap(document.contourLevelsWindow)
+        gtk_check_button_set_active(panel.enabled, 1)
+        gtk_spin_button_set_value(panel.count, 4)
+        gtk_editable_set_text(panel.minimum, "10")
+        gtk_editable_set_text(panel.maximum, "40")
+        panel.apply()
+        XCTAssertTrue(session.contourSpec.enabled)
+        XCTAssertEqual(session.contourSpec.count, 4)
+        XCTAssertEqual(session.contourSpec.levels(), [10, 20, 30, 40])
+        gtk_window_destroy(document.widget)
+        XCTAssertNil(document.contourLevelsWindow)
+    }
+
+    @MainActor func testScalePanelAppliesFiniteLimits() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL,
+                                      file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil
+        ), 1)
+        let document = GTKDocumentWindow(application: application, session: session)
+        document.commandMenus.activate("scale.parameters")
+        let panel = try XCTUnwrap(document.scaleParametersWindow)
+        gtk_editable_set_text(panel.minimum, "10")
+        gtk_editable_set_text(panel.maximum, "40")
+        panel.applyLimits()
+        XCTAssertEqual(session.view.vmin, 10)
+        XCTAssertEqual(session.view.vmax, 40)
+        gtk_editable_set_text(panel.minimum, "50")
+        panel.applyLimits()
+        XCTAssertEqual(session.view.vmin, 10)
+        gtk_window_destroy(document.widget)
+        XCTAssertNil(document.scaleParametersWindow)
+    }
+
     @MainActor func testFITSWindowHasTitleAndRenderedCanvas() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
