@@ -32,153 +32,168 @@ import XCTest
     return try XCTUnwrap(notFound, "GTK document window was not mapped by Xvfb")
 }
 
+@MainActor private func waitForCanvas(
+    _ window: GTKDocumentWindow,
+    matching predicate: (OpaquePointer?) -> Bool
+) async throws -> OpaquePointer {
+    let bridge = GTKMainLoopBridge()
+    XCTAssertTrue(bridge.install())
+    defer { bridge.remove() }
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+        _ = g_main_context_iteration(nil, 0)
+        let paintable = gtk_picture_get_paintable(window.picture)
+        if predicate(paintable) { return try XCTUnwrap(paintable) }
+        try await Task.sleep(nanoseconds: 2_000_000)
+    }
+    return try XCTUnwrap(nil as OpaquePointer?, "GTK canvas did not finish rendering")
+}
+
 final class GTKDocumentWindowTests: XCTestCase {
-    func testFITSWindowHasTitleAndRenderedCanvas() async throws {
-        try await MainActor.run {
-            gtk_init()
-            let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
-            let file = try FITSFile(data: Data(contentsOf: fileURL))
-            let session = DocumentSession(url: fileURL, file: file)
-            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
-            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
-            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+    @MainActor func testFITSWindowHasTitleAndRenderedCanvas() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
+        let file = try FITSFile(data: Data(contentsOf: fileURL))
+        let session = DocumentSession(url: fileURL, file: file)
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
 
-            let documentWindow = GTKDocumentWindow(application: application, session: session)
-            defer { gtk_window_destroy(documentWindow.widget) }
+        let documentWindow = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(documentWindow.widget) }
 
-            XCTAssertEqual(String(cString: gtk_window_get_title(documentWindow.widget)), "uint8_simple.fits — Theia")
-            let paintable = try XCTUnwrap(gtk_picture_get_paintable(documentWindow.picture))
-            XCTAssertEqual(gdk_texture_get_width(paintable), 640)
-            XCTAssertEqual(gdk_texture_get_height(paintable), 480)
-        }
+        XCTAssertEqual(String(cString: gtk_window_get_title(documentWindow.widget)), "uint8_simple.fits — Theia")
+        XCTAssertNil(gtk_picture_get_paintable(documentWindow.picture))
+        let paintable = try await waitForCanvas(documentWindow) { $0 != nil }
+        XCTAssertEqual(gdk_texture_get_width(paintable), 640)
+        XCTAssertEqual(gdk_texture_get_height(paintable), 480)
     }
 
-    func testColormapChangeReplacesCanvasTexture() async throws {
-        try await MainActor.run {
-            gtk_init()
-            let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
-            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
-            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
-            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
-            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
-            let window = GTKDocumentWindow(application: application, session: session)
-            defer { gtk_window_destroy(window.widget) }
+    @MainActor func testColormapChangeReplacesCanvasTexture() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
 
-            @MainActor func downloadedPixels() throws -> [UInt8] {
-                let texture = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
-                var bytes = [UInt8](repeating: 0, count: 640 * 480 * 4)
-                bytes.withUnsafeMutableBufferPointer { buffer in
-                    gdk_texture_download(texture, buffer.baseAddress, 640 * 4)
-                }
-                return bytes
+        @MainActor func downloadedPixels() async throws -> [UInt8] {
+            let texture = try await waitForCanvas(window) { $0 != nil }
+            var bytes = [UInt8](repeating: 0, count: 640 * 480 * 4)
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                gdk_texture_download(texture, buffer.baseAddress, 640 * 4)
             }
-
-            let gray = try downloadedPixels()
-            session.view.colorMap = .viridis
-            XCTAssertTrue(try downloadedPixels() != gray)
+            return bytes
         }
+
+        let gray = try await downloadedPixels()
+        let previous = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
+        g_object_ref(UnsafeMutableRawPointer(previous))
+        defer { g_object_unref(UnsafeMutableRawPointer(previous)) }
+        session.view.colorMap = .viridis
+        _ = try await waitForCanvas(window) { $0 != nil && $0 != previous }
+        let viridis = try await downloadedPixels()
+        XCTAssertTrue(viridis != gray)
     }
 
-    func testRegionChangesUpdateOverlayWithoutReplacingImageTexture() async throws {
-        try await MainActor.run {
-            gtk_init()
-            let fileURL = try XCTUnwrap(Bundle.module.url(
-                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
-            ))
-            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
-            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
-            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
-            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
-            let window = GTKDocumentWindow(application: application, session: session)
-            defer { gtk_window_destroy(window.widget) }
-            let texture = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
+    @MainActor func testRegionChangesUpdateOverlayWithoutReplacingImageTexture() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        let texture = try await waitForCanvas(window) { $0 != nil }
 
-            session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+        session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
 
-            XCTAssertFalse(window.overlayPrimitives.isEmpty)
-            XCTAssertEqual(gtk_picture_get_paintable(window.picture), texture)
-        }
+        XCTAssertFalse(window.overlayPrimitives.isEmpty)
+        XCTAssertEqual(gtk_picture_get_paintable(window.picture), texture)
     }
 
-    func testFractionalScaleAllocatesExactDevicePixels() async throws {
-        try await MainActor.run {
-            gtk_init()
-            let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
-            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
-            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
-            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
-            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
-            let window = GTKDocumentWindow(application: application, session: session)
-            defer { gtk_window_destroy(window.widget) }
+    @MainActor func testFractionalScaleAllocatesExactDevicePixels() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
 
-            window.updateCanvasSize(width: 201, height: 101, scale: 1.5)
+        window.updateCanvasSize(width: 201, height: 101, scale: 1.5)
 
-            let paintable = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
-            XCTAssertEqual(gdk_texture_get_width(paintable), 302)
-            XCTAssertEqual(gdk_texture_get_height(paintable), 152)
-            XCTAssertEqual(session.view.viewSizePoints.width, 201)
-            XCTAssertEqual(session.view.backingScale, 1.5)
+        let paintable = try await waitForCanvas(window) {
+            $0 != nil && gdk_texture_get_width($0) == 302
         }
+        XCTAssertEqual(gdk_texture_get_width(paintable), 302)
+        XCTAssertEqual(gdk_texture_get_height(paintable), 152)
+        XCTAssertEqual(session.view.viewSizePoints.width, 201)
+        XCTAssertEqual(session.view.backingScale, 1.5)
     }
 
-    func testCanvasTracksAllocatedWindowSize() async throws {
-        try await MainActor.run {
-            gtk_init()
-            let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
-            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
-            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
-            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
-            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
-            let window = GTKDocumentWindow(application: application, session: session)
-            defer { gtk_window_destroy(window.widget) }
+    @MainActor func testCanvasTracksAllocatedWindowSize() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
 
-            window.present()
-            var identifier: String?
-            let searchDeadline = Date().addingTimeInterval(2)
-            while identifier == nil && Date() < searchDeadline {
-                _ = g_main_context_iteration(nil, 0)
-                let search = Process()
-                search.executableURL = URL(fileURLWithPath: "/usr/bin/xwininfo")
-                search.arguments = ["-root", "-tree"]
-                var environment = ProcessInfo.processInfo.environment
-                environment["LC_ALL"] = "C.utf8"
-                search.environment = environment
-                let output = Pipe()
-                search.standardOutput = output
-                try search.run()
-                search.waitUntilExit()
-                if search.terminationStatus == 0 {
-                    identifier = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                        .split(separator: "\n")
-                        .first(where: { $0.contains("uint8_simple.fits — Theia") })?
-                        .split(whereSeparator: \.isWhitespace).first.map(String.init)
-                }
-                if identifier == nil { Thread.sleep(forTimeInterval: 0.005) }
+        window.present()
+        var identifier: String?
+        let searchDeadline = Date().addingTimeInterval(2)
+        while identifier == nil && Date() < searchDeadline {
+            _ = g_main_context_iteration(nil, 0)
+            let search = Process()
+            search.executableURL = URL(fileURLWithPath: "/usr/bin/xwininfo")
+            search.arguments = ["-root", "-tree"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["LC_ALL"] = "C.utf8"
+            search.environment = environment
+            let output = Pipe()
+            search.standardOutput = output
+            try search.run()
+            search.waitUntilExit()
+            if search.terminationStatus == 0 {
+                identifier = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .split(separator: "\n")
+                    .first(where: { $0.contains("uint8_simple.fits — Theia") })?
+                    .split(whereSeparator: \.isWhitespace).first.map(String.init)
             }
-            let windowID = try XCTUnwrap(identifier)
-            let resize = Process()
-            resize.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
-            resize.arguments = ["windowsize", windowID, "1000", "700"]
-            try resize.run()
-            resize.waitUntilExit()
-            XCTAssertEqual(resize.terminationStatus, 0)
-
-            let deadline = Date().addingTimeInterval(2)
-            let pictureWidget = UnsafeMutablePointer<GtkWidget>(window.picture)
-            while Date() < deadline {
-                _ = g_main_context_iteration(nil, 0)
-                let width = gtk_widget_get_width(pictureWidget)
-                let textureWidth = gtk_picture_get_paintable(window.picture).map(gdk_texture_get_width)
-                if width > 640, session.view.viewSizePoints.width == Double(width),
-                   textureWidth == width { break }
-            }
-
-            let allocatedWidth = gtk_widget_get_width(pictureWidget)
-            XCTAssertGreaterThan(allocatedWidth, 640)
-            XCTAssertEqual(session.view.viewSizePoints.width, Double(allocatedWidth))
-            let texture = try XCTUnwrap(gtk_picture_get_paintable(window.picture))
-            XCTAssertEqual(gdk_texture_get_width(texture), allocatedWidth)
+            if identifier == nil { try await Task.sleep(nanoseconds: 5_000_000) }
         }
+        let windowID = try XCTUnwrap(identifier)
+        let resize = Process()
+        resize.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+        resize.arguments = ["windowsize", windowID, "1000", "700"]
+        try resize.run()
+        resize.waitUntilExit()
+        XCTAssertEqual(resize.terminationStatus, 0)
+
+        let deadline = Date().addingTimeInterval(2)
+        let pictureWidget = UnsafeMutablePointer<GtkWidget>(window.picture)
+        while Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            let width = gtk_widget_get_width(pictureWidget)
+            if width > 640, session.view.viewSizePoints.width == Double(width) { break }
+        }
+
+        let allocatedWidth = gtk_widget_get_width(pictureWidget)
+        XCTAssertGreaterThan(allocatedWidth, 640)
+        XCTAssertEqual(session.view.viewSizePoints.width, Double(allocatedWidth))
+        let texture = try await waitForCanvas(window) {
+            $0 != nil && gdk_texture_get_width($0) == allocatedWidth
+        }
+        XCTAssertEqual(gdk_texture_get_width(texture), allocatedWidth)
     }
 
     func testDestroyNotifiesOwnerOnce() async throws {
@@ -190,9 +205,9 @@ final class GTKDocumentWindowTests: XCTestCase {
             defer { g_object_unref(UnsafeMutableRawPointer(application)) }
             XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
             var destroyCount = 0
-            let window = GTKDocumentWindow(application: application, session: session) {
+            let window = GTKDocumentWindow(application: application, session: session, onDestroy: {
                 destroyCount += 1
-            }
+            })
 
             window.present()
             gtk_window_destroy(window.widget)

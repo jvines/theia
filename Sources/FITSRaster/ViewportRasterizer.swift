@@ -38,8 +38,32 @@ public enum ViewportRasterizer {
         parameter: Float = 2,
         background: RGBA8 = .opaqueBlack
     ) -> RasterImage {
+        renderViewportCheckingCancellation(
+            display, mapping: mapping, width: width, height: height,
+            sampleStep: sampleStep, stretch: stretch, levels: levels,
+            colorMap: colorMap, parameter: parameter, background: background,
+            shouldCancel: { false }
+        )!
+    }
+
+    /// Abandons a superseded viewport before publishing partially rendered pixels.
+    /// `shouldCancel` must remain true once cancellation is requested.
+    public static func renderViewportCheckingCancellation(
+        _ display: DisplayImage,
+        mapping: ViewMapping,
+        width: Int,
+        height: Int,
+        sampleStep: Int = 1,
+        stretch: ImageStretch,
+        levels: RasterLevels,
+        colorMap: ColorMap,
+        parameter: Float = 2,
+        background: RGBA8 = .opaqueBlack,
+        shouldCancel: @escaping @Sendable () -> Bool
+    ) -> RasterImage? {
         precondition(width > 0 && height > 0 && sampleStep > 0)
         precondition(mapping.transform.scale > 0 && mapping.backingScale > 0)
+        guard !shouldCancel() else { return nil }
         let outputWidth = 1 + (width - 1) / sampleStep
         let outputHeight = 1 + (height - 1) / sampleStep
         precondition(outputWidth <= Int.max / 4 / outputHeight)
@@ -55,6 +79,7 @@ public enum ViewportRasterizer {
             let workers = min(outputHeight, ProcessInfo.processInfo.activeProcessorCount)
             DispatchQueue.concurrentPerform(iterations: workers) { worker in
                 for row in stride(from: worker, to: outputHeight, by: workers) {
+                    if shouldCancel() { break }
                     var imageY = coordinates.imageY(row: row)
                     let remainingRows = height - row * sampleStep
                     if remainingRows < sampleStep {
@@ -90,6 +115,7 @@ public enum ViewportRasterizer {
                 }
             }
         }
+        guard !shouldCancel() else { return nil }
         return RasterImage(width: outputWidth, height: outputHeight, bytes: bytes)
     }
 

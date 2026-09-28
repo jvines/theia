@@ -10,8 +10,10 @@ final class GTKCanvasTextureTests: XCTestCase {
             0, 255, 0, 255,
             0, 0, 255, 255,
         ]
-        let raster = RasterImage(width: 3, height: 1, bytes: pixels)
-        let texture = GTKCanvasTexture.make(from: raster)
+        let prepared = GTKCanvasTexture.prepare(
+            from: RasterImage(width: 3, height: 1, bytes: pixels)
+        )
+        let texture = GTKCanvasTexture.make(from: prepared)
         defer { g_object_unref(UnsafeMutableRawPointer(texture)) }
 
         XCTAssertEqual(gdk_texture_get_width(texture), 3)

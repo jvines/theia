@@ -2,6 +2,24 @@ import XCTest
 import FITSCore
 @testable import FITSRaster
 
+private final class CancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checks = 0
+
+    func shouldCancel() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        checks += 1
+        return checks > 3
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return checks
+    }
+}
+
 final class ViewportRasterizerTests: XCTestCase {
     func testNativeRasterHasFITSPixelOneOneAtBottomLeft() {
         let display = DisplayImage(
@@ -80,5 +98,24 @@ final class ViewportRasterizerTests: XCTestCase {
             levels: RasterLevels(vmin: .nan, vmax: .nan), colorMap: .magma
         )
         XCTAssertEqual(raster.bytes, [0, 0, 0, 255, 0, 0, 0, 255])
+    }
+
+    func testCancelledViewportDoesNotReturnPartialImage() {
+        let display = DisplayImage(
+            image: FITSImage.fromFloat32(pixels: [Float](repeating: 1, count: 256 * 256),
+                                         width: 256, height: 256), revision: 1
+        )
+        let mapping = ViewMapping(
+            transform: ViewTransform(scale: 1, centre: SIMD2(127.5, 127.5)),
+            viewSize: SIMD2(256, 256), backingScale: 1
+        )
+        let probe = CancellationProbe()
+        let result = ViewportRasterizer.renderViewportCheckingCancellation(
+            display, mapping: mapping, width: 256, height: 256,
+            stretch: .linear, levels: RasterLevels(vmin: 0, vmax: 1), colorMap: .gray,
+            shouldCancel: { probe.shouldCancel() }
+        )
+        XCTAssertNil(result)
+        XCTAssertGreaterThan(probe.count, 3)
     }
 }

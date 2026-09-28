@@ -3,6 +3,23 @@ import FITSRaster
 import Foundation
 import TheiaKit
 
+private final class RenderCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 @MainActor private final class ViewButtonAction {
     weak var window: GTKDocumentWindow?
     let command: SessionCommand
@@ -36,6 +53,10 @@ import TheiaKit
     private var dragButton: PointerEvent.Button = .primary
     private let overlayScene = OverlayScene()
     private let gridCache = WCSGridCache()
+    private let displayBuilder = DisplayImageBuilder()
+    private var cachedDisplay: DisplayImage?
+    private var renderTask: Task<Void, Never>?
+    private var renderGeneration = 0
     private(set) var overlayPrimitives: [OverlayPrimitive] = []
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
@@ -306,6 +327,9 @@ import TheiaKit
     private func handleDestroy() {
         guard !destroyed else { return }
         destroyed = true
+        renderTask?.cancel()
+        renderTask = nil
+        cachedDisplay = nil
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0
@@ -377,6 +401,10 @@ import TheiaKit
 
     private func renderCanvas() {
         guard !destroyed else { return }
+        renderGeneration &+= 1
+        let generation = renderGeneration
+        renderTask?.cancel()
+        renderTask = nil
         if let image = session.displayed {
             let pointWidth = session.view.viewSizePoints.width
             let pointHeight = session.view.viewSizePoints.height
@@ -385,24 +413,56 @@ import TheiaKit
                   pointWidth * scale <= 16_384, pointHeight * scale <= 16_384 else { return }
             let pixelWidth = Int((pointWidth * scale).rounded())
             let pixelHeight = Int((pointHeight * scale).rounded())
-            let display = DisplayImage(image: image, revision: session.imageRevision)
+            let revision = session.imageRevision
+            if cachedDisplay?.revision != revision { cachedDisplay = nil }
+            let cached = cachedDisplay
             let mapping = FITSRaster.ViewMapping(
                 transform: session.view.transform,
                 viewSize: SIMD2(pointWidth, pointHeight), backingScale: scale
             )
-            let raster = ViewportRasterizer.renderViewport(
-                display, mapping: mapping, width: pixelWidth, height: pixelHeight,
-                stretch: session.view.stretch,
-                levels: RasterLevels(vmin: session.view.vmin, vmax: session.view.vmax),
-                colorMap: session.view.colorMap,
-                parameter: session.view.stretchParameter
-            )
-            let texture = GTKCanvasTexture.make(from: raster)
-            gtk_picture_set_paintable(picture, texture)
-            g_object_unref(UnsafeMutableRawPointer(texture))
+            let stretch = session.view.stretch
+            let levels = RasterLevels(vmin: session.view.vmin, vmax: session.view.vmax)
+            let colorMap = session.view.colorMap
+            let parameter = session.view.stretchParameter
+            let builder = displayBuilder
+            let cancellation = RenderCancellation()
+            renderTask = Task.detached(priority: .userInitiated) { [weak self] in
+                await withTaskCancellationHandler {
+                    let display: DisplayImage
+                    if let cached {
+                        display = cached
+                    } else {
+                        guard let built = await builder.build(image: image, revision: revision) else { return }
+                        display = built
+                    }
+                    guard !cancellation.isCancelled else { return }
+                    guard let raster = ViewportRasterizer.renderViewportCheckingCancellation(
+                        display, mapping: mapping, width: pixelWidth, height: pixelHeight,
+                        stretch: stretch, levels: levels, colorMap: colorMap,
+                        parameter: parameter, shouldCancel: { cancellation.isCancelled }
+                    ) else { return }
+                    guard !cancellation.isCancelled else { return }
+                    let prepared = GTKCanvasTexture.prepare(from: raster)
+                    guard !cancellation.isCancelled else { return }
+                    await self?.applyCanvas(prepared, display: display, generation: generation)
+                } onCancel: {
+                    cancellation.cancel()
+                }
+            }
         } else {
+            cachedDisplay = nil
             gtk_picture_set_paintable(picture, nil)
         }
+    }
+
+    private func applyCanvas(_ prepared: GTKCanvasTexture.Prepared, display: DisplayImage,
+                             generation: Int) {
+        guard !destroyed, generation == renderGeneration else { return }
+        cachedDisplay = display
+        renderTask = nil
+        let texture = GTKCanvasTexture.make(from: prepared)
+        gtk_picture_set_paintable(picture, texture)
+        g_object_unref(UnsafeMutableRawPointer(texture))
     }
 
     private func refreshOverlay() {
