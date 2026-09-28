@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app=${1:?usage: smoke-gtk-ssh-x.sh APP FITS_FILE}
-fits=${2:?usage: smoke-gtk-ssh-x.sh APP FITS_FILE}
+app=$(realpath "${1:?usage: smoke-gtk-ssh-x.sh APP FITS_FILE}")
+fits=$(realpath "${2:?usage: smoke-gtk-ssh-x.sh APP FITS_FILE}")
 temp=$(mktemp -d)
 sshd_pid=
 cleanup() {
