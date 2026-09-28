@@ -31,6 +31,7 @@ import XPABridge
     private(set) var openDialog: GTKFileOpenDialog?
     private(set) var remoteDialog: GTKRemoteOpenDialog?
     private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
+    private var remoteTransferWindows: [UUID: GTKRemoteTransferWindow] = [:]
     private var exitStatus: Int32 = 0
 
     var documentWindowCount: Int { windows.count }
@@ -84,6 +85,8 @@ import XPABridge
         )
         for task in remoteOpenTasks.values { task.cancel() }
         remoteOpenTasks.removeAll()
+        for window in remoteTransferWindows.values { window.dismiss() }
+        remoteTransferWindows.removeAll()
         xpaServer?.stop()
         xpaServer = nil
         xpaRuntime?.stop()
@@ -254,10 +257,20 @@ import XPABridge
     func beginRemoteOpen(at url: URL) throws {
         let location = try RemoteFileLocation(url: url)
         let id = UUID()
+        let progress = GTKRemoteTransferWindow(
+            parent: documentWindowsForScripting.last?.widget ?? welcomeWindow,
+            filename: url.lastPathComponent, host: url.host ?? "SSH"
+        ) { [weak self] in self?.remoteOpenTasks[id]?.cancel() }
+        remoteTransferWindows[id] = progress
+        progress.present()
         remoteOpenTasks[id] = Task { [weak self] in
-            defer { self?.remoteOpenTasks[id] = nil }
+            defer {
+                self?.remoteOpenTasks[id] = nil
+                self?.remoteTransferWindows.removeValue(forKey: id)?.dismiss()
+            }
             do {
                 let data = try await SSHRemoteFileClient().readAsync(location)
+                try Task.checkCancellation()
                 guard let self else { return }
                 _ = try self.open(url: url, remoteData: data)
             } catch is CancellationError {

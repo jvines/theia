@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let viewCommandsMenu = ViewCommandsMenuController()
     private let remoteRecentStore = RemoteRecentStore()
     private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
+    private var remoteTransferWindows: [UUID: RemoteTransferWindow] = [:]
     private var workspace: Workspace { WindowSyncCoordinator.shared.workspace }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -98,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         for task in remoteOpenTasks.values { task.cancel() }
         remoteOpenTasks.removeAll()
+        for window in remoteTransferWindows.values { window.dismiss() }
+        remoteTransferWindows.removeAll()
     }
 
     // MARK: - Open paths
@@ -285,10 +288,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do { location = try RemoteFileLocation(url: url) }
         catch { presentOpenError(error, url: url); return }
         let id = UUID()
+        let progress = RemoteTransferWindow(
+            filename: url.lastPathComponent, host: url.host ?? "SSH"
+        ) { [weak self] in self?.remoteOpenTasks[id]?.cancel() }
+        remoteTransferWindows[id] = progress
+        progress.present()
         remoteOpenTasks[id] = Task { [weak self] in
-            defer { self?.remoteOpenTasks[id] = nil }
+            defer {
+                self?.remoteOpenTasks[id] = nil
+                self?.remoteTransferWindows.removeValue(forKey: id)?.dismiss()
+            }
             do {
                 let data = try await SSHRemoteFileClient().readAsync(location)
+                try Task.checkCancellation()
                 guard let self else { return }
                 let controller = try self.openDocumentThrowing(at: url, remoteData: data)
                 if let request {
@@ -298,6 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         _ = session.perform(command, origin: .script)
                     }
                 }
+            } catch is CancellationError {
+                return
             } catch {
                 self?.log("remote open failed: \(error)")
                 self?.presentOpenError(error, url: url)
