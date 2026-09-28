@@ -30,8 +30,9 @@ export PATH="$(dirname "$app"):$PATH"
 wait_for_instance() {
     local pid=$1 directory=
     for _ in $(seq 1 100); do
-        directory=$(find "$runtime_root/theia" -maxdepth 1 -type d \
-            -name "instance-$pid-*" -print -quit 2>/dev/null || true)
+        for candidate in "$runtime_root/theia"/instance-"$pid"-*; do
+            if [[ -d "$candidate" ]]; then directory=$candidate; break; fi
+        done
         if [[ -n "$directory" && -f "$directory/scripting-port" &&
               -f "$directory/scripting-token" && -S "$directory/xpans_unix" ]]; then
             printf '%s' "$directory"

@@ -1,6 +1,6 @@
 # Theia
 
-Theia is a native macOS viewer for FITS (Flexible Image Transport System) files — modern, fast, built for working astronomers.
+Theia is a native macOS and Linux viewer for FITS (Flexible Image Transport System) files, built for working astronomers.
 
 ## Status
 
@@ -30,7 +30,7 @@ Core viewing, multi-extension navigation, WCS, regions, catalogs, photometry, pr
 
 ## Building
 
-Open `Package.swift` in Xcode 15.4+ and run the `Theia` scheme.
+On macOS, open `Package.swift` in Xcode 15.4+ and run the `Theia` scheme.
 
 Command-line build (requires Xcode toolchain on macOS):
 
@@ -41,16 +41,31 @@ swift test
 
 Test data lives outside the repo; fetch it with `scripts/fetch_test_data.sh`. Unit-test fixtures are committed under `Tests/FITSCoreTests/Fixtures/`.
 
+### Linux
+
+The Linux build uses the pinned AlmaLinux 8, Swift 6.3.3, and GTK4 toolchain in
+`ci/Dockerfile.almalinux8-swift63` and `ci/Dockerfile.almalinux8-gtk4`. The CI job
+builds and tests the app, creates a relocatable tarball and AppImage, then runs
+both on a clean AlmaLinux 8 image without the build toolchain.
+
+Extract `Theia-<version>-linux-<architecture>.tar.xz` and run its `bin/theia`
+launcher, or make the matching `.AppImage` executable and run it directly. The
+archive includes the GTK runtime, FITS desktop integration, fallback fonts,
+XPA tools, and FFmpeg for MP4 export. CI verifies the package under Xvfb on
+AlmaLinux 8. The AppImage can use `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
+unavailable.
+
 ## Design notes
 
 - **FITS parsing**: pure Swift for uncompressed data (`BITPIX` 8/16/32/-32/-64, BSCALE/BZERO, multi-HDU). Tile-compressed (`.fz`) images are decompressed by a vendored, statically-linked CFITSIO 4.6.4 (`Sources/CFITSIO/`) and swapped in as native image HDUs at parse time, so the rest of the pipeline never sees compression.
 - **Rendering**: Metal-backed view. `FITSCore` produces a normalized `Float32` texture; the app layer applies stretches and palettes via Metal shaders.
 - **WCS**: pure-Swift implementation of common projections (TAN/SIN/ZEA/STG/CAR/MER/AIT/MOL) plus SIP distortion, rather than bridging WCSlib.
 - **Toolchain**: `swift-tools-version:5.10`, macOS 14+.
-- **Distribution**: free; notarized DMG plus source. Not Mac App Store (sandbox kills file-handling features).
+- **Distribution**: free; notarized DMG on macOS and relocatable tarball and AppImage on Linux.
 
 ## License
 
 Theia is released under the [BSD 3-Clause License](LICENSE) — the permissive license used across the scientific-Python / astronomy ecosystem (astropy, NumPy, SciPy).
 
-It bundles CFITSIO (NASA/HEASARC, public-domain-permissive) and XPA (SAO, MIT); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+It bundles CFITSIO (NASA/HEASARC, public-domain-permissive), XPA (SAO, MIT), and
+additional Linux package components; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

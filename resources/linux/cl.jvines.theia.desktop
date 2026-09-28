@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Theia
+Comment=View and analyze FITS images
+Exec=theia %F
+Icon=cl.jvines.theia
+Terminal=false
+Categories=Science;Astronomy;
+MimeType=image/fits;application/fits;
+StartupNotify=true

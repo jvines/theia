@@ -22,9 +22,11 @@ app_pid=$!
 port_file=
 token_file=
 port=
+instance_dir=
 for _ in $(seq 1 100); do
-    instance_dir=$(find "$runtime_root/theia" -maxdepth 1 -type d \
-        -name "instance-$app_pid-*" -print -quit 2>/dev/null || true)
+    for candidate in "$runtime_root/theia"/instance-"$app_pid"-*; do
+        if [[ -d "$candidate" ]]; then instance_dir=$candidate; break; fi
+    done
     if [[ -n "$instance_dir" ]]; then
         port_file="$instance_dir/scripting-port"
         token_file="$instance_dir/scripting-token"

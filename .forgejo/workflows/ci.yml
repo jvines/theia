@@ -60,11 +60,16 @@ jobs:
       - name: Build pinned GTK4 stack
         run: docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci --iidfile ci-image-id -f ci/Dockerfile.almalinux8-gtk4 ci
 
-      - name: Build and test Linux app and shared targets
+      - name: Build, test and package Linux app
         run: |
+          release_dir=$(mktemp -d /tmp/theia-linux-ci.XXXXXX)
+          trap 'rm -rf "$release_dir"' EXIT
           docker run --rm --platform linux/amd64 --label cl.jvines.owner=theia-ci \
             --mount type=bind,source="$PWD",target=/src,readonly \
+            --mount type=bind,source="$release_dir",target=/out \
             --workdir /tmp "$(cat ci-image-id)" sh -ec '
+              release_owner=$(stat -c %u:%g /out)
+              trap "chown -R $release_owner /out" EXIT
               mkdir -p /tmp/theia
               test "$(uname -m)" = x86_64
               tar -C /src --exclude=.git --exclude=.build --exclude=sample.fits -cf - . | tar -C /tmp/theia -xf -
@@ -73,6 +78,41 @@ jobs:
               scripts/check_shared_api.sh
               swift build -j 2
               xvfb-run -a ci/test-gtk.sh
+              DIST_DIR=/out CONFIG=release THEIA_SWIFT_JOBS=2 scripts/package_linux.sh
+              for candidate in /out/Theia-*-linux-x86_64; do
+                if [ -d "$candidate" ]; then stage=$candidate; break; fi
+              done
+              test -n "${stage:-}"
+              scripts/package_appimage.sh "$stage" "$stage.AppImage"
+            '
+
+          docker build --platform linux/amd64 --label cl.jvines.owner=theia-ci \
+            -t theia-runtime-smoke:ci -f ci/Dockerfile.almalinux8-runtime ci
+          for candidate in "$release_dir"/Theia-*-linux-x86_64; do
+            if [ -d "$candidate" ]; then stage=$candidate; break; fi
+          done
+          test -n "${stage:-}"
+          docker run --rm --platform linux/amd64 --user 1000:1000 \
+            --mount type=bind,source="$PWD",target=/src,readonly \
+            --mount type=bind,source="$stage",target=/opt/theia,readonly \
+            --workdir /src theia-runtime-smoke:ci sh -ec '
+              xvfb-run -a ci/smoke-gtk.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              xvfb-run -a ci/smoke-gtk-http.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              xvfb-run -a ci/smoke-gtk-multi-instance.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+            '
+          docker run --rm --platform linux/amd64 \
+            --mount type=bind,source="$PWD",target=/src,readonly \
+            --mount type=bind,source="$stage",target=/opt/theia,readonly \
+            --workdir /src theia-runtime-smoke:ci sh -ec '
+              xvfb-run -a ci/smoke-gtk-xpa.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+              xvfb-run -a ci/smoke-gtk-xpa-unix.sh /opt/theia/bin/theia
+            '
+          docker run --rm --platform linux/amd64 --user 1000:1000 \
+            --mount type=bind,source="$PWD",target=/src,readonly \
+            --mount type=bind,source="$stage.AppImage",target=/opt/theia.AppImage,readonly \
+            --workdir /src -e APPIMAGE_EXTRACT_AND_RUN=1 \
+            theia-runtime-smoke:ci sh -ec '
+              xvfb-run -a ci/smoke-gtk.sh /opt/theia.AppImage Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
             '
 
   smoke:

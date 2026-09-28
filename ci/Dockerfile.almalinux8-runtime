@@ -1,0 +1,9 @@
+# Clean EL8 launch target: Xvfb and CLI smoke tools, without Swift or GTK.
+FROM almalinux:8.10@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
+
+RUN dnf install -y \
+        xorg-x11-server-Xvfb xorg-x11-utils xorg-x11-xauth \
+        curl util-linux python3 \
+    && dnf clean all
+
+WORKDIR /src

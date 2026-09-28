@@ -24,7 +24,9 @@ app_pid=$!
 
 socket=
 for _ in $(seq 1 100); do
-    socket=$(find "$runtime_root/theia" -maxdepth 2 -type s -name xpans_unix -print -quit 2>/dev/null || true)
+    for candidate in "$runtime_root/theia"/instance-*/xpans_unix; do
+        if [[ -S "$candidate" ]]; then socket=$candidate; break; fi
+    done
     [[ -n "$socket" ]] && break
     kill -0 "$app_pid" 2>/dev/null || break
     sleep 0.1
@@ -37,7 +39,11 @@ fi
 instance_dir=$(dirname "$socket")
 [[ "$(stat -c '%a' "$instance_dir")" == 700 ]]
 [[ "$(stat -c '%u' "$instance_dir")" == "$(id -u)" ]]
-[[ "$(find "$instance_dir" -maxdepth 1 -type s | wc -l)" -ge 2 ]]
+socket_count=0
+for candidate in "$instance_dir"/*; do
+    if [[ -S "$candidate" ]]; then ((socket_count += 1)); fi
+done
+[[ "$socket_count" -ge 2 ]]
 if runuser -u nobody -- test -x "$instance_dir"; then
     echo 'second uid can traverse the GTK XPA namespace' >&2
     exit 1

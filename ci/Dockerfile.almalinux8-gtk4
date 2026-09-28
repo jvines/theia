@@ -87,6 +87,14 @@ RUN echo /usr/local/lib64 > /etc/ld.so.conf.d/theia-gtk.conf \
 COPY --from=video_encoder /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=video_encoder /ffprobe /usr/local/bin/ffprobe
 
+RUN git clone --branch 0.19.1 --depth 1 https://github.com/NixOS/patchelf.git /tmp/patchelf-src \
+    && test "$(git -C /tmp/patchelf-src rev-parse HEAD)" = 7688b17c18d16f67fa8d5a82a2404c2e3a18648d \
+    && source /opt/rh/gcc-toolset-13/enable \
+    && export PATH="/root/.local/bin:$PATH" \
+    && meson setup /tmp/patchelf-build /tmp/patchelf-src --buildtype=release \
+    && ninja -C /tmp/patchelf-build -j 4 install \
+    && rm -rf /tmp/patchelf-src /tmp/patchelf-build
+
 ENV LD_LIBRARY_PATH=/usr/local/lib64:/opt/rh/gcc-toolset-13/root/usr/lib64
 ENV FONTCONFIG_FILE=/etc/fonts/fonts.conf
 ENV GSK_RENDERER=cairo
