@@ -1,9 +1,44 @@
 import CGtk4
+import FITSCore
 import Foundation
 import TheiaKit
 
 /// Cairo adapter for the platform-neutral overlay geometry used by the Mac canvas.
 enum GTKOverlayPainter {
+    static func drawColorBar(colorMap: ColorMap, vmin: Double, vmax: Double,
+                             viewSize: SIMD2<Double>, in context: OpaquePointer) {
+        let top = 24.0
+        let height = viewSize.y - 2 * top
+        guard viewSize.x >= 110, height > 16 else { return }
+        let barWidth = 14.0
+        let barX = viewSize.x - 12 - barWidth
+        let labelsX = barX - 6 - 70
+        let steps = 64
+        cairo_save(context)
+        let gradient = cairo_pattern_create_linear(barX, top, barX, top + height)!
+        for index in 0..<steps {
+            let fraction = 1 - Float(index) / Float(steps - 1)
+            let color = colorMap.sample(fraction)
+            cairo_pattern_add_color_stop_rgb(
+                gradient, Double(index) / Double(steps - 1),
+                Double(color.x), Double(color.y), Double(color.z)
+            )
+        }
+        cairo_set_source(context, gradient)
+        cairo_rectangle(context, barX, top, barWidth, height)
+        cairo_fill(context)
+        cairo_pattern_destroy(gradient)
+        cairo_set_source_rgba(context, 1, 1, 1, 0.5)
+        cairo_set_line_width(context, 0.5)
+        cairo_rectangle(context, barX, top, barWidth, height)
+        cairo_stroke(context)
+        cairo_translate(context, labelsX, top)
+        draw(OverlayScene.colorBarLabelPrimitives(
+            vmin: vmin, vmax: vmax, labelSize: SIMD2(70, height)
+        ), in: context)
+        cairo_restore(context)
+    }
+
     static func draw(_ primitives: [OverlayPrimitive], in context: OpaquePointer) {
         for primitive in primitives {
             cairo_save(context)

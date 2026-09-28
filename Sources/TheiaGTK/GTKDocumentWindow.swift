@@ -172,10 +172,18 @@ private final class RenderCancellation: @unchecked Sendable {
             }
         }
         let drawContext = Unmanaged.passRetained(self).toOpaque()
-        gtk_drawing_area_set_draw_func(UnsafeMutablePointer<GtkDrawingArea>(overlayArea), { _, cairo, _, _, userData in
+        gtk_drawing_area_set_draw_func(UnsafeMutablePointer<GtkDrawingArea>(overlayArea), { _, cairo, width, height, userData in
             guard let cairo, let userData else { return }
             let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
             MainActor.assumeIsolated {
+                if window.session.showColorBar {
+                    GTKOverlayPainter.drawColorBar(
+                        colorMap: window.session.view.colorMap,
+                        vmin: Double(window.session.view.vmin),
+                        vmax: Double(window.session.view.vmax),
+                        viewSize: SIMD2(Double(width), Double(height)), in: cairo
+                    )
+                }
                 GTKOverlayPainter.draw(window.overlayPrimitives, in: cairo)
             }
         }, drawContext, { userData in

@@ -34,4 +34,27 @@ final class GTKOverlayPainterTests: XCTestCase {
         XCTAssertGreaterThan(alpha(24, 24), 0)
         XCTAssertGreaterThan(alpha(24, 30), 0)
     }
+
+    func testColorBarUsesColormapAndPhysicalRangeLabels() throws {
+        let surface = try XCTUnwrap(cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 120, 100))
+        defer { cairo_surface_destroy(surface) }
+        let context = try XCTUnwrap(cairo_create(surface))
+        defer { cairo_destroy(context) }
+
+        GTKOverlayPainter.drawColorBar(
+            colorMap: .viridis, vmin: 10, vmax: 90,
+            viewSize: SIMD2(120, 100), in: context
+        )
+        cairo_surface_flush(surface)
+
+        let pixels = try XCTUnwrap(cairo_image_surface_get_data(surface))
+        let stride = Int(cairo_image_surface_get_stride(surface))
+        func pixel(_ x: Int, _ y: Int) -> [UInt8] {
+            let offset = y * stride + x * 4
+            return Array(UnsafeBufferPointer(start: pixels + offset, count: 4))
+        }
+        XCTAssertEqual(pixel(0, 0)[3], 0)
+        XCTAssertEqual(pixel(101, 30)[3], 255)
+        XCTAssertNotEqual(pixel(101, 30), pixel(101, 70))
+    }
 }

@@ -138,6 +138,8 @@ final class GTKDocumentWindowTests: XCTestCase {
 
         XCTAssertEqual(session.view.colorMap.rawValue, "viridis")
         XCTAssertEqual(window.commandMenus.title(for: "map.viridis"), "✓ Viridis")
+        window.commandMenus.activate("image.colorBar")
+        XCTAssertTrue(session.showColorBar)
         session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
         XCTAssertTrue(window.commandMenus.isEnabled("region.clear"))
     }
