@@ -8,12 +8,22 @@ import TheiaKit
     private let paths: [String]
     private let workspace = Workspace()
     private let bridge = GTKMainLoopBridge()
+    private lazy var scriptingServer = GTKScriptingServer(controller: self)
     private var windows: [UUID: GTKDocumentWindow] = [:]
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
     private var exitStatus: Int32 = 0
 
     var documentWindowCount: Int { windows.count }
+    var documentWindowsForScripting: [GTKDocumentWindow] {
+        windows.values.sorted { (workspace.id(of: $0.session) ?? -1) < (workspace.id(of: $1.session) ?? -1) }
+    }
+
+    func scriptingID(of window: GTKDocumentWindow) -> Int? { workspace.id(of: window.session) }
+    func sessionForScripting(at id: Int) -> DocumentSession? { workspace.document(at: id) }
+    func quitForScripting() {
+        g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
+    }
 
     init(paths: [String]) {
         self.paths = paths
@@ -22,6 +32,11 @@ import TheiaKit
 
     func run() -> Int32 {
         guard bridge.install() else { return 1 }
+        do {
+            try scriptingServer.start()
+        } catch {
+            fputs("Theia: scripting server unavailable: \(error)\n", stderr)
+        }
         let context = Unmanaged.passRetained(self).toOpaque()
         let activate: @convention(c) (UnsafeMutablePointer<GtkApplication>?, gpointer?) -> Void = { _, userData in
             guard let userData else { return }
@@ -40,6 +55,7 @@ import TheiaKit
         let status = g_application_run(
             UnsafeMutablePointer<GApplication>(OpaquePointer(application)), 0, nil
         )
+        scriptingServer.stop()
         bridge.remove()
         g_object_unref(UnsafeMutableRawPointer(application))
         return exitStatus == 0 ? status : exitStatus
