@@ -60,4 +60,37 @@ final class GTKApplicationControllerTests: XCTestCase {
             XCTAssertEqual(controller.documentWindowCount, 0)
         }
     }
+
+    @MainActor func testAppAndHelpMenusOpenIndependentWindows() async throws {
+        gtk_init()
+        let fixture = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let controller = GTKApplicationController(paths: [])
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+        let document = try controller.open(path: fixture.path)
+        defer { gtk_window_destroy(document.widget) }
+
+        document.commandMenus.activate("app.about")
+        let about = try XCTUnwrap(controller.infoWindows["about"])
+        XCTAssertEqual(String(cString: gtk_window_get_title(about.widget)), "About Theia")
+        document.commandMenus.activate("app.about")
+        XCTAssertTrue(about === controller.infoWindows["about"])
+
+        document.commandMenus.activate("help.scriptingReference")
+        let scripting = try XCTUnwrap(controller.infoWindows["scripting"])
+        XCTAssertEqual(String(cString: gtk_window_get_title(scripting.widget)),
+                       "HTTP Scripting Reference")
+        document.commandMenus.activate("help.onboarding")
+        let onboarding = try XCTUnwrap(controller.infoWindows["onboarding"])
+        XCTAssertEqual(String(cString: gtk_window_get_title(onboarding.widget)),
+                       "Welcome to Theia")
+        gtk_window_destroy(about.widget)
+        XCTAssertNil(controller.infoWindows["about"])
+        gtk_window_destroy(scripting.widget)
+        gtk_window_destroy(onboarding.widget)
+    }
 }

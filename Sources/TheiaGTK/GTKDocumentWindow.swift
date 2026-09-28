@@ -904,8 +904,12 @@ private final class RenderCancellation: @unchecked Sendable {
                   request.hduIndex == session.hdu,
                   request.imageRevision == session.imageRevision else { return }
             handleOutcome(session.perform(.applySlab(from: from, to: to), origin: .user))
+        case .openURL(let url):
+            GTKURLOpener.open(url, parent: widget) { [weak self] message in
+                self?.showAlert(title: "Link not opened", message: message)
+            }
         case .showPanel, .exportCube, .openLightCurve,
-             .showAppWindow, .openURL, .tileWindows:
+             .showAppWindow, .tileWindows:
             showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
         case .documentOpened, .noteRecent:
             break

@@ -9,6 +9,7 @@ import TheiaKit
     private let portRange: ClosedRange<UInt16>
     private var token: String?
     private var transport: ScriptingSocketServer?
+    var port: UInt16 { transport?.port ?? 0 }
 
     init(controller: GTKApplicationController, token: String? = nil,
          paths: AppPaths = AppPaths(platform: .linux),

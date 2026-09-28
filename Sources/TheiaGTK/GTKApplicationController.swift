@@ -16,6 +16,7 @@ import XPABridge
     private var xpaServer: XPAServer?
     private var windows: [UUID: GTKDocumentWindow] = [:]
     private var lightCurveWindow: GTKLightCurveWindow?
+    private(set) var infoWindows: [String: GTKInfoWindow] = [:]
     private(set) var welcomeWindow: UnsafeMutablePointer<GtkWindow>?
     private(set) var openDialog: GTKFileOpenDialog?
     private var exitStatus: Int32 = 0
@@ -222,6 +223,11 @@ import XPABridge
         for effect in outcome.effects {
             switch effect {
             case .showAppWindow(.welcome): showWelcomeWindow()
+            case .showAppWindow(let kind): showInfoWindow(kind)
+            case .openURL(let url):
+                GTKURLOpener.open(url, parent: source?.widget) { message in
+                    fputs("Theia: could not open URL: \(message)\n", stderr)
+                }
             case .openLightCurve(let model):
                 if let lightCurveWindow {
                     lightCurveWindow.update(model)
@@ -240,6 +246,23 @@ import XPABridge
             }
         }
         refreshDocumentMenus()
+    }
+
+    private func showInfoWindow(_ kind: AppWindowKind) {
+        let key: String
+        switch kind {
+        case .about: key = "about"
+        case .scriptingReference: key = "scripting"
+        case .onboarding: key = "onboarding"
+        case .welcome: showWelcomeWindow(); return
+        }
+        if let existing = infoWindows[key] { existing.present(); return }
+        let window = GTKInfoWindow(application: application, kind: kind,
+                                   scriptingPort: scriptingServer.port) { [weak self] in
+            self?.infoWindows.removeValue(forKey: key)
+        }
+        infoWindows[key] = window
+        window.present()
     }
 
     func presentOpenDialog(parent: UnsafeMutablePointer<GtkWindow>?) {
