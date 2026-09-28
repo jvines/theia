@@ -1,4 +1,5 @@
 import CGtk4
+import FITSCore
 import FITSRaster
 import Foundation
 import TheiaKit
@@ -31,7 +32,7 @@ private final class RenderCancellation: @unchecked Sendable {
 
     func invoke() {
         guard let window else { return }
-        _ = window.session.perform(command, origin: .user)
+        window.handleOutcome(window.session.perform(command, origin: .user))
     }
 }
 
@@ -45,6 +46,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let commandMenus: GTKCommandMenuBar
     let inspector: GTKInspectorPanel
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
+    private(set) var activePathDialog: GTKPathDialog?
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private var observerID: UUID?
@@ -210,6 +212,7 @@ private final class RenderCancellation: @unchecked Sendable {
         )
         installScrollController()
         installDragGesture()
+        commandMenus.onOutcome = { [weak self] outcome in self?.handleOutcome(outcome) }
     }
 
     private func installDragGesture() {
@@ -346,6 +349,8 @@ private final class RenderCancellation: @unchecked Sendable {
         cachedDisplay = nil
         commandMenus.stop()
         inspector.stop()
+        activePathDialog?.dismiss()
+        activePathDialog = nil
         if sizeSyncSourceID != 0 {
             g_source_remove(sizeSyncSourceID)
             sizeSyncSourceID = 0
@@ -479,6 +484,98 @@ private final class RenderCancellation: @unchecked Sendable {
         let texture = GTKCanvasTexture.make(from: prepared)
         gtk_picture_set_paintable(picture, texture)
         g_object_unref(UnsafeMutableRawPointer(texture))
+    }
+
+    func handleOutcome(_ outcome: CommandOutcome) {
+        if let failure = outcome.failure, outcome.effects.isEmpty {
+            showAlert(title: "Theia", message: failure.message)
+        }
+        for effect in outcome.effects { handleEffect(effect) }
+    }
+
+    private func handleEffect(_ effect: Effect) {
+        switch effect {
+        case .ask(let question, let request):
+            guard activePathDialog == nil else { activePathDialog?.present(); return }
+            guard case .numbers = question else {
+                let dialog = GTKPathDialog(parent: widget, question: question) { [weak self] answer in
+                    guard let self else { return }
+                    self.activePathDialog = nil
+                    self.handleOutcome(self.session.perform(.answer(request, answer), origin: .user))
+                }
+                activePathDialog = dialog
+                dialog.present()
+                return
+            }
+            showAlert(title: "Theia", message: "Numeric input is not available yet")
+            handleOutcome(session.perform(.answer(request, .cancelled), origin: .user))
+        case .exportImage(let snapshot, let url):
+            Task.detached { [weak self] in
+                do { try snapshot.writeImage(to: url) }
+                catch { await self?.showAlert(title: "Image not exported", message: error.localizedDescription) }
+            }
+        case .saveImage(let snapshot, let url):
+            Task.detached { [weak self] in
+                do { try snapshot.writeFITS(to: url) }
+                catch { await self?.showAlert(title: "FITS image not saved", message: error.localizedDescription) }
+            }
+        case .saveRegions(let snapshot, let url):
+            Task.detached { [weak self] in
+                do { try snapshot.write(to: url) }
+                catch { await self?.showAlert(title: "Regions not saved", message: error.localizedDescription) }
+            }
+        case .loadRegions(let request, let url):
+            Task.detached { [weak self] in
+                do {
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    let regions = try RegionFile.parse(text)
+                    await self?.finishRegionLoad(request, regions: regions)
+                } catch {
+                    await self?.showAlert(title: "Regions not loaded", message: error.localizedDescription)
+                }
+            }
+        case .copyToClipboard(let value):
+            if let display = gtk_widget_get_display(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget))) {
+                gdk_clipboard_set_text(gdk_display_get_clipboard(display), value)
+            }
+        case .alert(let title, let message, _):
+            showAlert(title: title, message: message)
+        case .quit:
+            gtk_window_destroy(widget)
+        case .showPanel, .exportCube, .extractSlab, .openLightCurve,
+             .showAppWindow, .openURL, .tileWindows:
+            showAlert(title: "Theia", message: "This action is not available in the Linux app yet")
+        case .documentOpened, .noteRecent:
+            break
+        }
+    }
+
+    private func finishRegionLoad(_ request: RegionLoadRequest, regions: [Region]) {
+        guard !destroyed else { return }
+        let outcome = session.perform(.completeRegionLoad(request, regions), origin: .user)
+        if outcome.failure != .supersededRegionLoad { handleOutcome(outcome) }
+    }
+
+    private func showAlert(title: String, message: String) {
+        guard !destroyed else { return }
+        let alert = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_window_new()!))
+        gtk_window_set_title(alert, title)
+        gtk_window_set_transient_for(alert, widget)
+        gtk_window_set_modal(alert, 1)
+        gtk_window_set_default_size(alert, 360, 120)
+        let box = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!))
+        gtk_widget_set_margin_top(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 16)
+        gtk_widget_set_margin_bottom(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 16)
+        gtk_widget_set_margin_start(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 16)
+        gtk_widget_set_margin_end(UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)), 16)
+        let label = gtk_label_new(message)!
+        gtk_label_set_wrap(OpaquePointer(label), 1)
+        gtk_box_append(box, label)
+        let closeButton = gtk_button_new_with_label("Close")!
+        GTKButtonAction { gtk_window_destroy(alert) }.connect(to: closeButton)
+        gtk_box_append(box, closeButton)
+        gtk_window_set_child(alert, UnsafeMutablePointer<GtkWidget>(OpaquePointer(box)))
+        gtk_window_present(alert)
     }
 
     private func refreshOverlay() {

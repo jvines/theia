@@ -198,6 +198,66 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertTrue(window.inspector.statsText.contains("Pixels"))
     }
 
+    @MainActor func testRegionSaveMenuOpensNativePathDialog() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+
+        window.commandMenus.activate("region.save")
+
+        let dialog = try XCTUnwrap(window.activePathDialog)
+        XCTAssertEqual(String(cString: gtk_native_dialog_get_title(dialog.native)), "Save Regions")
+        XCTAssertEqual(String(cString: gtk_file_chooser_get_current_name(dialog.chooser)), "regions.reg")
+    }
+
+    @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        session.regions = [Region(shape: .point(.init(x: 1, y: 1)), frame: .image)]
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-regions-\(UUID().uuidString).reg")
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let save = session.perform(.saveRegions, origin: .user)
+        guard case .ask(_, let saveRequest) = try XCTUnwrap(save.effects.first) else {
+            return XCTFail("Expected a save path request")
+        }
+        window.handleOutcome(session.perform(.answer(saveRequest, .path(path)), origin: .user))
+        let saveDeadline = Date().addingTimeInterval(3)
+        while !FileManager.default.fileExists(atPath: path.path) && Date() < saveDeadline {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+
+        session.regions = []
+        let load = session.perform(.loadRegions, origin: .user)
+        guard case .ask(_, let loadRequest) = try XCTUnwrap(load.effects.first) else {
+            return XCTFail("Expected an open path request")
+        }
+        window.handleOutcome(session.perform(.answer(loadRequest, .path(path)), origin: .user))
+        let loadDeadline = Date().addingTimeInterval(3)
+        while session.regions.isEmpty && Date() < loadDeadline {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(session.regions.count, 1)
+    }
+
     @MainActor func testFractionalScaleAllocatesExactDevicePixels() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))

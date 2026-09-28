@@ -13,6 +13,7 @@ import TheiaKit
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
     private var titles: [String: String] = [:]
+    var onOutcome: (@MainActor (CommandOutcome) -> Void)?
 
     var sectionCount: Int {
         Int(g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(model)))
@@ -123,7 +124,7 @@ import TheiaKit
                 guard let name = g_action_get_name(action).map(String.init(cString:)),
                       let identifier = menu.actionIDs[name],
                       let command = menu.commands[identifier] else { return }
-                _ = menu.session.perform(command, origin: .user)
+                menu.onOutcome?(menu.session.perform(command, origin: .user))
             }
         }
         let release: GClosureNotify = { userData, _ in

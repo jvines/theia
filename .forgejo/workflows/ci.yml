@@ -72,11 +72,7 @@ jobs:
               swift scripts/make_sample_fits.swift > sample.fits
               scripts/check_shared_api.sh
               swift build -j 2
-              xvfb-run -a swift test -j 2
-              xvfb-run -a ci/smoke-gtk.sh "$(swift build --show-bin-path)/theia-gtk" Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-              xvfb-run -a ci/smoke-gtk-http.sh "$(swift build --show-bin-path)/theia-gtk" Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-              xvfb-run -a ci/smoke-gtk-xpa.sh "$(swift build --show-bin-path)/theia-gtk" Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
-              scripts/test_xpa_local_security.sh "$(swift build --show-bin-path)"
+              xvfb-run -a ci/test-gtk.sh
             '
 
   smoke:
