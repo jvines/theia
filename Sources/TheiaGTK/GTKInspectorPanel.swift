@@ -84,6 +84,9 @@ import TheiaKit
         photometryView = OpaquePointer(gtk_text_view_new()!)
         statsView = OpaquePointer(gtk_text_view_new()!)
         gtk_widget_set_size_request(widget, 260, -1)
+        // Explicit, so the header filter's hexpand does not propagate up and
+        // make the inspector split spare width with the image.
+        gtk_widget_set_hexpand(widget, 0)
         gtk_widget_set_vexpand(widget, 1)
         for view in [headerView, photometryView, statsView] {
             let textView = UnsafeMutablePointer<GtkTextView>(view)

@@ -701,6 +701,37 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(gtk_text_view_get_monospace(header), 1)
     }
 
+    @MainActor func testWideWindowGivesSpareWidthToTheImage() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        let image = UnsafeMutablePointer<GtkWidget>(window.imageOverlay)
+        let deadline = Date().addingTimeInterval(2)
+        while gtk_widget_get_width(image) == 0 && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+
+        // Only the image expands: the side panels keep their natural width.
+        var sidebarNatural: Int32 = 0
+        var inspectorNatural: Int32 = 0
+        gtk_widget_measure(UnsafeMutablePointer<GtkWidget>(window.hduList),
+                           GTK_ORIENTATION_HORIZONTAL, -1, nil, &sidebarNatural, nil, nil)
+        gtk_widget_measure(window.inspector.widget, GTK_ORIENTATION_HORIZONTAL, -1,
+                           nil, &inspectorNatural, nil, nil)
+        XCTAssertLessThanOrEqual(gtk_widget_get_width(window.inspector.widget), inspectorNatural)
+        let windowWidth = gtk_widget_get_width(UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget)))
+        XCTAssertGreaterThanOrEqual(gtk_widget_get_width(image),
+                                    windowWidth - sidebarNatural - inspectorNatural - 24)
+    }
+
     @MainActor func testInspectorTracksSharedTabVisibilityAndRegions() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(
