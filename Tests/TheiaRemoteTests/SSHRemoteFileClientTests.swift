@@ -89,15 +89,14 @@ final class SSHRemoteFileClientTests: XCTestCase {
         environment["THEIA_TEST_READY"] = ready.path
         let client = SSHRemoteFileClient(executableURL: script, environment: environment)
         let location = try RemoteFileLocation(url: URL(string: "ssh://cluster.example/data.fits")!)
-        let cancellation = RemoteTransferCancellation()
-        let task = Task.detached { try client.read(location, cancellation: cancellation) }
+        let task = Task.detached { try await client.readAsync(location) }
         let deadline = Date().addingTimeInterval(3)
         while !FileManager.default.fileExists(atPath: ready.path) && Date() < deadline {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
         let cancellationTime = Date()
-        cancellation.cancel()
+        task.cancel()
         do {
             _ = try await task.value
             XCTFail("Expected cancellation")

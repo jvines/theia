@@ -104,9 +104,15 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
     public func open(
         path: String, load: (URL) throws -> DocumentSession
     ) throws -> WorkspaceOpenResult {
-        let url = URL(fileURLWithPath: path).standardizedFileURL
+        try open(url: URL(fileURLWithPath: path), load: load)
+    }
+
+    public func open(
+        url: URL, load: (URL) throws -> DocumentSession
+    ) throws -> WorkspaceOpenResult {
+        let url = url.isFileURL ? url.standardizedFileURL : url
         if let existing = documents.values.compactMap(\.session).first(where: {
-            $0.url.standardizedFileURL == url
+            ($0.url.isFileURL ? $0.url.standardizedFileURL : $0.url) == url
         }), let id = id(of: existing) {
             focus(existing)
             return WorkspaceOpenResult(session: existing, documentID: id,

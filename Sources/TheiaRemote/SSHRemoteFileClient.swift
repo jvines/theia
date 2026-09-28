@@ -84,7 +84,7 @@ public final class RemoteTransferCancellation: @unchecked Sendable {
 
 /// Reads a remote file through a Theia helper. SSH verifies the host using the
 /// user's known_hosts file; the path travels only in the versioned stdin protocol.
-public struct SSHRemoteFileClient {
+public struct SSHRemoteFileClient: Sendable {
     private let executableURL: URL
     private let environment: [String: String]
 
@@ -92,6 +92,17 @@ public struct SSHRemoteFileClient {
                 environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.executableURL = executableURL
         self.environment = environment
+    }
+
+    public func readAsync(_ location: RemoteFileLocation) async throws -> Data {
+        let cancellation = RemoteTransferCancellation()
+        return try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try read(location, cancellation: cancellation)
+            }.value
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 
     public func read(_ location: RemoteFileLocation,

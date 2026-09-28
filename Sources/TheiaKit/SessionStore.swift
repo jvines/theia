@@ -49,7 +49,8 @@ public struct SessionStore {
 
     public func recordURL(for fitsURL: URL) throws -> URL {
         let path = try canonicalPath(for: fitsURL)
-        let name = URL(fileURLWithPath: path).lastPathComponent
+        let name = fitsURL.isFileURL ? URL(fileURLWithPath: path).lastPathComponent
+                                     : fitsURL.lastPathComponent
         return sessionsDirectory.appendingPathComponent("\(name)-\(Self.fnv1a64Hex(Data(path.utf8))).json")
     }
 
@@ -115,9 +116,11 @@ public struct SessionStore {
         if let stale = try readRecord(at: staleURL), stale.canonicalPath == path {
             return .stale(stale.session)
         }
-        let legacy = SessionState.sidecarURL(for: fitsURL)
-        if FileManager.default.fileExists(atPath: legacy.path) {
-            return .restored(try SessionState.fromJSON(Data(contentsOf: legacy)))
+        if fitsURL.isFileURL {
+            let legacy = SessionState.sidecarURL(for: fitsURL)
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                return .restored(try SessionState.fromJSON(Data(contentsOf: legacy)))
+            }
         }
         return .none
     }
@@ -140,6 +143,7 @@ public struct SessionStore {
     }
 
     private func canonicalPath(for url: URL) throws -> String {
+        if !url.isFileURL { return url.absoluteString }
         guard let pointer = realpath(url.path, nil) else { throw StoreError.cannotResolvePath(url) }
         defer { free(pointer) }
         return String(cString: pointer)

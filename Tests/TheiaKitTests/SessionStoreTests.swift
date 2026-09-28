@@ -50,6 +50,29 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(try a.recordURL(for: source).lastPathComponent, "image.fits-\(expectedHash).json")
     }
 
+    func testRemoteSessionRestoresBySSHURLWithoutALocalFile() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = try XCTUnwrap(URL(string: "ssh://jose@cluster.example/data/image%20one.fits"))
+        let otherHost = try XCTUnwrap(URL(string: "ssh://jose@other.example/data/image%20one.fits"))
+        let data = primary()
+        let persistence = store(root)
+        let state = session()
+
+        try persistence.save(state, for: source, fileData: data)
+        guard case .restored(let restored) = try persistence.load(for: source, fileData: data) else {
+            return XCTFail("Expected a saved remote session")
+        }
+        XCTAssertEqual(restored, state)
+        let record = try persistence.recordURL(for: source)
+        XCTAssertEqual(record.lastPathComponent,
+                       "image one.fits-\(SessionStore.fnv1a64Hex(Data(source.absoluteString.utf8))).json")
+        XCTAssertNotEqual(record, try persistence.recordURL(for: otherHost))
+        guard case .none = try persistence.load(for: otherHost, fileData: data) else {
+            return XCTFail("A different SSH host must not use this session")
+        }
+    }
+
     #if os(macOS)
     func testRecordNameIsIdenticalAcrossTwoProcesses() throws {
         let root = try temporaryDirectory()

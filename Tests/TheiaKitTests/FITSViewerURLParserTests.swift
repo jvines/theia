@@ -28,4 +28,17 @@ final class FITSViewerURLParserTests: XCTestCase {
             .setLevels(min: 3, max: 10),
         ])
     }
+
+    func testOpenURLPreservesSSHLocationForRemoteAppOpen() throws {
+        let url = try XCTUnwrap(URL(string:
+            "fitsviewer://open?path=ssh%3A%2F%2Fjose%40cluster.example%2Fdata%2Fimage%2520one.fits&stretch=log"
+        ))
+        let request = try XCTUnwrap(FITSViewerURLParser.parse(url))
+        XCTAssertEqual(request.fileURL.absoluteString,
+                       "ssh://jose@cluster.example/data/image%20one.fits")
+        XCTAssertEqual(request.commands(currentVmin: 0, currentVmax: 1), [.setStretch(.log)])
+        XCTAssertNil(FITSViewerURLParser.parse(try XCTUnwrap(URL(string:
+            "fitsviewer://open?path=ssh%3A%2F%2Fcluster.example"
+        ))))
+    }
 }

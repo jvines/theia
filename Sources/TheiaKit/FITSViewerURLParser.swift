@@ -45,7 +45,20 @@ public enum FITSViewerURLParser {
         guard url.scheme?.lowercased() == "fitsviewer", url.host?.lowercased() == "open",
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
               let path = items.first(where: { $0.name == "path" })?.value,
-              path.hasPrefix("/"), !path.isEmpty else { return nil }
+              !path.isEmpty else { return nil }
+
+        let fileURL: URL
+        if path.hasPrefix("/") {
+            fileURL = URL(fileURLWithPath: path)
+        } else if let remote = URL(string: path),
+                  let components = URLComponents(url: remote, resolvingAgainstBaseURL: false),
+                  components.scheme?.lowercased() == "ssh",
+                  components.host?.isEmpty == false,
+                  components.path.hasPrefix("/") {
+            fileURL = remote
+        } else {
+            return nil
+        }
 
         func value(_ name: String) -> String? {
             items.first(where: { $0.name == name })?.value
@@ -55,7 +68,7 @@ public enum FITSViewerURLParser {
             return number
         }
         return FITSViewerURLRequest(
-            fileURL: URL(fileURLWithPath: path),
+            fileURL: fileURL,
             stretch: value("stretch").flatMap(ImageStretch.init(rawValue:)),
             colorMap: value("colormap").flatMap(ColorMap.init(rawValue:)),
             vmin: finiteFloat("vmin"), vmax: finiteFloat("vmax"),
