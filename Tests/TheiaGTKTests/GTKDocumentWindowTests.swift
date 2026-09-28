@@ -5,6 +5,33 @@ import TheiaKit
 import XCTest
 @testable import TheiaGTK
 
+@MainActor private func documentWindowID() throws -> String {
+    let deadline = Date().addingTimeInterval(2)
+    while Date() < deadline {
+        _ = g_main_context_iteration(nil, 0)
+        let search = Process()
+        search.executableURL = URL(fileURLWithPath: "/usr/bin/xwininfo")
+        search.arguments = ["-root", "-tree"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LC_ALL"] = "C.utf8"
+        search.environment = environment
+        let output = Pipe()
+        search.standardOutput = output
+        try search.run()
+        search.waitUntilExit()
+        if search.terminationStatus == 0,
+           let identifier = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .split(separator: "\n")
+            .first(where: { $0.contains("uint8_simple.fits — Theia") })?
+            .split(whereSeparator: \.isWhitespace).first.map(String.init) {
+            return identifier
+        }
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+    let notFound: String? = nil
+    return try XCTUnwrap(notFound, "GTK document window was not mapped by Xvfb")
+}
+
 final class GTKDocumentWindowTests: XCTestCase {
     func testFITSWindowHasTitleAndRenderedCanvas() async throws {
         try await MainActor.run {
@@ -205,6 +232,75 @@ final class GTKDocumentWindowTests: XCTestCase {
                 _ = g_main_context_iteration(nil, 0)
             }
             XCTAssertNotEqual(session.view.transform.scale, 1)
+        }
+    }
+
+    func testMouseWheelZoomsSharedViewport() async throws {
+        try await MainActor.run {
+            gtk_init()
+            let fileURL = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            window.present()
+            let id = try documentWindowID()
+            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            let initialScale = session.view.transform.scale
+
+            let wheel = Process()
+            wheel.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            wheel.arguments = [
+                "mousemove", "--window", id, "320", "240", "sleep", "0.1", "click", "4",
+            ]
+            try wheel.run()
+            let deadline = Date().addingTimeInterval(2)
+            while (wheel.isRunning || session.view.transform.scale == initialScale) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+            }
+            wheel.waitUntilExit()
+            XCTAssertEqual(wheel.terminationStatus, 0)
+            XCTAssertGreaterThan(session.view.transform.scale, initialScale * 1.1)
+        }
+    }
+
+    func testMouseDragPansSharedViewport() async throws {
+        try await MainActor.run {
+            gtk_init()
+            let fileURL = try XCTUnwrap(Bundle.module.url(
+                forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+            let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+            defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+            XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            window.present()
+            let id = try documentWindowID()
+            for _ in 0..<20 { _ = g_main_context_iteration(nil, 0) }
+            let initialCentre = session.view.transform.centre
+
+            let drag = Process()
+            drag.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            drag.arguments = [
+                "mousemove", "--window", id, "320", "240", "sleep", "0.1",
+                "mousedown", "1", "sleep", "0.1",
+                "mousemove", "--window", id, "360", "260", "sleep", "0.1", "mouseup", "1",
+            ]
+            try drag.run()
+            let deadline = Date().addingTimeInterval(2)
+            while (drag.isRunning || session.view.transform.centre == initialCentre) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+            }
+            drag.waitUntilExit()
+            XCTAssertEqual(drag.terminationStatus, 0)
+
+            XCTAssertNotEqual(session.view.transform.centre, initialCentre)
         }
     }
 }

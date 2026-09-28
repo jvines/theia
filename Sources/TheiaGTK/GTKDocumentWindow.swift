@@ -23,6 +23,7 @@ import TheiaKit
     let picture: OpaquePointer
     let hduList: OpaquePointer
     let session: DocumentSession
+    let interaction: InteractionController
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private let onDestroy: @MainActor () -> Void
     private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
@@ -30,11 +31,15 @@ import TheiaKit
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
     private var destroyed = false
+    private var dragStart: SIMD2<Double>?
+    private var dragButton: PointerEvent.Button = .primary
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
          onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
+        interaction = InteractionController(view: session.view, mode: .full, session: session)
+        interaction.drawMode = session.mode
         self.onOpen = onOpen
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
@@ -122,6 +127,7 @@ import TheiaKit
             case .selectionChanged:
                 self?.syncHDUSelection()
                 self?.refreshViewButtons()
+                self?.interaction.drawMode = self?.session.mode ?? .pan
             default: break
             }
         }
@@ -140,6 +146,134 @@ import TheiaKit
             unsafeBitCast(callback, to: GCallback.self), context, release,
             GConnectFlags(rawValue: 0)
         )
+        installScrollController()
+        installDragGesture()
+    }
+
+    private func installDragGesture() {
+        let gesture = gtk_gesture_drag_new()!
+        gtk_gesture_single_set_button(gesture, 0)
+        let callback: @convention(c) (OpaquePointer?, gdouble, gdouble, gpointer?) -> Void = {
+            gesture, x, y, userData in
+            guard let gesture, let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { window.beginDrag(gesture: gesture, x: x, y: y) }
+        }
+        let update: @convention(c) (OpaquePointer?, gdouble, gdouble, gpointer?) -> Void = {
+            _, x, y, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { window.updateDrag(offsetX: x, offsetY: y) }
+        }
+        let end: @convention(c) (OpaquePointer?, gdouble, gdouble, gpointer?) -> Void = {
+            _, x, y, userData in
+            guard let userData else { return }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { window.endDrag(offsetX: x, offsetY: y) }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        for (name, handler) in [
+            ("drag-begin", callback), ("drag-update", update), ("drag-end", end)
+        ] {
+            let context = Unmanaged.passRetained(self).toOpaque()
+            g_signal_connect_data(
+                UnsafeMutableRawPointer(gesture), name,
+                unsafeBitCast(handler, to: GCallback.self), context, release,
+                GConnectFlags(rawValue: 0)
+            )
+        }
+        gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), gesture)
+    }
+
+    private func beginDrag(gesture: OpaquePointer, x: Double, y: Double) {
+        var localX = 0.0
+        var localY = 0.0
+        let pictureWidget = UnsafeMutablePointer<GtkWidget>(picture)
+        guard gtk_widget_translate_coordinates(
+            UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), pictureWidget,
+            x, y, &localX, &localY
+        ) != 0, gtk_widget_contains(pictureWidget, localX, localY) != 0 else { return }
+        let button = gtk_gesture_single_get_current_button(gesture)
+        dragButton = button == 2 ? .middle : button == 3 ? .secondary : .primary
+        dragStart = SIMD2(localX, localY)
+        _ = interaction.pointer(PointerEvent(
+            phase: .down, button: dragButton, location: SIMD2(localX, localY)
+        ))
+    }
+
+    private func updateDrag(offsetX: Double, offsetY: Double) {
+        guard let dragStart else { return }
+        _ = interaction.pointer(PointerEvent(
+            phase: .dragged, button: dragButton,
+            location: dragStart + SIMD2(offsetX, offsetY)
+        ))
+    }
+
+    private func endDrag(offsetX: Double, offsetY: Double) {
+        guard let dragStart else { return }
+        _ = interaction.pointer(PointerEvent(
+            phase: .up, button: dragButton,
+            location: dragStart + SIMD2(offsetX, offsetY)
+        ))
+        self.dragStart = nil
+    }
+
+    private func installScrollController() {
+        let controller = gtk_event_controller_scroll_new(GtkEventControllerScrollFlags(rawValue: 1))!
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let callback: @convention(c) (OpaquePointer?, gdouble, gdouble, gpointer?) -> gboolean = {
+            controller, _, dy, userData in
+            guard let userData else { return 0 }
+            let window = Unmanaged<GTKDocumentWindow>.fromOpaque(userData).takeUnretainedValue()
+            return MainActor.assumeIsolated {
+                window.handleScroll(controller: controller, deltaY: dy) ? 1 : 0
+            }
+        }
+        let release: GClosureNotify = { userData, _ in
+            guard let userData else { return }
+            Unmanaged<GTKDocumentWindow>.fromOpaque(userData).release()
+        }
+        g_signal_connect_data(
+            UnsafeMutableRawPointer(controller), "scroll",
+            unsafeBitCast(callback, to: GCallback.self), context, release,
+            GConnectFlags(rawValue: 0)
+        )
+        gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)), controller)
+    }
+
+    private func handleScroll(controller: OpaquePointer?, deltaY: Double) -> Bool {
+        guard let controller else { return false }
+        let centre = SIMD2(
+            session.view.viewSizePoints.width / 2,
+            session.view.viewSizePoints.height / 2
+        )
+        var location = centre
+        if let event = gtk_event_controller_get_current_event(controller) {
+            var surfaceX = 0.0
+            var surfaceY = 0.0
+            var localX = 0.0
+            var localY = 0.0
+            if gdk_event_get_position(event, &surfaceX, &surfaceY) != 0,
+               surfaceX.isFinite, surfaceY.isFinite {
+                guard gtk_widget_translate_coordinates(
+                    UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget)),
+                    UnsafeMutablePointer<GtkWidget>(picture),
+                    surfaceX, surfaceY, &localX, &localY
+                ) != 0, localX.isFinite, localY.isFinite,
+                gtk_widget_contains(UnsafeMutablePointer<GtkWidget>(picture), localX, localY) != 0
+                else { return false }
+                location = SIMD2(localX, localY)
+            }
+        }
+        let isWheel = gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_WHEEL
+        return interaction.scroll(ScrollEvent(
+            location: location,
+            deltaY: -deltaY * (isWheel ? 120 : 1),
+            isPrecise: !isWheel
+        ))
     }
 
     private func handleDestroy() {
