@@ -25,14 +25,17 @@ import TheiaKit
     let session: DocumentSession
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private let onDestroy: @MainActor () -> Void
+    private let onOpen: @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void
     private var observerID: UUID?
     private var layoutConnectionID: gulong = 0
     private var sizeSyncSourceID: guint = 0
     private var destroyed = false
 
     init(application: UnsafeMutablePointer<GtkApplication>, session: DocumentSession,
+         onOpen: @escaping @MainActor (UnsafeMutablePointer<GtkWindow>) -> Void = { _ in },
          onDestroy: @escaping @MainActor () -> Void = {}) {
         self.session = session
+        self.onOpen = onOpen
         self.onDestroy = onDestroy
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
         picture = OpaquePointer(gtk_picture_new()!)
@@ -46,6 +49,12 @@ import TheiaKit
         let content = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!))
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)), 1)
         let toolbar = UnsafeMutablePointer<GtkBox>(OpaquePointer(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!))
+        let openButton = gtk_button_new_with_label("Open…")!
+        GTKButtonAction { [weak self] in
+            guard let self else { return }
+            self.onOpen(self.widget)
+        }.connect(to: openButton)
+        gtk_box_append(toolbar, openButton)
         for entry in CommandCatalog.viewMenu(for: session) {
             guard case .item(let item) = entry, let command = item.command else { continue }
             let button = gtk_button_new_with_label(item.title)!
@@ -109,6 +118,10 @@ import TheiaKit
             switch event.kind {
             case .displayParametersChanged, .transformChanged, .imageRevisionChanged:
                 self?.renderCanvas()
+                if event.kind == .imageRevisionChanged { self?.refreshViewButtons() }
+            case .selectionChanged:
+                self?.syncHDUSelection()
+                self?.refreshViewButtons()
             default: break
             }
         }
@@ -229,6 +242,20 @@ import TheiaKit
         } else {
             gtk_picture_set_paintable(picture, nil)
         }
+    }
+
+    private func refreshViewButtons() {
+        for entry in CommandCatalog.viewMenu(for: session) {
+            guard case .item(let item) = entry,
+                  let button = viewButtons[item.identifier] else { continue }
+            gtk_widget_set_sensitive(button, item.enabled ? 1 : 0)
+        }
+    }
+
+    private func syncHDUSelection() {
+        guard let row = gtk_list_box_get_row_at_index(hduList, gint(session.hdu)),
+              gtk_list_box_get_selected_row(hduList) != row else { return }
+        gtk_list_box_select_row(hduList, row)
     }
 
     func updateCanvasSize(width: Int, height: Int, scale: Double) {

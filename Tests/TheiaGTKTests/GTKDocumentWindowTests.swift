@@ -171,6 +171,15 @@ final class GTKDocumentWindowTests: XCTestCase {
             let row = try XCTUnwrap(gtk_list_box_get_row_at_index(window.hduList, gint(target)))
             gtk_list_box_select_row(window.hduList, row)
             XCTAssertEqual(session.hdu, target)
+            let fitButton = try XCTUnwrap(window.viewButtons["view.fit"])
+            XCTAssertEqual(gtk_widget_get_sensitive(fitButton), session.displayed == nil ? 0 : 1)
+
+            _ = session.perform(.selectHDU(session.hdu == 0 ? 1 : 0), origin: .script)
+            XCTAssertEqual(
+                gtk_list_box_row_get_index(try XCTUnwrap(gtk_list_box_get_selected_row(window.hduList))),
+                gint(session.hdu)
+            )
+            XCTAssertEqual(gtk_widget_get_sensitive(fitButton), session.displayed == nil ? 0 : 1)
         }
     }
 
