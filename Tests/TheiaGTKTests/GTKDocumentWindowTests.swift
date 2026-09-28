@@ -77,6 +77,28 @@ import XCTest
                            file: try FITSFile(data: data))
 }
 
+@MainActor private func gtkTableSession() throws -> DocumentSession {
+    func block(_ cards: [String]) -> Data {
+        let text = cards.map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+        return Data((text + String(repeating: " ", count: 2880 - text.utf8.count)).utf8)
+    }
+    let primary = block([
+        "SIMPLE  =                    T", "BITPIX  =                    8",
+        "NAXIS   =                    0", "EXTEND  =                    T", "END",
+    ])
+    let extensionHeader = block([
+        "XTENSION= 'BINTABLE'", "BITPIX  =                    8",
+        "NAXIS   =                    2", "NAXIS1  =                    1",
+        "NAXIS2  =                  105", "PCOUNT  =                    0",
+        "GCOUNT  =                    1", "TFIELDS =                    1",
+        "TTYPE1  = 'id'", "TFORM1  = '1B'", "END",
+    ])
+    var rows = Data((0..<105).map(UInt8.init))
+    rows.append(Data(repeating: 0, count: 2880 - rows.count))
+    return DocumentSession(url: URL(fileURLWithPath: "/tmp/theia-gtk-table.fits"),
+                           file: try FITSFile(data: primary + extensionHeader + rows))
+}
+
 final class GTKDocumentWindowTests: XCTestCase {
     @MainActor func testFITSWindowHasTitleAndRenderedCanvas() async throws {
         gtk_init()
@@ -291,6 +313,39 @@ final class GTKDocumentWindowTests: XCTestCase {
             UnsafeMutablePointer<GtkButton>(OpaquePointer(window.playButton))
         )), "Pause")
         _ = session.perform(.setPlaying(false), origin: .user)
+    }
+
+    @MainActor func testTableHDUShowsPagedSharedCells() throws {
+        gtk_init()
+        let session = try gtkTableSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        XCTAssertEqual(gtk_widget_get_visible(window.tablePanel.widget), 0)
+
+        XCTAssertNil(session.perform(.selectHDU(1), origin: .user).failure)
+        XCTAssertEqual(gtk_widget_get_visible(window.tablePanel.widget), 1)
+        XCTAssertEqual(gtk_widget_get_visible(UnsafeMutablePointer<GtkWidget>(window.imageOverlay)), 0)
+        let firstGrid = try XCTUnwrap(window.tablePanel.grid)
+        let firstCell = try XCTUnwrap(gtk_grid_get_child_at(firstGrid, 1, 1))
+        XCTAssertEqual(String(cString: gtk_label_get_text(OpaquePointer(firstCell))), "0")
+        XCTAssertEqual(String(cString: gtk_label_get_text(window.tablePanel.rangeLabel)),
+                       "1–100 of 105 rows · 1 columns")
+
+        XCTAssertEqual(gtk_widget_activate(window.tablePanel.nextButton), 1)
+        let deadline = Date().addingTimeInterval(2)
+        while window.tablePanel.page == 0 && Date() < deadline {
+            _ = g_main_context_iteration(nil, 0)
+        }
+        XCTAssertEqual(window.tablePanel.page, 1)
+        let secondGrid = try XCTUnwrap(window.tablePanel.grid)
+        let secondPageFirstCell = try XCTUnwrap(gtk_grid_get_child_at(secondGrid, 1, 1))
+        XCTAssertEqual(String(cString: gtk_label_get_text(OpaquePointer(secondPageFirstCell))), "100")
+        XCTAssertEqual(String(cString: gtk_label_get_text(window.tablePanel.rangeLabel)),
+                       "101–105 of 105 rows · 1 columns")
     }
 
     @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {

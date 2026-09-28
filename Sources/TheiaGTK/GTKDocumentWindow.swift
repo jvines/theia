@@ -40,6 +40,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let widget: UnsafeMutablePointer<GtkWindow>
     let picture: OpaquePointer
     let overlayArea: OpaquePointer
+    let imageOverlay: OpaquePointer
     let hduList: OpaquePointer
     let statusLabel: OpaquePointer
     let cubeControls: UnsafeMutablePointer<GtkBox>
@@ -51,6 +52,7 @@ private final class RenderCancellation: @unchecked Sendable {
     let interaction: InteractionController
     let commandMenus: GTKCommandMenuBar
     let inspector: GTKInspectorPanel
+    let tablePanel: GTKTablePanel
     private(set) var viewButtons: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private(set) var activePathDialog: GTKPathDialog?
     private(set) var activeNumberDialog: GTKNumberDialog?
@@ -63,6 +65,7 @@ private final class RenderCancellation: @unchecked Sendable {
     private var syncingCubeControls = false
     private var framePulseSourceID: guint = 0
     private var frameDriver: SessionFrameDriver?
+    private var tableHDUIndex: Int?
     private var dragStart: SIMD2<Double>?
     private var dragButton: PointerEvent.Button = .primary
     private let overlayScene = OverlayScene()
@@ -84,8 +87,10 @@ private final class RenderCancellation: @unchecked Sendable {
         widget = UnsafeMutablePointer<GtkWindow>(OpaquePointer(gtk_application_window_new(application)!))
         commandMenus = GTKCommandMenuBar(window: widget, session: session)
         inspector = GTKInspectorPanel(session: session)
+        tablePanel = GTKTablePanel()
         picture = OpaquePointer(gtk_picture_new()!)
         overlayArea = OpaquePointer(gtk_drawing_area_new()!)
+        imageOverlay = OpaquePointer(gtk_overlay_new()!)
         hduList = OpaquePointer(gtk_list_box_new()!)
         statusLabel = OpaquePointer(gtk_label_new(session.url.path)!)
         cubeControls = UnsafeMutablePointer<GtkBox>(OpaquePointer(
@@ -151,17 +156,24 @@ private final class RenderCancellation: @unchecked Sendable {
         }
         gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(hduList), 160, -1)
         gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(hduList))
-        let imageOverlay = OpaquePointer(gtk_overlay_new()!)
         gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
         gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(imageOverlay), 1)
         gtk_overlay_set_child(imageOverlay, UnsafeMutablePointer<GtkWidget>(picture))
         gtk_overlay_add_overlay(imageOverlay, UnsafeMutablePointer<GtkWidget>(overlayArea))
         gtk_widget_set_can_target(UnsafeMutablePointer<GtkWidget>(overlayArea), 0)
-        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(imageOverlay))
+        let center = UnsafeMutablePointer<GtkBox>(OpaquePointer(
+            gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        ))
+        gtk_widget_set_hexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)), 1)
+        gtk_widget_set_vexpand(UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)), 1)
+        gtk_box_append(center, UnsafeMutablePointer<GtkWidget>(imageOverlay))
+        gtk_box_append(center, tablePanel.widget)
+        gtk_box_append(content, UnsafeMutablePointer<GtkWidget>(OpaquePointer(center)))
         gtk_box_append(content, inspector.widget)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(content)))
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(statusLabel))
         gtk_window_set_child(widget, UnsafeMutablePointer<GtkWidget>(OpaquePointer(root)))
+        refreshDisplayedContent()
         refreshCubeControls()
         if let row = gtk_list_box_get_row_at_index(hduList, gint(session.hdu)) {
             gtk_list_box_select_row(hduList, row)
@@ -200,6 +212,7 @@ private final class RenderCancellation: @unchecked Sendable {
                 if event.kind == .imageRevisionChanged { self?.refreshCubeControls() }
             case .selectionChanged:
                 self?.syncHDUSelection()
+                self?.refreshDisplayedContent()
                 self?.refreshViewButtons()
                 self?.interaction.drawMode = self?.session.mode ?? .pan
                 self?.refreshOverlay()
@@ -309,6 +322,18 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_label_set_text(planeLabel, "\(session.plane + 1) / \(count)")
         gtk_button_set_label(UnsafeMutablePointer<GtkButton>(OpaquePointer(playButton)),
                              session.playing ? "Pause" : "Play")
+    }
+
+    private func refreshDisplayedContent() {
+        guard !destroyed else { return }
+        let hdu = session.file.hdus[session.hdu]
+        let isTable = hdu.isTable
+        gtk_widget_set_visible(UnsafeMutablePointer<GtkWidget>(imageOverlay), isTable ? 0 : 1)
+        gtk_widget_set_visible(tablePanel.widget, isTable ? 1 : 0)
+        if isTable, tableHDUIndex != session.hdu {
+            tableHDUIndex = session.hdu
+            tablePanel.show(hdu: hdu)
+        }
     }
 
     private func startFramePulses() {
