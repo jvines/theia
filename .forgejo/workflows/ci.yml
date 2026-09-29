@@ -87,6 +87,8 @@ jobs:
               for sample in nicmos_mosaic.fits wfpc2_cube.fits fos_bintable.fits feros_tau_ceti_20240730.fits; do
                 test -s "$stage/share/theia/samples/$sample"
               done
+              # Only executables Theia runs or offers to the user ship in bin/.
+              test "$(ls "$stage/bin" | tr "\n" " ")" = "ffmpeg theia theia-gtk theia-remote-helper theiactl xpaget xpans xpaset "
               ci/check-package-fonts.sh "$stage"
               scripts/package_appimage.sh "$stage" "$stage.AppImage"
             '

@@ -66,8 +66,7 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
         binaries.append(destination)
         copy_dependencies(source, library_dir)
 
-    for name in ("ffmpeg", "ffprobe"):
-        shutil.copy2(Path("/usr/local/bin") / name, binary_dir / name)
+    shutil.copy2(Path("/usr/local/bin/ffmpeg"), binary_dir / "ffmpeg")
     shutil.copy2(ROOT / "scripts/theiactl", binary_dir / "theiactl")
     launcher = binary_dir / "theia"
     launcher.write_text(
