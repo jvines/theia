@@ -99,6 +99,37 @@ RUN git clone --branch 0.19.1 --depth 1 https://github.com/NixOS/patchelf.git /t
 # without fonts. Installed late to keep the cached GTK layers above.
 RUN dnf install -y dejavu-sans-mono-fonts && dnf clean all
 
+# The package reads the host's fontconfig rules, and newer distros write them
+# with syntax the 2.15 that GTK's build pulled in rejects, warning on every
+# launch. Replace it with a fontconfig as new as the newest target's rules.
+RUN git clone --branch 2.18.3 --depth 1 \
+        https://gitlab.freedesktop.org/fontconfig/fontconfig.git /tmp/fontconfig-src \
+    && test "$(git -C /tmp/fontconfig-src rev-parse HEAD)" = 0f236723a3c26bd9745e32ba2b3ee21e5f809295 \
+    && source /opt/rh/gcc-toolset-13/enable \
+    && export PATH="/root/.local/bin:$PATH" \
+    && meson setup /tmp/fontconfig-build /tmp/fontconfig-src \
+        --prefix=/usr/local --libdir=lib64 --buildtype=release \
+        -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=enabled \
+        -Dcache-build=disabled -Dxml-backend=expat \
+    && ninja -C /tmp/fontconfig-build -j 4 install \
+    && ldconfig \
+    && pkg-config --modversion fontconfig | grep -qx 2.18.3 \
+    && rm -rf /tmp/fontconfig-src /tmp/fontconfig-build
+
+# Arch's fontconfig 2.18.3 rules, linked as pacman links them, so the package
+# check can prove the bundled fontconfig reads current distro rules silently.
+RUN dnf install -y zstd && dnf clean all \
+    && curl -fLSs --retry 3 -o /tmp/fontconfig.pkg.tar.zst \
+        'https://archive.archlinux.org/packages/f/fontconfig/fontconfig-2%3A2.18.3-2-x86_64.pkg.tar.zst' \
+    && echo 'c3d961568e10d0bc035b52554333535d31853310b9b7936eedf5d026425d3adf  /tmp/fontconfig.pkg.tar.zst' \
+        | sha256sum --check --status \
+    && mkdir -p /tmp/arch-fontconfig /opt/fontconfig-rules/arch-2.18.3/conf.d \
+    && zstd -dc /tmp/fontconfig.pkg.tar.zst | tar -x -C /tmp/arch-fontconfig etc/fonts usr/share/fontconfig \
+    && cp /tmp/arch-fontconfig/etc/fonts/fonts.conf /opt/fontconfig-rules/arch-2.18.3/ \
+    && cp -L /tmp/arch-fontconfig/usr/share/fontconfig/conf.default/*.conf \
+        /opt/fontconfig-rules/arch-2.18.3/conf.d/ \
+    && rm -rf /tmp/arch-fontconfig /tmp/fontconfig.pkg.tar.zst
+
 ENV LD_LIBRARY_PATH=/usr/local/lib64:/opt/rh/gcc-toolset-13/root/usr/lib64
 ENV FONTCONFIG_FILE=/etc/fonts/fonts.conf
 ENV GSK_RENDERER=cairo
