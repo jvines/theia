@@ -8,14 +8,16 @@ stage=$(cd "$stage" && pwd)
     exit 1
 }
 architecture=$(uname -m)
+# A dated runtime release: upstream republishes "continuous", so its digest moves.
+runtime_release=20251108
 case "$architecture" in
     x86_64)
         tool_sha=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-        runtime_sha=1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf
+        runtime_sha=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
         ;;
     aarch64)
         tool_sha=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
-        runtime_sha=7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372
+        runtime_sha=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
         ;;
     *) echo "unsupported AppImage architecture: $architecture" >&2; exit 1 ;;
 esac
@@ -25,7 +27,7 @@ output=${2:-"${stage%.AppDir}.AppImage"}
 tools_dir=${APPIMAGE_TOOL_CACHE:-/tmp/theia-appimage-tools}
 mkdir -p "$tools_dir"
 tool="$tools_dir/appimagetool-1.9.1-$architecture.AppImage"
-runtime="$tools_dir/type2-runtime-$architecture"
+runtime="$tools_dir/type2-runtime-$runtime_release-$architecture"
 fetch() {
     local url=$1 target=$2 digest=$3
     if [[ ! -f "$target" ]]; then
@@ -39,7 +41,7 @@ fetch() {
 }
 fetch "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$architecture.AppImage" \
     "$tool" "$tool_sha"
-fetch "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$architecture" \
+fetch "https://github.com/AppImage/type2-runtime/releases/download/$runtime_release/runtime-$architecture" \
     "$runtime" "$runtime_sha"
 chmod +x "$tool"
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$architecture" "$tool" \
