@@ -8,6 +8,11 @@ public enum DocumentText {
         return "HDU \(index)"
     }
 
+    /// One-line HDU list entry: the extension name, else what the HDU holds.
+    public static func hduRowTitle(index: Int, hdu: FITSHDU) -> String {
+        "HDU \(index)  \(hdu.name ?? hdu.kindLabel)"
+    }
+
     public static func sidebarDetails(for hdu: FITSHDU) -> String {
         "\(hdu.kindLabel) · \(hdu.shapeDescription) · \(hdu.bitpixLabel)"
     }

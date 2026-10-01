@@ -229,8 +229,7 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(cubeControls)))
         gtk_box_append(root, commandMenus.widget)
         for (index, hdu) in session.file.hdus.enumerated() {
-            let title = hdu.name ?? (hdu.isImage ? "Image" : "Table")
-            gtk_list_box_append(hduList, gtk_label_new("HDU \(index)  \(title)"))
+            gtk_list_box_append(hduList, gtk_label_new(DocumentText.hduRowTitle(index: index, hdu: hdu)))
         }
         gtk_widget_set_size_request(UnsafeMutablePointer<GtkWidget>(hduList), 160, -1)
         // Scrolls so files with many extensions cannot make the strip tall.

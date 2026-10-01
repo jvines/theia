@@ -1363,6 +1363,12 @@ final class DocumentSessionTests: XCTestCase {
             XCTAssertEqual(DocumentText.windowSubtitle(for: session.file), "6 HDUs · 2 × 2 × 2 · uint8")
             XCTAssertEqual(DocumentText.hduLabel(index: 1, name: nil), "HDU 1")
             XCTAssertEqual(DocumentText.hduLabel(index: 2, name: "SCI"), "HDU 2 — SCI")
+            // A data-less primary is neither an image nor a table.
+            XCTAssertEqual(DocumentText.hduRowTitle(index: 0, hdu: session.file.hdus[0]),
+                           "HDU 0  primary (no data)")
+            XCTAssertEqual(DocumentText.hduRowTitle(index: 1, hdu: cube), "HDU 1  3D cube")
+            XCTAssertEqual(DocumentText.hduRowTitle(index: 4, hdu: session.file.hdus[4]),
+                           "HDU 4  bintable")
             XCTAssertEqual(DocumentText.sidebarDetails(for: cube), "3D cube · 2 × 2 × 2 · uint8")
             XCTAssertEqual(DocumentText.statusDetails(for: cube), "2 × 2 × 2 · uint8")
             XCTAssertEqual(DocumentText.pixelCoordinates(imageX: 0, imageY: 4), "(1, 5)")

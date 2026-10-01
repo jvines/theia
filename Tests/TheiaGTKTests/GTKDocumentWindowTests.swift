@@ -1330,6 +1330,13 @@ final class GTKDocumentWindowTests: XCTestCase {
             XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
             let window = GTKDocumentWindow(application: application, session: session)
             defer { gtk_window_destroy(window.widget) }
+            let rowTitle = { (index: Int) -> String? in
+                let row = gtk_list_box_get_row_at_index(window.hduList, gint(index))
+                guard let row, let label = gtk_list_box_row_get_child(row) else { return nil }
+                return String(cString: gtk_label_get_text(OpaquePointer(label)))
+            }
+            XCTAssertEqual(rowTitle(0), "HDU 0  primary (no data)")
+            XCTAssertEqual(rowTitle(1), "HDU 1  SCI")
 
             let target = session.hdu == 0 ? 1 : 0
             let row = try XCTUnwrap(gtk_list_box_get_row_at_index(window.hduList, gint(target)))
