@@ -22,6 +22,10 @@ import TheiaKit
     private var actions: [String: OpaquePointer] = [:]
     private var actionIDs: [String: String] = [:]
     private var titles: [String: String] = [:]
+    /// Shortcuts for the window's menu actions. Bubble phase, so a focused
+    /// text entry keeps keys it handles itself, such as Control+Z.
+    private let shortcuts: OpaquePointer
+    private var accelerators: [String: String] = [:]
     var onOutcome: (@MainActor (CommandOutcome) -> Void)?
     var onToolAction: (@MainActor (ToolMenuAction) -> Void)?
     var onOpen: (@MainActor () -> Void)?
@@ -35,6 +39,7 @@ import TheiaKit
         Int(g_menu_model_get_n_items(UnsafeMutablePointer<GMenuModel>(model)))
     }
     func title(for identifier: String) -> String? { titles[identifier] }
+    func accelerator(for identifier: String) -> String? { accelerators[identifier] }
     func isEnabled(_ identifier: String) -> Bool {
         guard let action = actions[identifier] else { return false }
         return g_action_get_enabled(action) != 0
@@ -54,6 +59,11 @@ import TheiaKit
         gtk_menu_button_set_label(OpaquePointer(compactButton), "☰")
         gtk_widget_set_tooltip_text(compactButton, "Menu")
         gtk_widget_set_visible(compactButton, 0)
+        let shortcutController = gtk_shortcut_controller_new()!
+        shortcuts = shortcutController
+        gtk_shortcut_controller_set_scope(shortcuts, GTK_SHORTCUT_SCOPE_LOCAL)
+        gtk_widget_add_controller(UnsafeMutablePointer<GtkWidget>(OpaquePointer(window)),
+                                  shortcutController)
         rebuild()
         observerID = session.addEventObserver { [weak self] event in
             switch event.kind {
@@ -158,7 +168,8 @@ import TheiaKit
                     if let action = actions[item.identifier] {
                         g_simple_action_set_enabled(action, item.enabled ? 1 : 0)
                     }
-                    g_menu_append(section, label, "win.\(actionName)")
+                    appendItem(section, label: label, identifier: item.identifier,
+                               name: actionName, shortcut: item.shortcut)
                 }
             }
             finishSection()
@@ -220,7 +231,8 @@ import TheiaKit
         let submenu = g_menu_new()!
         let openName = "file-open"
         installAction(identifier: "file.open", name: openName)
-        g_menu_append(submenu, "Open…", "win.\(openName)")
+        appendItem(submenu, label: "Open…", identifier: "file.open", name: openName,
+                   shortcut: GTKShortcuts.open)
         installAction(identifier: "file.openRemote", name: "file-open-remote")
         g_menu_append(submenu, "Open Remote…", "win.file-open-remote")
         let samples = BundledSamples.discover()
@@ -260,8 +272,32 @@ import TheiaKit
             g_simple_action_set_enabled(action, session.displayed == nil ? 0 : 1)
         }
         g_menu_append(submenu, "Print…", "win.file-print")
+        let quitSection = g_menu_new()!
+        installAction(identifier: "file.quit", name: "file-quit")
+        appendItem(quitSection, label: "Quit", identifier: "file.quit", name: "file-quit",
+                   shortcut: GTKShortcuts.quit)
+        g_menu_append_section(submenu, nil, UnsafeMutablePointer<GMenuModel>(quitSection))
+        g_object_unref(UnsafeMutableRawPointer(quitSection))
         g_menu_append_submenu(model, "File", UnsafeMutablePointer<GMenuModel>(submenu))
         g_object_unref(UnsafeMutableRawPointer(submenu))
+    }
+
+    /// Appends a menu entry for `win.<name>`, showing and binding its shortcut.
+    private func appendItem(_ menu: OpaquePointer, label: String, identifier: String,
+                            name: String, shortcut: CommandShortcut?) {
+        let item = g_menu_item_new(label, "win.\(name)")!
+        if let shortcut {
+            let trigger = GTKShortcuts.trigger(for: shortcut)
+            g_menu_item_set_attribute_value(item, "accel", g_variant_new_string(trigger))
+            if accelerators[identifier] == nil, let parsed = gtk_shortcut_trigger_parse_string(trigger) {
+                accelerators[identifier] = trigger
+                gtk_shortcut_controller_add_shortcut(
+                    shortcuts, gtk_shortcut_new(parsed, gtk_named_action_new("win.\(name)"))
+                )
+            }
+        }
+        g_menu_append_item(menu, item)
+        g_object_unref(UnsafeMutableRawPointer(item))
     }
 
     private func appendToolsMenu() {
@@ -335,6 +371,8 @@ import TheiaKit
                     menu.onSettings?()
                 } else if identifier == "file.print" {
                     menu.onPrint?()
+                } else if identifier == "file.quit" {
+                    menu.onWorkspaceCommand?(.quit)
                 } else if let url = menu.recentURLs[identifier] {
                     menu.onOpenRecent?(url)
                 } else if let url = menu.sampleURLs[identifier] {

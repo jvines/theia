@@ -1090,6 +1090,58 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(session.plane, 1)
     }
 
+    @MainActor func testKeyboardShortcutsReachFileAndCatalogActions() throws {
+        gtk_init()
+        let session = try gtkCubeSession()
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        var opens = 0
+        var quits = 0
+        let window = GTKDocumentWindow(
+            application: application, session: session,
+            onOpen: { _ in opens += 1 },
+            onWorkspaceCommand: { command in if case .quit = command { quits += 1 } }
+        )
+        defer { gtk_window_destroy(window.widget) }
+        window.present()
+        let id = try documentWindowID(matching: "theia-gtk-cube.fits — Theia")
+        XCTAssertEqual(gtk_widget_grab_focus(UnsafeMutablePointer<GtkWidget>(window.picture)), 1)
+        func press(_ keys: String, until done: () -> Bool) throws {
+            let key = Process()
+            key.executableURL = URL(fileURLWithPath: "/usr/bin/xdotool")
+            key.arguments = ["windowfocus", id, "key", keys]
+            try key.run()
+            let deadline = Date().addingTimeInterval(2)
+            while (key.isRunning || !done()) && Date() < deadline {
+                _ = g_main_context_iteration(nil, 0)
+            }
+            key.waitUntilExit()
+            XCTAssertEqual(key.terminationStatus, 0)
+        }
+
+        try press("ctrl+o") { opens > 0 }
+        XCTAssertEqual(opens, 1)
+        try press("ctrl+q") { quits > 0 }
+        XCTAssertEqual(quits, 1)
+        session.view.transform.scale = 3
+        try press("ctrl+1") { session.view.transform.scale == 1 }
+        XCTAssertEqual(session.view.transform.scale, 1)
+        // The menus show the same accelerators.
+        XCTAssertEqual(window.commandMenus.accelerator(for: "file.open"), "<Control>o")
+        XCTAssertEqual(window.commandMenus.accelerator(for: "file.quit"), "<Control>q")
+        XCTAssertEqual(window.commandMenus.accelerator(for: "view.zoomIn"), "<Control>equal")
+        XCTAssertEqual(window.commandMenus.accelerator(for: "region.redo"), "<Control><Shift>z")
+    }
+
+    func testCommandShortcutsBecomeGTKTriggers() {
+        XCTAssertEqual(GTKShortcuts.trigger(for: CommandShortcut(key: "0")), "<Control>0")
+        XCTAssertEqual(GTKShortcuts.trigger(for: CommandShortcut(key: "=")), "<Control>equal")
+        XCTAssertEqual(GTKShortcuts.trigger(for: CommandShortcut(key: "-")), "<Control>minus")
+        XCTAssertEqual(GTKShortcuts.trigger(for: CommandShortcut(key: "z", shift: true)),
+                       "<Control><Shift>z")
+    }
+
     @MainActor func testRegionSaveAndLoadEffectsCompleteOffMainThread() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(
