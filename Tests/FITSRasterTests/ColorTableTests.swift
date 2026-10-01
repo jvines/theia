@@ -3,8 +3,25 @@ import FITSCore
 @testable import FITSRaster
 
 final class ColorTableTests: XCTestCase {
-    func testAllMapsUseSmallestPowerOfTwoWithOneLSBError() {
-        for map in ColorMap.allCases {
+    func testSteppedMapsKeepEveryBandAtItsDS9Position() {
+        for map in ColorMap.allCases where map.hasDiscontinuities {
+            let table = ColorTable(map: map)
+            XCTAssertEqual(table.entries.count, ColorTable.steppedMapSize, "\(map)")
+            // Away from the steps the table is exact; a step lands within
+            // half an entry of the map's position.
+            let step = 1 / Float(table.entries.count - 1)
+            for i in 0...16384 {
+                let t = Float(i) / 16384
+                let before = RGBA8(map.sample(max(0, t - step)))
+                let after = RGBA8(map.sample(min(1, t + step)))
+                guard before == after else { continue }
+                XCTAssertEqual(table.color(for: t), RGBA8(map.sample(t)), "\(map) t=\(t)")
+            }
+        }
+    }
+
+    func testSmoothMapsUseSmallestPowerOfTwoWithOneLSBError() {
+        for map in ColorMap.allCases where !map.hasDiscontinuities {
             let table = ColorTable(map: map)
             XCTAssertGreaterThanOrEqual(table.entries.count, 2)
             XCTAssertEqual(table.entries.count & (table.entries.count - 1), 0)

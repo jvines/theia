@@ -1,4 +1,5 @@
 import FITSCore
+import Foundation
 
 @frozen public struct RGBA8: Sendable, Equatable {
     public var r: UInt8
@@ -27,30 +28,30 @@ import FITSCore
 public struct ColorTable: Sendable {
     public let entries: [RGBA8]
 
+    /// Entries for maps with hard steps: a step lands within half an entry,
+    /// 1/8190 of the range, of where the map puts it.
+    public static let steppedMapSize = 4096
+    /// Largest table a smooth map gets, however steep its ramps.
+    public static let maximumSize = 16_384
+
     public static func cached(_ map: ColorMap) -> ColorTable {
-        switch map {
-        case .gray: return gray
-        case .invertedGray: return invertedGray
-        case .viridis: return viridis
-        case .magma: return magma
-        case .plasma: return plasma
-        }
+        TableCache.shared.table(for: map)
     }
 
-    private static let gray = ColorTable(map: .gray)
-    private static let invertedGray = ColorTable(map: .invertedGray)
-    private static let viridis = ColorTable(map: .viridis)
-    private static let magma = ColorTable(map: .magma)
-    private static let plasma = ColorTable(map: .plasma)
-
     public init(map: ColorMap) {
+        if map.hasDiscontinuities {
+            let size = Self.steppedMapSize
+            entries = (0..<size).map { RGBA8(map.sample(Float($0) / Float(size - 1))) }
+            return
+        }
         let reference = (0...65_536).map { RGBA8(map.sample(Float($0) / 65_536)) }
         var size = 2
         while true {
             let entries = (0..<size).map { RGBA8(map.sample(Float($0) / Float(size - 1))) }
-            if Self.adjacentWithinOneLSB(entries),
-               Self.uniformSweepWithinOneLSB(entries, reference),
-               Self.intervalSweepWithinOneLSB(entries, map: map) {
+            if size >= Self.maximumSize
+                || (Self.adjacentWithinOneLSB(entries)
+                    && Self.uniformSweepWithinOneLSB(entries, reference)
+                    && Self.intervalSweepWithinOneLSB(entries, map: map)) {
                 self.entries = entries
                 return
             }
@@ -100,5 +101,21 @@ public struct ColorTable: Sendable {
         abs(Int(a.g) - Int(b.g)) <= 1 &&
         abs(Int(a.b) - Int(b.b)) <= 1 &&
         abs(Int(a.a) - Int(b.a)) <= 1
+    }
+}
+
+/// Builds each map's table on first use; the renderers share it afterwards.
+private final class TableCache: @unchecked Sendable {
+    static let shared = TableCache()
+    private let lock = NSLock()
+    private var tables: [ColorMap: ColorTable] = [:]
+
+    func table(for map: ColorMap) -> ColorTable {
+        lock.lock()
+        defer { lock.unlock() }
+        if let table = tables[map] { return table }
+        let table = ColorTable(map: map)
+        tables[map] = table
+        return table
     }
 }

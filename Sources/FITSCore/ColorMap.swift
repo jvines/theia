@@ -9,12 +9,18 @@ import simd
 /// polynomial fits to matplotlib's listed colormaps, which their authors dedicated
 /// to the public domain (CC0). Max error vs the reference data is < 1% per channel —
 /// ample for an 8-bit display LUT.
+///
+/// The rest are SAOImage DS9's built-in maps under DS9's names, in DS9's menu
+/// order (DS9's grey is `gray`); see `DS9ColorMaps`.
 public enum ColorMap: String, CaseIterable, Sendable {
     case gray
     case invertedGray
     case viridis
     case magma
     case plasma
+    case red, green, blue
+    case a, b, bb, he, i8, aips0, sls, hsv
+    case heat, cool, rainbow, standard, staircase, color
 
     public var label: String {
         switch self {
@@ -23,6 +29,18 @@ public enum ColorMap: String, CaseIterable, Sendable {
         case .viridis: return "Viridis"
         case .magma: return "Magma"
         case .plasma: return "Plasma"
+        case .bb, .he, .i8, .sls, .hsv: return rawValue.uppercased()
+        case .aips0: return "AIPS0"
+        default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+        }
+    }
+
+    /// True for maps with hard steps (DS9's tables, and `standard`), which a
+    /// display table must sample finely instead of interpolating smoothly.
+    public var hasDiscontinuities: Bool {
+        switch self {
+        case .i8, .aips0, .sls, .hsv, .staircase, .color, .standard: return true
+        default: return false
         }
     }
 
@@ -48,6 +66,23 @@ public enum ColorMap: String, CaseIterable, Sendable {
             return clamp(magma(x), 0, 1)
         case .plasma:
             return clamp(plasma(x), 0, 1)
+        case .red: return DS9ColorMaps.sample(DS9ColorMaps.red, at: x)
+        case .green: return DS9ColorMaps.sample(DS9ColorMaps.green, at: x)
+        case .blue: return DS9ColorMaps.sample(DS9ColorMaps.blue, at: x)
+        case .a: return DS9ColorMaps.sample(DS9ColorMaps.a, at: x)
+        case .b: return DS9ColorMaps.sample(DS9ColorMaps.b, at: x)
+        case .bb: return DS9ColorMaps.sample(DS9ColorMaps.bb, at: x)
+        case .he: return DS9ColorMaps.sample(DS9ColorMaps.he, at: x)
+        case .heat: return DS9ColorMaps.sample(DS9ColorMaps.heat, at: x)
+        case .cool: return DS9ColorMaps.sample(DS9ColorMaps.cool, at: x)
+        case .rainbow: return DS9ColorMaps.sample(DS9ColorMaps.rainbow, at: x)
+        case .standard: return DS9ColorMaps.sample(DS9ColorMaps.standard, at: x)
+        case .i8: return DS9ColorMaps.sample(DS9ColorMaps.i8, at: x)
+        case .aips0: return DS9ColorMaps.sample(DS9ColorMaps.aips0, at: x)
+        case .sls: return DS9ColorMaps.sample(DS9ColorMaps.sls, at: x)
+        case .hsv: return DS9ColorMaps.sample(DS9ColorMaps.hsv, at: x)
+        case .staircase: return DS9ColorMaps.sample(DS9ColorMaps.staircase, at: x)
+        case .color: return DS9ColorMaps.sample(DS9ColorMaps.color, at: x)
         }
     }
 

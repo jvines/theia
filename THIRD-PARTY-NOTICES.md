@@ -50,6 +50,33 @@ Copyright (c) 2014–2016 Smithsonian Institution. Licensed under the **MIT Lice
 
 Full text: [`Sources/CXPA/XPA-LICENSE.txt`](Sources/CXPA/XPA-LICENSE.txt).
 
+## DS9 colour maps — `Sources/FITSCore/DS9ColorMaps.swift`
+
+The definitions of SAOImage DS9's built-in colour maps (red, green, blue, a, b,
+bb, he, i8, aips0, sls, hsv, heat, cool, rainbow, standard, staircase, color)
+are taken from [JS9](https://github.com/ericmandel/js9) by Eric Mandel, whose
+values match DS9's own. They are not taken from DS9, which is GPL-licensed.
+
+Copyright (c) 2014-2016 Smithsonian Institution. Licensed under the **MIT License**:
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in
+> all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+> THE SOFTWARE.
+
 ## FFmpeg and libx264 — Linux package
 
 The Linux package contains a separate static FFmpeg 9.0 executable with libx264
