@@ -34,6 +34,8 @@ final class GTKScriptingServerTests: XCTestCase {
             XCTAssertTrue(try request("GET", "/document/0/info").contains("\"colormap\":\"gray\""))
             XCTAssertTrue(try request("POST", "/open", body: openBody).contains("\"id\":0"))
             XCTAssertEqual(controller.documentWindowCount, 1)
+            XCTAssertTrue(try request("POST", "/open", body: "{\"path\":\"/nonexistent.fits\"}")
+                .hasPrefix("HTTP/1.1 404"))
 
             XCTAssertTrue(try request("POST", "/document/0/regions", body: "image\npoint(1,1)").contains("\"n\":1"))
             XCTAssertTrue(try request("GET", "/document/0/regions").contains("point(1, 1)"))

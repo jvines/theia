@@ -107,7 +107,8 @@ import TheiaKit
         do {
             window = try controller.open(path: path)
         } catch {
-            return httpResponse(500, json: ["error": "failed to open: \(error.localizedDescription)"])
+            let failure = ScriptingHTTPRouter.openFailure(error)
+            return httpResponse(failure.status, json: ["error": failure.message])
         }
         let session = window.session
         session.withEventContext(origin: .script) {

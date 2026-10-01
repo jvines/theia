@@ -108,4 +108,17 @@ final class ScriptingHTTPTests: XCTestCase {
         XCTAssertNil(ScriptingHTTPRouter.finiteLevel(1e40))
         XCTAssertEqual(ScriptingHTTPRouter.finiteLevel(42), 42)
     }
+
+    func testOpeningAMissingFileIsNotFoundRatherThanAServerError() throws {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString).fits")
+        XCTAssertThrowsError(try Data(contentsOf: missing)) { error in
+            XCTAssertEqual(ScriptingHTTPRouter.openFailure(error).status, 404)
+        }
+        XCTAssertEqual(ScriptingHTTPRouter.openFailure(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))
+        ).status, 404)
+        XCTAssertEqual(ScriptingHTTPRouter.openFailure(CocoaError(.fileReadCorruptFile)).status, 500)
+        XCTAssertTrue(ScriptingHTTPRouter.openFailure(CocoaError(.fileReadNoSuchFile))
+            .message.hasPrefix("failed to open: "))
+    }
 }

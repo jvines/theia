@@ -170,7 +170,8 @@ final class ScriptingServer {
             }
             controller = opened
         } catch {
-            return httpResponse(500, json: ["error": "failed to open: \(error.localizedDescription)"])
+            let failure = ScriptingHTTPRouter.openFailure(error)
+            return httpResponse(failure.status, json: ["error": failure.message])
         }
         // Optional params
         let session = controller.documentModel.session

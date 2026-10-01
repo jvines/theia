@@ -120,6 +120,17 @@ public enum ScriptingHTTPRouter {
         return level.isFinite ? level : nil
     }
 
+    /// The response to a failed POST /open: a path that does not exist is the
+    /// client's mistake (404); anything else is still reported as 500.
+    public static func openFailure(_ error: Error) -> ScriptingHTTPFailure {
+        let message = "failed to open: \(error.localizedDescription)"
+        let nsError = error as NSError
+        let missing = (nsError.domain == NSCocoaErrorDomain
+                        && nsError.code == CocoaError.fileReadNoSuchFile.rawValue)
+            || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
+        return .init(status: missing ? 404 : 500, message: message)
+    }
+
     public static let routeTable: [ScriptingRouteDescriptor] = [
         .init(method: "GET", path: "/status", summary: "→ {version, beta, open: [{id, path}]}", target: .status),
         .init(method: "POST", path: "/open", summary: "body: {path, stretch?, colormap?, vmin?, vmax?, zscale?} → {id}", target: .open),
