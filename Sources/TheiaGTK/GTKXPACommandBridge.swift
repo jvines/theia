@@ -9,7 +9,7 @@ final class GTKXPACommandBridge: XPAServerDelegate {
 
     init(controller: GTKApplicationController) { self.controller = controller }
 
-    func xpaGet(command: String, params: String) -> String? {
+    func xpaGet(command: String, params: String) -> Result<String, XPACommandError> {
         MainActor.assumeIsolated {
             let snapshot = frontWindow().map { window in
                 XPADocumentSnapshot(
@@ -17,26 +17,42 @@ final class GTKXPACommandBridge: XPAServerDelegate {
                     path: window.session.url.path,
                     stretch: window.session.view.stretch,
                     colorMap: window.session.view.colorMap,
-                    regions: window.session.regions
+                    regions: window.session.regions,
+                    zscaleContrast: window.session.zscaleContrastSetting
                 )
             }
             return XPACommandMapper.get(command: command, params: params, document: snapshot)
+                .mapError { XPACommandError($0.message) }
         }
     }
 
-    func xpaSet(command: String, params: String, data: Data?) -> Bool {
+    func xpaSet(command: String, params: String, data: Data?) -> Result<Void, XPACommandError> {
         MainActor.assumeIsolated {
-            guard let action = XPACommandMapper.set(command: command, params: params, data: data),
-                  let controller else { return false }
+            let action: XPAAction
+            switch XPACommandMapper.set(command: command, params: params, data: data) {
+            case .success(let parsed): action = parsed
+            case .failure(let error): return .failure(XPACommandError(error.message))
+            }
+            guard let controller else { return .failure(XPACommandError("Theia is shutting down")) }
             switch action {
             case .openFile(let path):
-                return (try? controller.open(path: path)) != nil
+                do {
+                    _ = try controller.open(path: path)
+                    return .success(())
+                } catch {
+                    return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))
+                }
             case .session(let command):
-                guard let session = frontWindow()?.session else { return false }
-                return session.perform(command, origin: .script).failure == nil
+                guard let session = frontWindow()?.session else {
+                    return .failure(XPACommandError("no image is open"))
+                }
+                if let failure = session.perform(command, origin: .script).failure {
+                    return .failure(XPACommandError(failure.message))
+                }
+                return .success(())
             case .quit:
                 controller.scheduleQuitForXPA()
-                return true
+                return .success(())
             }
         }
     }

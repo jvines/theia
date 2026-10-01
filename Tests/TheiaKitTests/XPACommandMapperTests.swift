@@ -4,56 +4,94 @@ import FITSCore
 @testable import TheiaKit
 
 final class XPACommandMapperTests: XCTestCase {
+    private func failure<T>(_ result: Result<T, XPARequestError>) -> String? {
+        if case .failure(let error) = result { return error.message }
+        return nil
+    }
+
     func testGetUsesDocumentSnapshotAndDS9Names() {
         let snapshot = XPADocumentSnapshot(id: 4, path: "/data/star.fits",
                                            stretch: .power, colorMap: .gray,
                                            regions: [])
         XCTAssertEqual(XPACommandMapper.get(command: "version", document: nil),
-                       "Theia \(AppVersion.string)")
-        XCTAssertEqual(XPACommandMapper.get(command: "frame", document: snapshot), "5")
-        XCTAssertEqual(XPACommandMapper.get(command: "file", document: snapshot), "/data/star.fits")
-        XCTAssertEqual(XPACommandMapper.get(command: "scale", document: snapshot), "pow")
-        XCTAssertEqual(XPACommandMapper.get(command: "cmap", document: snapshot), "gray")
-        XCTAssertEqual(XPACommandMapper.get(command: "regions", document: snapshot), "")
-        XCTAssertNil(XPACommandMapper.get(command: "zoom", document: snapshot))
-        XCTAssertEqual(XPACommandMapper.get(command: "frame", document: nil), "0")
+                       .success("Theia \(AppVersion.string)"))
+        XCTAssertEqual(XPACommandMapper.get(command: "frame", document: snapshot), .success("5"))
+        XCTAssertEqual(XPACommandMapper.get(command: "file", document: snapshot), .success("/data/star.fits"))
+        XCTAssertEqual(XPACommandMapper.get(command: "scale", document: snapshot), .success("pow"))
+        XCTAssertEqual(XPACommandMapper.get(command: "cmap", document: snapshot), .success("gray"))
+        XCTAssertEqual(XPACommandMapper.get(command: "regions", document: snapshot), .success(""))
+        XCTAssertNotNil(failure(XPACommandMapper.get(command: "zoom", document: snapshot)))
+        XCTAssertEqual(XPACommandMapper.get(command: "frame", document: nil), .success("0"))
+        XCTAssertEqual(failure(XPACommandMapper.get(command: "file", document: nil)), "no image is open")
+    }
+
+    func testZscaleGetAnswersDS9sParameters() {
+        let snapshot = XPADocumentSnapshot(id: 0, path: "/data/star.fits", stretch: .linear,
+                                           colorMap: .gray, regions: [], zscaleContrast: 0.4)
+        XCTAssertEqual(XPACommandMapper.get(command: "zscale", document: snapshot), .success("0.4"))
+        XCTAssertEqual(XPACommandMapper.get(command: "zscale", params: "contrast", document: snapshot),
+                       .success("0.4"))
+        XCTAssertEqual(XPACommandMapper.get(command: "zscale", params: "sample", document: snapshot),
+                       .success("600"))
+        XCTAssertEqual(XPACommandMapper.get(command: "zscale", document: nil), .success("0.25"))
+        XCTAssertNotNil(failure(XPACommandMapper.get(command: "zscale", params: "line", document: snapshot)))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "zscale", params: "contrast 0.5", data: nil)))
+        XCTAssertEqual(XPACommandMapper.set(command: "zscale", params: "", data: nil),
+                       .success(.session(.applyScalePreset(.zscale))))
     }
 
     func testScaleSetMapsPresetsAndRejectsUnsupportedModes() {
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "mode minmax", data: nil),
-                       .session(.applyScalePreset(.minMax)))
+                       .success(.session(.applyScalePreset(.minMax))))
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "mode 99.5", data: nil),
-                       .session(.applyScalePreset(.percentile(lower: 0.25, upper: 99.75))))
+                       .success(.session(.applyScalePreset(.percentile(lower: 0.25, upper: 99.75)))))
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "histequal", data: nil),
-                       .session(.setStretch(.histogramEq)))
+                       .success(.session(.setStretch(.histogramEq))))
         // DS9's own keywords.
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "histequ", data: nil),
-                       .session(.setStretch(.histogramEq)))
+                       .success(.session(.setStretch(.histogramEq))))
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "sinh", data: nil),
-                       .session(.setStretch(.sinh)))
+                       .success(.session(.setStretch(.sinh))))
         for (stretch, name) in [(ImageStretch.histogramEq, "histequ"), (.sinh, "sinh")] {
             let snapshot = XPADocumentSnapshot(id: 0, path: "/data/star.fits", stretch: stretch,
                                                colorMap: .gray, regions: [])
-            XCTAssertEqual(XPACommandMapper.get(command: "scale", document: snapshot), name)
+            XCTAssertEqual(XPACommandMapper.get(command: "scale", document: snapshot), .success(name))
         }
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "limits 1 20", data: nil),
-                       .session(.setLevels(min: 1, max: 20)))
-        XCTAssertNil(XPACommandMapper.set(command: "scale", params: "mode bogus", data: nil))
-        XCTAssertNil(XPACommandMapper.set(command: "scale", params: "mode nan", data: nil))
-        XCTAssertNil(XPACommandMapper.set(command: "scale", params: "limits 1", data: nil))
-        XCTAssertNil(XPACommandMapper.set(command: "scale", params: "limits 1e40 20", data: nil))
+                       .success(.session(.setLevels(min: 1, max: 20))))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "scale", params: "mode bogus", data: nil)))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "scale", params: "mode nan", data: nil)))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "scale", params: "limits 1", data: nil)))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "scale", params: "limits 1e40 20", data: nil)))
+        XCTAssertTrue(failure(XPACommandMapper.set(command: "scale", params: "cubic", data: nil))?
+            .contains("histequ") == true)
+    }
+
+    func testColormapNamesMatchDS9sCaseInsensitively() {
+        for (name, map) in [("heat", ColorMap.heat), ("HEAT", .heat), ("Cool", .cool),
+                            ("bb", .bb), ("i8", .i8), ("aips0", .aips0), ("sls", .sls),
+                            ("hsv", .hsv), ("rainbow", .rainbow), ("a", .a), ("grey", .gray),
+                            ("Gray", .gray), ("invertedgray", .invertedGray),
+                            ("invertedGray", .invertedGray), ("Viridis", .viridis)] {
+            XCTAssertEqual(XPACommandMapper.set(command: "cmap", params: name, data: nil),
+                           .success(.session(.setColormap(map))), name)
+        }
+        let message = failure(XPACommandMapper.set(command: "cmap", params: "doesnotexist", data: nil))
+        XCTAssertEqual(message, "unknown colour map 'doesnotexist'; valid: "
+            + XPACommandMapper.colorMapNames.joined(separator: " "))
+        XCTAssertTrue(XPACommandMapper.colorMapNames.contains("heat"))
+        XCTAssertTrue(XPACommandMapper.colorMapNames.contains("invertedgray"))
     }
 
     func testFileRegionsColormapAndQuitMapWithoutPlatformCode() {
         XCTAssertEqual(XPACommandMapper.set(command: "file", params: "", data: Data("/tmp/a.fits".utf8)),
-                       .openFile("/tmp/a.fits"))
-        XCTAssertEqual(XPACommandMapper.set(command: "cmap", params: "grey", data: nil),
-                       .session(.setColormap(.gray)))
+                       .success(.openFile("/tmp/a.fits")))
         XCTAssertEqual(XPACommandMapper.set(command: "regions", params: "", data: Data("image\n".utf8)),
-                       .session(.replaceRegions([])))
-        XCTAssertEqual(XPACommandMapper.set(command: "quit", params: "", data: nil), .quit)
-        XCTAssertNil(XPACommandMapper.set(command: "file", params: "", data: nil))
-        XCTAssertNil(XPACommandMapper.set(command: "cmap", params: "doesnotexist", data: nil))
-        XCTAssertNil(XPACommandMapper.set(command: "zoom", params: "2", data: nil))
+                       .success(.session(.replaceRegions([]))))
+        XCTAssertEqual(XPACommandMapper.set(command: "quit", params: "", data: nil), .success(.quit))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "file", params: "", data: nil)))
+        XCTAssertNotNil(failure(XPACommandMapper.set(command: "zoom", params: "2", data: nil)))
+        XCTAssertTrue(failure(XPACommandMapper.set(command: "regions", params: "nonsense", data: nil))?
+            .hasPrefix("regions: ") == true)
     }
 }

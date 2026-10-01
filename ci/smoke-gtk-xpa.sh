@@ -42,6 +42,16 @@ stretch=$(timeout 5 xpaget ds9 scale)
 [[ "$stretch" == log ]] || { echo "XPA scale is $stretch" >&2; exit 1; }
 frame=$(timeout 5 xpaget ds9 frame)
 [[ "$frame" == 1 ]] || { echo "XPA frame is $frame" >&2; exit 1; }
+timeout 5 xpaset -p ds9 cmap HEAT || { cat "$log" >&2; exit 1; }
+cmap=$(timeout 5 xpaget ds9 cmap)
+[[ "$cmap" == heat ]] || { echo "XPA cmap is $cmap" >&2; exit 1; }
+if reply=$(timeout 5 xpaset -p ds9 cmap bogus 2>&1); then
+    echo 'XPA accepted an unknown colour map' >&2
+    exit 1
+fi
+[[ "$reply" == *"valid: "*heat* ]] || { echo "XPA cmap error lacks the valid names: $reply" >&2; exit 1; }
+contrast=$(timeout 5 xpaget ds9 zscale contrast)
+[[ "$contrast" == 0.25 ]] || { echo "XPA zscale contrast is $contrast" >&2; exit 1; }
 
 timeout 5 xpaset -p ds9 exit || { cat "$log" >&2; exit 1; }
 for _ in $(seq 1 100); do

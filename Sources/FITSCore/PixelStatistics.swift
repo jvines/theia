@@ -54,10 +54,13 @@ public enum PixelStatistics {
     ///   - values: pixel values (NaN entries are ignored).
     ///   - contrast: lower values produce a wider range; IRAF default is 0.25.
     ///   - nSamples: target number of pixels to sample from the image.
+    /// Pixels zscale samples by default, as IRAF and DS9 do.
+    public static let zscaleSampleCount = 600
+
     public static func zscale(
         _ values: [Double],
         contrast: Double = 0.25,
-        nSamples: Int = 600,
+        nSamples: Int = zscaleSampleCount,
         maxIters: Int = 5,
         rejectionSigma: Double = 2.5
     ) -> (z1: Double, z2: Double)? {
@@ -72,7 +75,7 @@ public enum PixelStatistics {
     public static func zscaleSampled(
         pixelCount: Int,
         contrast: Double = 0.25,
-        nSamples: Int = 600,
+        nSamples: Int = zscaleSampleCount,
         maxIters: Int = 5,
         rejectionSigma: Double = 2.5,
         sampleAt: (Int) -> Double

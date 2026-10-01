@@ -255,6 +255,11 @@ public struct HDUFacts {
         return facts[hdu].wcs(variant: sourceWCSVariant)
     }
 
+    /// The zscale contrast this session uses, from the app's preference.
+    public var zscaleContrastSetting: Double {
+        PreferenceKeys.ZScaleContrast.normalize(zscaleContrast())
+    }
+
     /// The default levels for a newly displayed image. Zscale reads at most 600
     /// source pixels; a full finite scan is only needed if that sample is empty.
     public static func recommendedLevels(for image: FITSImage, contrast: Double = 0.25) -> RasterLevels {

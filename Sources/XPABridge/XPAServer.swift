@@ -1,13 +1,20 @@
 import CXPA
 import Foundation
 
+/// Why an XPA command failed. The client prints the message after `XPA$ERROR`.
+public struct XPACommandError: Error, Equatable, Sendable {
+    public let message: String
+
+    public init(_ message: String) { self.message = message }
+}
+
 /// Host hook for XPA commands. Implemented by the app; called on the main queue
 /// (the server polls there), so implementations may touch main-actor app state.
 public protocol XPAServerDelegate: AnyObject {
-    /// Handle `xpaget <command> <params>`. Return reply text, or nil for an error.
-    func xpaGet(command: String, params: String) -> String?
-    /// Handle `xpaset <command> <params>` with optional stdin `data`. Return success.
-    func xpaSet(command: String, params: String, data: Data?) -> Bool
+    /// Handle `xpaget <command> <params>`: the reply text, or why there is none.
+    func xpaGet(command: String, params: String) -> Result<String, XPACommandError>
+    /// Handle `xpaset <command> <params>` with optional stdin `data`.
+    func xpaSet(command: String, params: String, data: Data?) -> Result<Void, XPACommandError>
 }
 
 /// Registers DS9-compatible XPA access points (via libxpa) and dispatches their
@@ -78,11 +85,11 @@ public final class XPAServer {
     }
 
     // Called from the C trampolines (on the polling/main queue).
-    fileprivate func handleGet(command: String, params: String) -> String? {
-        delegate?.xpaGet(command: command, params: params)
+    fileprivate func handleGet(command: String, params: String) -> Result<String, XPACommandError> {
+        delegate?.xpaGet(command: command, params: params) ?? .failure(XPACommandError("Theia is shutting down"))
     }
-    fileprivate func handleSet(command: String, params: String, data: Data?) -> Bool {
-        delegate?.xpaSet(command: command, params: params, data: data) ?? false
+    fileprivate func handleSet(command: String, params: String, data: Data?) -> Result<Void, XPACommandError> {
+        delegate?.xpaSet(command: command, params: params, data: data) ?? .failure(XPACommandError("Theia is shutting down"))
     }
 }
 
@@ -108,7 +115,12 @@ func xpaSendTrampoline(_ clientData: UnsafeMutableRawPointer?,
     guard let clientData else { return -1 }
     let ctx = Unmanaged<XPACommandContext>.fromOpaque(clientData).takeUnretainedValue()
     let params = paramlist.map { String(cString: $0) } ?? ""
-    guard let server = ctx.server, let reply = server.handleGet(command: ctx.command, params: params) else {
+    guard let server = ctx.server else { return -1 }
+    let reply: String
+    switch server.handleGet(command: ctx.command, params: params) {
+    case .success(let text): reply = text
+    case .failure(let error):
+        report(error, to: callData)
         return -1
     }
     let bytes = Array(reply.utf8)
@@ -132,5 +144,19 @@ func xpaReceiveTrampoline(_ clientData: UnsafeMutableRawPointer?,
     let params = paramlist.map { String(cString: $0) } ?? ""
     let data: Data? = (buf != nil && len > 0) ? Data(bytes: buf!, count: len) : nil
     guard let server = ctx.server else { return -1 }
-    return server.handleSet(command: ctx.command, params: params, data: data) ? 0 : -1
+    switch server.handleSet(command: ctx.command, params: params, data: data) {
+    case .success: return 0
+    case .failure(let error):
+        report(error, to: callData)
+        return -1
+    }
+}
+
+/// Sends the failure text to the client. libxpa passes the access point as
+/// `call_data`; without a message the client only sees libxpa's generic
+/// "error detected in ... callback routine".
+private func report(_ error: XPACommandError, to callData: UnsafeMutableRawPointer?) {
+    guard let callData else { return }
+    let xpa = callData.assumingMemoryBound(to: xparec.self)
+    _ = error.message.withCString { XPAError(xpa, UnsafeMutablePointer(mutating: $0)) }
 }

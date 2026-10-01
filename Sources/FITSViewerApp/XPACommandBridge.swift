@@ -5,7 +5,7 @@ import TheiaKit
 
 /// Connects libxpa callbacks to the shared DS9 command mapping.
 final class XPACommandBridge: XPAServerDelegate {
-    func xpaGet(command: String, params: String) -> String? {
+    func xpaGet(command: String, params: String) -> Result<String, XPACommandError> {
         MainActor.assumeIsolated {
             let snapshot = frontController().map { controller in
                 let session = controller.documentModel.session
@@ -14,32 +14,46 @@ final class XPACommandBridge: XPAServerDelegate {
                     path: controller.documentModel.url.path,
                     stretch: session.view.stretch,
                     colorMap: session.view.colorMap,
-                    regions: session.regions
+                    regions: session.regions,
+                    zscaleContrast: session.zscaleContrastSetting
                 )
             }
             return XPACommandMapper.get(command: command, params: params, document: snapshot)
+                .mapError { XPACommandError($0.message) }
         }
     }
 
-    func xpaSet(command: String, params: String, data: Data?) -> Bool {
+    func xpaSet(command: String, params: String, data: Data?) -> Result<Void, XPACommandError> {
         MainActor.assumeIsolated {
-            guard let action = XPACommandMapper.set(command: command, params: params, data: data)
-            else { return false }
+            let action: XPAAction
+            switch XPACommandMapper.set(command: command, params: params, data: data) {
+            case .success(let parsed): action = parsed
+            case .failure(let error): return .failure(XPACommandError(error.message))
+            }
+            guard let app = AppDelegate.shared else {
+                return .failure(XPACommandError("Theia is not ready"))
+            }
             switch action {
             case .openFile(let path):
-                guard let app = AppDelegate.shared else { return false }
                 do {
                     try app.openDocumentThrowing(at: URL(fileURLWithPath: path))
-                    return true
+                    return .success(())
                 } catch {
-                    return false
+                    return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))
                 }
             case .session(let command):
-                guard let session = frontController()?.documentModel.session else { return false }
-                return session.perform(command, origin: .script).failure == nil
+                guard let session = frontController()?.documentModel.session else {
+                    return .failure(XPACommandError("no image is open"))
+                }
+                if let failure = session.perform(command, origin: .script).failure {
+                    return .failure(XPACommandError(failure.message))
+                }
+                return .success(())
             case .quit:
-                guard let app = AppDelegate.shared else { return false }
-                return app.performWorkspaceCommand(.quit, origin: .script).failure == nil
+                if let failure = app.performWorkspaceCommand(.quit, origin: .script).failure {
+                    return .failure(XPACommandError(failure.message))
+                }
+                return .success(())
             }
         }
     }

@@ -50,7 +50,7 @@ let platformTargets: [Target] = [
     ),
     .testTarget(
         name: "TheiaGTKTests",
-        dependencies: ["TheiaGTK", "CGtk4", "FITSRaster", "FITSCore", "TheiaKit"],
+        dependencies: ["TheiaGTK", "CGtk4", "FITSRaster", "FITSCore", "TheiaKit", "XPABridge"],
         path: "Tests/TheiaGTKTests",
         resources: [.copy("Fixtures")]
     ),
