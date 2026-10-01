@@ -31,7 +31,7 @@ import XPABridge
     private(set) var openDialog: GTKFileOpenDialog?
     private(set) var remoteDialog: GTKRemoteOpenDialog?
     private var remoteOpenTasks: [UUID: Task<Void, Never>] = [:]
-    private var remoteTransferWindows: [UUID: GTKRemoteTransferWindow] = [:]
+    private(set) var remoteTransferWindows: [UUID: GTKRemoteTransferWindow] = [:]
     private var exitStatus: Int32 = 0
 
     var documentWindowCount: Int { windows.count }
@@ -127,21 +127,33 @@ import XPABridge
 
     func activate() {
         GTKTranslations.configure()
+        var remoteURLs: [URL] = []
         for path in paths {
+            if let url = URL(string: path), url.scheme?.lowercased() == "ssh" {
+                remoteURLs.append(url)
+                continue
+            }
             do {
-                if let url = URL(string: path), url.scheme?.lowercased() == "ssh" {
-                    try beginRemoteOpen(at: url)
-                } else {
-                    _ = try open(path: path)
-                }
+                _ = try open(path: path)
             } catch {
                 fputs("Theia: cannot open \(path): \(error)\n", stderr)
                 exitStatus = 1
             }
         }
-        if paths.isEmpty || (windows.isEmpty && !remoteOpenTasks.isEmpty) {
+        // The window a transfer's progress floats over must exist first; a
+        // welcome window shown afterwards covers the progress window.
+        if paths.isEmpty || (windows.isEmpty && !remoteURLs.isEmpty) {
             showWelcomeWindow()
-        } else if windows.isEmpty {
+        }
+        for url in remoteURLs {
+            do {
+                try beginRemoteOpen(at: url)
+            } catch {
+                fputs("Theia: cannot open \(url.absoluteString): \(error)\n", stderr)
+                exitStatus = 1
+            }
+        }
+        if !paths.isEmpty && windows.isEmpty && remoteOpenTasks.isEmpty {
             g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
             return
         }

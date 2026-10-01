@@ -225,6 +225,35 @@ final class GTKApplicationControllerTests: XCTestCase {
         XCTAssertEqual(gtk_window_get_transient_for(onboarding.widget), welcome)
     }
 
+    @MainActor func testLaunchingWithRemoteURLShowsProgressOverTheWelcomeWindow() async throws {
+        gtk_init()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theia-gtk-remote-launch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appPaths = AppPaths(platform: .linux, homeDirectory: root,
+                                environment: ["XDG_CONFIG_HOME": root.path,
+                                              "XDG_STATE_HOME": root.path])
+        // 192.0.2.0/24 is TEST-NET-1: never routed, so SSH cannot finish first.
+        let controller = GTKApplicationController(
+            paths: ["ssh://user@192.0.2.1:2222/data/frame.fits"], appPaths: appPaths
+        )
+        defer { g_object_unref(UnsafeMutableRawPointer(controller.application)) }
+        XCTAssertEqual(g_application_register(
+            UnsafeMutablePointer<GApplication>(OpaquePointer(controller.application)), nil, nil
+        ), 1)
+
+        controller.activate()
+        let welcome = try XCTUnwrap(controller.welcomeWindow)
+        defer { gtk_window_destroy(welcome) }
+        let progress = try XCTUnwrap(controller.remoteTransferWindows.values.first)
+        // Created before the welcome window, the progress window had no parent
+        // and the welcome window covered it for the whole connection attempt.
+        XCTAssertEqual(gtk_window_get_transient_for(progress.widget), welcome)
+        gtk_window_destroy(progress.widget)
+        XCTAssertTrue(progress.isFinished)
+    }
+
     @MainActor func testChangedFITSOffersRestoreBeforeApplyingSavedState() async throws {
         gtk_init()
         let fixture = try XCTUnwrap(Bundle.module.url(
