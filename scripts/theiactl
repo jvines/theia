@@ -10,14 +10,51 @@ usage() {
     echo 'usage: theiactl list | --instance PID get COMMAND... | --instance PID set COMMAND...' >&2
     exit 2
 }
+
+# An instance is live only if its pid still exists and belongs to a
+# theia-gtk process; a reused pid or a crashed process must not look live.
+is_live_instance() {
+    local pid=$1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    [[ -r "/proc/$pid/comm" ]] || return 1
+    local comm
+    comm=$(</proc/"$pid"/comm) || return 1
+    [[ "$comm" == theia-gtk ]]
+}
+
+# Only remove a directory that is unambiguously one of ours: it matches the
+# instance-<pid>-<hex> naming, is a real directory (never a symlink), is
+# owned by us, and is private (mode 700). Never follow a symlink here.
+is_stale_instance_dir() {
+    local directory=$1 name
+    name=$(basename "$directory")
+    [[ "$name" =~ ^instance-[0-9]+-[0-9A-Fa-f]{8}$ ]] || return 1
+    [[ ! -L "$directory" ]] || return 1
+    [[ -d "$directory" ]] || return 1
+    [[ "$(stat -c '%u' "$directory" 2>/dev/null)" == "$(id -u)" ]] || return 1
+    [[ "$(stat -c '%a' "$directory" 2>/dev/null)" == 700 ]] || return 1
+    return 0
+}
+
+remove_stale_instance_dir() {
+    local directory=$1
+    is_stale_instance_dir "$directory" || return 1
+    rm -rf -- "$directory"
+}
+
 if [[ "${1:-}" == list ]]; then
     shopt -s nullglob
     for directory in "$runtime_base"/instance-*; do
-        [[ -d "$directory" && -S "$directory/xpans_unix" ]] || continue
+        [[ -d "$directory" ]] || continue
         name=$(basename "$directory")
         pid=${name#instance-}
         pid=${pid%%-*}
-        printf '%s\t%s\n' "$pid" "$directory"
+        if is_live_instance "$pid"; then
+            [[ -S "$directory/xpans_unix" ]] && printf '%s\t%s\n' "$pid" "$directory"
+        else
+            remove_stale_instance_dir "$directory" || true
+        fi
     done
     exit 0
 fi
@@ -28,6 +65,15 @@ action=${1:-}
 [[ "$action" == get || "$action" == set ]] || usage
 shift
 [[ $# -gt 0 ]] || usage
+
+if ! is_live_instance "$pid"; then
+    shopt -s nullglob
+    for directory in "$runtime_base"/instance-"$pid"-*; do
+        remove_stale_instance_dir "$directory" || true
+    done
+    echo "theiactl: instance PID $pid is not running" >&2
+    exit 1
+fi
 
 shopt -s nullglob
 matches=("$runtime_base"/instance-"$pid"-*)
@@ -51,4 +97,13 @@ if [[ "$action" == get ]]; then
     exec "$helper" ds9 "$@"
 fi
 if [[ -x "$script_dir/xpaset" ]]; then helper="$script_dir/xpaset"; else helper=xpaset; fi
-exec "$helper" -p ds9 "$@"
+# -p (paramonly) skips reading stdin for a data payload. Only pass it when
+# stdin is a terminal: with a pipe or redirect, the caller may be sending a
+# data payload (e.g. `theiactl set regions`), and -p would silently discard
+# it. When stdin is not a terminal but is empty (e.g. `</dev/null` for a
+# parameter-only command run from CI/cron), xpaset reads EOF immediately and
+# sends an empty payload, which is harmless for commands that ignore it.
+if [[ -t 0 ]]; then
+    exec "$helper" -p ds9 "$@"
+fi
+exec "$helper" ds9 "$@"
