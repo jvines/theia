@@ -61,6 +61,15 @@ unavailable.
 The Arch `theia-fits-bin` recipe is generated from release archive hashes; see
 the [AUR packaging instructions](packaging/aur/README.md).
 
+The desktop entry's `Exec=theia %F` assumes `theia` is on `PATH`. After
+extracting the tarball, symlink `bin/theia` and `bin/theiactl` into a
+directory on `PATH` such as `~/.local/bin`, copy
+`share/applications/cl.jvines.theia.desktop` to
+`~/.local/share/applications/`, and copy
+`share/icons/hicolor/scalable/apps/cl.jvines.theia.svg` to
+`~/.local/share/icons/hicolor/scalable/apps/`. The launcher resolves its own
+symlink, so this works from any directory.
+
 ### Remote FITS files
 
 Theia can run on the cluster with its window forwarded over `ssh -X`. It can also
