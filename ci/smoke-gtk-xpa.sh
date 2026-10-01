@@ -52,6 +52,14 @@ fi
 [[ "$reply" == *"valid: "*heat* ]] || { echo "XPA cmap error lacks the valid names: $reply" >&2; exit 1; }
 contrast=$(timeout 5 xpaget ds9 zscale contrast)
 [[ "$contrast" == 0.25 ]] || { echo "XPA zscale contrast is $contrast" >&2; exit 1; }
+printf 'image; circle(10,10,3)' | timeout 5 xpaset ds9 regions || { cat "$log" >&2; exit 1; }
+timeout 5 xpaset -p ds9 regions command '{box 5 5 4 4 0}' || { cat "$log" >&2; exit 1; }
+regions=$(timeout 5 xpaget ds9 regions)
+[[ "$regions" == *"circle(10, 10, 3)"* && "$regions" == *"box(5, 5, 4, 4, 0)"* ]] ||
+    { echo "XPA regions are: $regions" >&2; exit 1; }
+timeout 5 xpaset -p ds9 regions delete || { cat "$log" >&2; exit 1; }
+regions=$(timeout 5 xpaget ds9 regions)
+[[ "$regions" != *"("* ]] || { echo "XPA regions delete left: $regions" >&2; exit 1; }
 
 timeout 5 xpaset -p ds9 exit || { cat "$log" >&2; exit 1; }
 for _ in $(seq 1 100); do

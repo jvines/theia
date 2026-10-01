@@ -26,7 +26,8 @@ public struct XPADocumentSnapshot: Sendable, Equatable {
 /// mutations go through the same SessionCommand path as menus and HTTP.
 public enum XPAAction: Sendable, Equatable {
     case openFile(String)
-    case session(SessionCommand)
+    /// Commands for the current frame's document, performed in order.
+    case session([SessionCommand])
     case quit
 }
 
@@ -94,22 +95,59 @@ public enum XPACommandMapper {
                     "unknown colour map '\(value)'; valid: \(colorMapNames.joined(separator: " "))"
                 ))
             }
-            return .success(.session(.setColormap(map)))
+            return .success(.session([.setColormap(map)]))
         case "zscale":
             guard value.isEmpty else {
                 return .failure(XPARequestError(
                     "zscale \(value): contrast is set in Theia's Settings; sample and line are fixed"
                 ))
             }
-            return .success(.session(.applyScalePreset(.zscale)))
+            return .success(.session([.applyScalePreset(.zscale)]))
         case "regions":
-            do {
-                return .success(.session(.replaceRegions(try RegionFile.parse(stringFrom(data) ?? value))))
-            } catch {
-                return .failure(XPARequestError("regions: \(error.localizedDescription)"))
-            }
+            return regionsAction(value, data: data)
         case "exit", "quit": return .success(.quit)
         default: return .failure(XPARequestError("Theia does not support xpaset \(command)"))
+        }
+    }
+
+    /// DS9's `regions` verbs, and otherwise region text to load, sent as data
+    /// or as the parameters.
+    private static func regionsAction(_ value: String, data: Data?) -> Result<XPAAction, XPARequestError> {
+        let tokens = value.split(whereSeparator: \.isWhitespace).map { $0.lowercased() }
+        do {
+            switch tokens.first {
+            case "deleteall":
+                return .success(.session([.clearRegions]))
+            case "delete":
+                // DS9 deletes every region unless told `delete select`.
+                switch tokens.dropFirst().first {
+                case nil, "all": return .success(.session([.clearRegions]))
+                default:
+                    return .failure(XPARequestError(
+                        "regions \(value): Theia supports regions delete and regions delete all"
+                    ))
+                }
+            case "command":
+                // DS9 adds the regions in the string, which arrives wrapped
+                // in braces or quotes: regions command {circle 100 100 20}.
+                var text = value.dropFirst("command".count).trimmingCharacters(in: .whitespaces)
+                if let first = text.first, let last = text.last, text.count >= 2,
+                   (first, last) == ("{", "}") || (first, last) == ("\"", "\"")
+                    || (first, last) == ("'", "'") {
+                    text = String(text.dropFirst().dropLast())
+                }
+                let regions = try RegionFile.parse(text)
+                guard !regions.isEmpty else {
+                    return .failure(XPARequestError("regions command: expected a region"))
+                }
+                return .success(.session(regions.map { .addRegion($0) }))
+            default:
+                return .success(.session([.replaceRegions(try RegionFile.parse(stringFrom(data) ?? value))]))
+            }
+        } catch RegionError.malformed(let line) {
+            return .failure(XPARequestError("regions: cannot read '\(line)'"))
+        } catch {
+            return .failure(XPARequestError("regions: \(error.localizedDescription)"))
         }
     }
 
@@ -124,14 +162,14 @@ public enum XPACommandMapper {
                   low.isFinite, high.isFinite, Float(low).isFinite, Float(high).isFinite else {
                 return .failure(XPARequestError("scale limits: expected two finite numbers"))
             }
-            return .success(.session(.setLevels(min: Float(low), max: Float(high))))
+            return .success(.session([.setLevels(min: Float(low), max: Float(high))]))
         case "mode":
             guard tokens.count >= 2 else {
                 return .failure(XPARequestError("scale mode: expected minmax, zscale or a percentage"))
             }
             switch tokens[1].lowercased() {
-            case "zscale": return .success(.session(.applyScalePreset(.zscale)))
-            case "minmax": return .success(.session(.applyScalePreset(.minMax)))
+            case "zscale": return .success(.session([.applyScalePreset(.zscale)]))
+            case "minmax": return .success(.session([.applyScalePreset(.minMax)]))
             default:
                 guard let percent = Double(tokens[1]), percent.isFinite,
                       percent > 0, percent <= 100 else {
@@ -140,13 +178,13 @@ public enum XPACommandMapper {
                     ))
                 }
                 let tail = (100 - percent) / 2
-                return .success(.session(.applyScalePreset(.percentile(lower: tail, upper: 100 - tail))))
+                return .success(.session([.applyScalePreset(.percentile(lower: tail, upper: 100 - tail))]))
             }
         default:
             guard let stretch = appStretch(from: value) else {
                 return .failure(XPARequestError("scale '\(value)': \(scaleUsage)"))
             }
-            return .success(.session(.setStretch(stretch)))
+            return .success(.session([.setStretch(stretch)]))
         }
     }
 
@@ -176,5 +214,19 @@ public enum XPACommandMapper {
         let name = value.lowercased()
         if name == "grey" { return .gray }
         return ColorMap.allCases.first { $0.rawValue.lowercased() == name }
+    }
+}
+
+extension XPACommandMapper {
+    /// Performs a `.session` action's commands in order with script origin,
+    /// stopping at the first that fails.
+    @MainActor public static func perform(_ commands: [SessionCommand],
+                                          on session: DocumentSession) -> XPARequestError? {
+        for command in commands {
+            if let failure = session.perform(command, origin: .script).failure {
+                return XPARequestError(failure.message)
+            }
+        }
+        return nil
     }
 }

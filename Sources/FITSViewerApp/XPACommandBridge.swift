@@ -41,11 +41,11 @@ final class XPACommandBridge: XPAServerDelegate {
                 } catch {
                     return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))
                 }
-            case .session(let command):
+            case .session(let commands):
                 guard let session = frontController()?.documentModel.session else {
                     return .failure(XPACommandError("no image is open"))
                 }
-                if let failure = session.perform(command, origin: .script).failure {
+                if let failure = XPACommandMapper.perform(commands, on: session) {
                     return .failure(XPACommandError(failure.message))
                 }
                 return .success(())

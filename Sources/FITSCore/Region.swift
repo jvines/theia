@@ -136,7 +136,7 @@ public enum RegionFile {
     public static func parse(_ text: String) throws -> [Region] {
         var frame: Region.Frame = .image
         var out: [Region] = []
-        for rawLine in text.components(separatedBy: .newlines) {
+        for rawLine in text.components(separatedBy: .newlines).flatMap(statements) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("global") {
                 continue
@@ -154,6 +154,32 @@ public enum RegionFile {
             out.append(try parseShapeLine(line, frame: frame))
         }
         return out
+    }
+
+    /// DS9 separates regions on one line with `;`. A semicolon inside braces,
+    /// or after the `#` that starts a region's attributes, is text. (Quotes
+    /// before the `#` are arcminute and arcsecond units, not strings.)
+    private static func statements(in line: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var inBraces = false
+        var inAttributes = false
+        for character in line {
+            if character == "{" {
+                inBraces = true
+            } else if character == "}" {
+                inBraces = false
+            } else if character == "#" {
+                inAttributes = true
+            } else if character == ";" && !inBraces && !inAttributes {
+                parts.append(current)
+                current = ""
+                continue
+            }
+            current.append(character)
+        }
+        parts.append(current)
+        return parts
     }
 
     /// True for a bare DS9 coordinate-system line we accept but don't map to a
@@ -175,16 +201,25 @@ public enum RegionFile {
         let parts = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
         let shapeText = parts[0].trimmingCharacters(in: .whitespaces)
         let attrText = parts.count > 1 ? String(parts[1]) : ""
-        // A shape must carry a `(...)` argument body. A line without one that
-        // reached here is neither a comment/global/frame nor a known coordinate
-        // directive — it's corrupt, so throw instead of silently dropping it.
-        guard let openParen = shapeText.firstIndex(of: "("),
-              let closeParen = shapeText.lastIndex(of: ")") else {
-            throw RegionError.malformed(line)
+        // A shape carries its arguments in `(...)`, or, as DS9 also accepts,
+        // after the name separated by spaces: `circle 100 100 20`. A line that
+        // fits neither is corrupt, so the shape switch throws instead of
+        // silently dropping it.
+        let name: String
+        let args: [String]
+        if let openParen = shapeText.firstIndex(of: "(") {
+            guard let closeParen = shapeText.lastIndex(of: ")"), openParen < closeParen else {
+                throw RegionError.malformed(line)
+            }
+            name = shapeText[..<openParen].trimmingCharacters(in: .whitespaces).lowercased()
+            let argsText = shapeText[shapeText.index(after: openParen)..<closeParen]
+            args = argsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        } else {
+            let tokens = shapeText.split(whereSeparator: { $0.isWhitespace || $0 == "," })
+            guard let first = tokens.first else { throw RegionError.malformed(line) }
+            name = first.lowercased()
+            args = tokens.dropFirst().map(String.init)
         }
-        let name = shapeText[..<openParen].trimmingCharacters(in: .whitespaces).lowercased()
-        let argsText = shapeText[shapeText.index(after: openParen)..<closeParen]
-        let args = argsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
 
         let attributes = parseAttributes(attrText)
         let shape: Region.Shape

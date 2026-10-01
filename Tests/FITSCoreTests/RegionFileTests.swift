@@ -159,6 +159,31 @@ final class RegionFileTests: XCTestCase {
         XCTAssertEqual(try RegionFile.parse("detector\npoint(5, 5)").count, 1)
     }
 
+    func testSemicolonsSeparateRegionsOutsideTextAndComments() throws {
+        let circle = Region.Shape.circle(center: Region.Point(x: 100, y: 100),
+                                         radius: Region.Distance(value: 20, unit: .pixel))
+        let inline = try RegionFile.parse("image; circle(100,100,20)")
+        XCTAssertEqual(inline.map(\.shape), [circle])
+        XCTAssertEqual(inline.first?.frame, .image)
+        XCTAssertEqual(try RegionFile.parse("circle(100,100,20); point(5,5)").count, 2)
+        // A semicolon inside braces, or after the attribute marker, is text.
+        let text = try RegionFile.parse("circle(100,100,20) # text={a;b}")
+        XCTAssertEqual(text.count, 1)
+        XCTAssertEqual(text.first?.attributes["text"], "a;b")
+        XCTAssertEqual(try RegionFile.parse("# Region file; DS9\nimage").count, 0)
+    }
+
+    func testAcceptsDS9sParenthesisFreeShapes() throws {
+        let regions = try RegionFile.parse("circle 100 100 20 # color=red\nbox 5 5 4 4 0")
+        XCTAssertEqual(regions.map(\.shape), [
+            .circle(center: Region.Point(x: 100, y: 100), radius: Region.Distance(value: 20, unit: .pixel)),
+            .box(center: Region.Point(x: 5, y: 5), width: Region.Distance(value: 4, unit: .pixel),
+                 height: Region.Distance(value: 4, unit: .pixel), angle: 0),
+        ])
+        XCTAssertEqual(regions.first?.attributes["color"], "red")
+        XCTAssertThrowsError(try RegionFile.parse("circle 100 100"))
+    }
+
     func testParsesImageCircleWithoutAttributes() throws {
         let text = """
         image
