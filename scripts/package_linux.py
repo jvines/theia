@@ -72,7 +72,11 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
     launcher.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'app_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)\n'
+        # Resolve symlinks first: the AUR package and a PATH shim both
+        # install this launcher as a symlink, and an unresolved
+        # BASH_SOURCE[0] would put app_dir at the symlink's directory
+        # (e.g. /usr) instead of the real install.
+        'app_dir=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)\n'
         'export PATH="$app_dir/bin:$PATH"\n'
         'export GSETTINGS_SCHEMA_DIR="$app_dir/share/glib-2.0/schemas"\n'
         'export GIO_EXTRA_MODULES="$app_dir/lib/gio/modules${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"\n'
@@ -130,7 +134,7 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
     app_run.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'app_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)\n'
+        'app_dir=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)\n'
         'exec "$app_dir/bin/theia" "$@"\n'
     )
     app_run.chmod(0o755)

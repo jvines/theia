@@ -45,7 +45,7 @@ instance_dir=${matches[0]}
 export XPA_METHOD=unix
 export XPA_TMPDIR="$instance_dir"
 export XPA_NSUNIX="$instance_dir/xpans_unix"
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script_dir=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 if [[ "$action" == get ]]; then
     if [[ -x "$script_dir/xpaget" ]]; then helper="$script_dir/xpaget"; else helper=xpaget; fi
     exec "$helper" ds9 "$@"

@@ -109,6 +109,9 @@ jobs:
                 xvfb-run -a ci/smoke-gtk.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
                 xvfb-run -a ci/smoke-gtk-http.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
                 xvfb-run -a ci/smoke-gtk-multi-instance.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
+                mkdir -p /tmp/links
+                ln -s /opt/theia/bin/theia /tmp/links/theia-fits
+                xvfb-run -a ci/smoke-gtk.sh /tmp/links/theia-fits Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
               '
           done
           docker run --rm --platform linux/amd64 \
