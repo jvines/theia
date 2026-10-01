@@ -12,6 +12,7 @@ import TheiaKit
         var regionColor: String?
         var readoutFrame: String?
         var hasSeenOnboarding: Bool?
+        var xpaVisibility: String?
 
         enum CodingKeys: String, CodingKey {
             case stretch = "pref.defaultStretch"
@@ -21,6 +22,7 @@ import TheiaKit
             case regionColor = "pref.regionColor"
             case readoutFrame = "readoutFrame"
             case hasSeenOnboarding = "hasSeenOnboarding"
+            case xpaVisibility = "pref.xpaVisibility"
         }
     }
 
@@ -66,6 +68,10 @@ import TheiaKit
     var hasSeenOnboarding: Bool {
         record.hasSeenOnboarding ?? PreferenceKeys.HasSeenOnboarding.defaultValue
     }
+    var xpaVisibility: XPAVisibility {
+        record.xpaVisibility.flatMap(XPAVisibility.init(rawValue:))
+            ?? PreferenceKeys.XPAVisibility.defaultValue
+    }
 
     func setDefaultStretch(_ value: ImageStretch) throws {
         try update { $0.stretch = value.rawValue }
@@ -87,6 +93,9 @@ import TheiaKit
     }
     func setHasSeenOnboarding(_ value: Bool) throws {
         try update { $0.hasSeenOnboarding = value }
+    }
+    func setXPAVisibility(_ value: XPAVisibility) throws {
+        try update { $0.xpaVisibility = value.rawValue }
     }
 
     private func update(_ change: (inout Record) -> Void) throws {

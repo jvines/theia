@@ -57,6 +57,16 @@ import TheiaKit
         appendChoices("Region color", group: "regionColor",
                       values: RegionList.colors.map { ($0, $0.capitalized) }, to: root)
         appendLabel("Defaults apply to documents opened after this change.", to: root)
+        appendLabel("Scripting", to: root)
+        appendChoices("DS9 scripts (from the next launch)", group: "xpa",
+                      values: [("private", "Private: theiactl only"),
+                               ("public", "Public: any ds9 script")], to: root)
+        let xpaNote = gtk_label_new("Public answers xpaget ds9 and pyds9 the way DS9 does, for "
+                                    + "every user on this computer. THEIA_XPA=public or private "
+                                    + "overrides this.")!
+        gtk_label_set_wrap(OpaquePointer(xpaNote), 1)
+        gtk_label_set_xalign(OpaquePointer(xpaNote), 0)
+        gtk_box_append(root, xpaNote)
         gtk_label_set_wrap(message, 1)
         gtk_label_set_xalign(message, 0)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(message))
@@ -137,6 +147,9 @@ import TheiaKit
                 try preferences.setPixelTableSize(choice)
             case "regionColor":
                 try preferences.setRegionColor(value)
+            case "xpa":
+                guard let choice = XPAVisibility(rawValue: value) else { return }
+                try preferences.setXPAVisibility(choice)
             default: return
             }
             gtk_label_set_text(message, "")
@@ -154,6 +167,7 @@ import TheiaKit
             case "colormap": selected = preferences.defaultColorMap.rawValue
             case "pixelSize": selected = String(preferences.pixelTableSize)
             case "regionColor": selected = preferences.regionColor
+            case "xpa": selected = preferences.xpaVisibility.rawValue
             default: continue
             }
             gtk_button_set_label(UnsafeMutablePointer<GtkButton>(OpaquePointer(choice.button)),

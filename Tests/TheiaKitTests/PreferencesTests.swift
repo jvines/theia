@@ -71,4 +71,18 @@ final class PreferencesTests: XCTestCase {
             XCTAssertEqual(session.view.vmax, Float(wide.z2))
         }
     }
+
+    func testXPAStaysPrivateUnlessThePreferenceOrEnvironmentOptsIn() {
+        XCTAssertEqual(PreferenceKeys.XPAVisibility.name, "pref.xpaVisibility")
+        XCTAssertEqual(PreferenceKeys.XPAVisibility.defaultValue, .private)
+        XCTAssertEqual(XPAVisibility.resolve(environment: [:], preference: .private), .private)
+        XCTAssertEqual(XPAVisibility.resolve(environment: [:], preference: .public), .public)
+        XCTAssertEqual(XPAVisibility.resolve(environment: ["THEIA_XPA": "public"], preference: .private),
+                       .public)
+        XCTAssertEqual(XPAVisibility.resolve(environment: ["THEIA_XPA": "PRIVATE"], preference: .public),
+                       .private)
+        // An unknown value leaves the preference in charge.
+        XCTAssertEqual(XPAVisibility.resolve(environment: ["THEIA_XPA": "yes"], preference: .private),
+                       .private)
+    }
 }

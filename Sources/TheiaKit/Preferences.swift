@@ -60,4 +60,26 @@ public enum PreferenceKeys {
         public static let name = "hasSeenOnboarding"
         public static let defaultValue = false
     }
+
+    public enum XPAVisibility: PreferenceKey {
+        public static let name = "pref.xpaVisibility"
+        public static let defaultValue: TheiaKit.XPAVisibility = .private
+    }
+}
+
+/// Who can reach a Linux instance's DS9 access points. Private registers them
+/// in a per-instance 0700 directory that only `theiactl` reaches. Public
+/// registers them the way DS9 does, so unmodified `xpaget ds9`, `xpaset ds9`
+/// and pyds9 scripts find Theia; that also opens them to every local user.
+public enum XPAVisibility: String, CaseIterable, Sendable {
+    case `private`
+    case `public`
+
+    /// Environment variable that overrides the preference: `public` or `private`.
+    public static let environmentKey = "THEIA_XPA"
+
+    public static func resolve(environment: [String: String],
+                               preference: XPAVisibility) -> XPAVisibility {
+        environment[environmentKey].flatMap { XPAVisibility(rawValue: $0.lowercased()) } ?? preference
+    }
 }

@@ -105,7 +105,11 @@ import XPABridge
         let previous = ProcessInfo.processInfo.environment["PATH"] ?? ""
         setenv("PATH", previous.isEmpty ? directory.path : "\(directory.path):\(previous)", 1)
         let environment = ProcessInfo.processInfo.environment
-        if environment["XPA_METHOD"] == "inet" {
+        if XPAVisibility.resolve(environment: environment,
+                                 preference: preferences.xpaVisibility) == .public {
+            // Opted in: register like DS9, with libxpa's defaults or the user's
+            // XPA_* settings, so unmodified ds9 scripts and pyds9 find Theia.
+        } else if environment["XPA_METHOD"] == "inet" {
             guard environment["XPA_NSINET"]?.hasPrefix("127.0.0.1:") == true else {
                 fputs("Theia: inet XPA requires an explicit 127.0.0.1 XPA_NSINET\n", stderr)
                 return

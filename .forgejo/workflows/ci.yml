@@ -120,6 +120,7 @@ jobs:
             --workdir /src theia-runtime-smoke:ci sh -ec '
               xvfb-run -a ci/smoke-gtk-xpa.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
               xvfb-run -a ci/smoke-gtk-xpa-unix.sh /opt/theia/bin/theia
+              xvfb-run -a ci/smoke-gtk-xpa-public.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
               xvfb-run -a ci/smoke-gtk-theiactl.sh /opt/theia/bin/theia Tests/TheiaGTKTests/Fixtures/uint8_simple.fits
             '
           for runtime_image in theia-runtime-smoke:ci theia-rocky-runtime-smoke:ci; do

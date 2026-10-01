@@ -20,7 +20,7 @@ Core viewing, multi-extension navigation, WCS, regions, catalogs, photometry, pr
 - **Scripting**: local HTTP server (`/status`, `/open`, `/document/...`, `/quit`) with token auth
 - **Remote files**: forward the Linux window with SSH, or open `ssh://` FITS files in a local Mac or Linux window through the cluster helper
 - **Bundled samples**: open Hubble image, cube and table examples or a Tau Ceti FEROS echelle spectrum from **Open Sample** in the welcome window or File menu
-- **XPA scripting**: registers `DS9:ds9` and `DS9:fitsviewer` access points (vendored libxpa), so `xpaget`/`xpaset` (and pyds9 against those commands) can drive it. Implemented subset: `file`/`fits`, `scale`, `cmap`, `regions`, `zscale`, `frame`, `version`, `exit`. Not a full DS9 XPA reimplementation.
+- **XPA scripting**: registers `DS9:ds9` and `DS9:fitsviewer` access points (vendored libxpa), so `xpaget`/`xpaset` (and pyds9 against those commands) can drive it. Implemented subset: `file`/`fits`, `scale`, `cmap`, `regions`, `zscale`, `frame`, `version`, `exit`. Not a full DS9 XPA reimplementation. On Linux each instance keeps its access points private by default and `theiactl` reaches them; choose Public under Settings → DS9 scripts, or start Theia with `THEIA_XPA=public`, to let unmodified ds9 scripts and pyds9 reach it the way they reach DS9, which also opens it to every user on the computer.
 
 ## Layout
 
