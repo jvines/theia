@@ -34,9 +34,14 @@ final class XPACommandBridge: XPAServerDelegate {
                 return .failure(XPACommandError("Theia is not ready"))
             }
             switch action {
-            case .openFile(let path):
+            case .loadFile(let path, let newFrame):
                 do {
-                    try app.openDocumentThrowing(at: URL(fileURLWithPath: path))
+                    let url = URL(fileURLWithPath: path)
+                    if !newFrame, let controller = frontController() {
+                        try app.replaceDocument(in: controller, at: url)
+                    } else {
+                        try app.openDocumentThrowing(at: url)
+                    }
                     return .success(())
                 } catch {
                     return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))

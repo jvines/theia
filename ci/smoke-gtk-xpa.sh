@@ -61,6 +61,20 @@ timeout 5 xpaset -p ds9 regions delete || { cat "$log" >&2; exit 1; }
 regions=$(timeout 5 xpaget ds9 regions)
 [[ "$regions" != *"("* ]] || { echo "XPA regions delete left: $regions" >&2; exit 1; }
 
+# ds9 loads `file` into the current frame rather than opening another.
+other="$(dirname "$fits")/multi_hdu.fits"
+timeout 5 xpaset -p ds9 file "$other" || { cat "$log" >&2; exit 1; }
+opened=$(timeout 5 xpaget ds9 file)
+[[ "$opened" == "$other" ]] || { echo "XPA file is $opened" >&2; exit 1; }
+frame=$(timeout 5 xpaget ds9 frame)
+[[ "$frame" == 1 ]] || { echo "XPA file moved to frame $frame" >&2; exit 1; }
+for _ in $(seq 1 50); do
+    windows=$(LC_ALL=C.utf8 xwininfo -root -tree | grep -c ' — Theia"' || true)
+    [[ "$windows" == 1 ]] && break
+    sleep 0.1
+done
+[[ "$windows" == 1 ]] || { echo "XPA file left $windows document windows" >&2; exit 1; }
+
 timeout 5 xpaset -p ds9 exit || { cat "$log" >&2; exit 1; }
 for _ in $(seq 1 100); do
     if ! kill -0 "$app_pid" 2>/dev/null; then break; fi

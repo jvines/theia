@@ -25,7 +25,9 @@ public struct XPADocumentSnapshot: Sendable, Equatable {
 /// A parsed xpaset request. The host performs file and app actions; document
 /// mutations go through the same SessionCommand path as menus and HTTP.
 public enum XPAAction: Sendable, Equatable {
-    case openFile(String)
+    /// Load a FITS file into the current frame, replacing what it shows, or
+    /// into a new one.
+    case loadFile(String, newFrame: Bool)
     /// Commands for the current frame's document, performed in order.
     case session([SessionCommand])
     case quit
@@ -82,11 +84,14 @@ public enum XPACommandMapper {
         let value = params.trimmingCharacters(in: .whitespacesAndNewlines)
         switch command {
         case "file", "fits":
-            let path = value.isEmpty ? stringFrom(data) : value
+            // DS9 loads into the current frame unless the request starts with "new".
+            let newFrame = value.lowercased() == "new" || value.lowercased().hasPrefix("new ")
+            let name = newFrame ? value.dropFirst(3).trimmingCharacters(in: .whitespaces) : value
+            let path = name.isEmpty ? stringFrom(data) : name
             guard let path, !path.isEmpty else {
                 return .failure(XPARequestError("\(command): expected a file name"))
             }
-            return .success(.openFile(path))
+            return .success(.loadFile(path, newFrame: newFrame))
         case "scale":
             return scaleAction(value)
         case "cmap":

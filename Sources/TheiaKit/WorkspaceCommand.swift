@@ -67,16 +67,19 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
             focus(session)
             return
         }
-        let observerID = session.addEventObserver { [weak self, weak session] event in
-            guard let self, let session else { return }
-            self.propagate(event, from: session)
-        }
         let id = nextDocumentID
         nextDocumentID += 1
-        documents[session.id] = Registration(session: session, observerID: observerID,
+        documents[session.id] = Registration(session: session, observerID: observe(session),
                                              documentID: id)
         documentOrder.append(session.id)
         focusedDocumentID = id
+    }
+
+    private func observe(_ session: DocumentSession) -> UUID {
+        session.addEventObserver { [weak self, weak session] event in
+            guard let self, let session else { return }
+            self.propagate(event, from: session)
+        }
     }
 
     public func unregister(_ session: DocumentSession) {
@@ -111,19 +114,50 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
         url: URL, load: (URL) throws -> DocumentSession
     ) throws -> WorkspaceOpenResult {
         let url = url.isFileURL ? url.standardizedFileURL : url
-        if let existing = documents.values.compactMap(\.session).first(where: {
-            ($0.url.isFileURL ? $0.url.standardizedFileURL : $0.url) == url
-        }), let id = id(of: existing) {
-            focus(existing)
-            return WorkspaceOpenResult(session: existing, documentID: id,
-                                       wasAlreadyOpen: true, effects: [.documentOpened(id)])
-        }
+        if let opened = raiseIfOpen(url) { return opened }
         let session = try load(url)
         register(session)
         let id = self.id(of: session)!
         return WorkspaceOpenResult(session: session, documentID: id,
                                    wasAlreadyOpen: false,
                                    effects: [.documentOpened(id), .noteRecent(url)])
+    }
+
+    /// Opens `url` in place of `replaced`, as DS9 loads a file into the current
+    /// frame: the new document takes the replaced one's id and place, so the
+    /// frame number scripts see is unchanged. The platform then swaps the
+    /// windows. A file that is already open is raised instead, and `replaced`
+    /// is left alone.
+    public func open(
+        url: URL, replacing replaced: DocumentSession, load: (URL) throws -> DocumentSession
+    ) throws -> WorkspaceOpenResult {
+        let url = url.isFileURL ? url.standardizedFileURL : url
+        if let opened = raiseIfOpen(url) { return opened }
+        guard let old = documents[replaced.id] else { return try open(url: url, load: load) }
+        let session = try load(url)
+        replaced.removeEventObserver(old.observerID)
+        documents[replaced.id] = nil
+        documents[session.id] = Registration(session: session, observerID: observe(session),
+                                             documentID: old.documentID)
+        if let index = documentOrder.firstIndex(of: replaced.id) {
+            documentOrder[index] = session.id
+        } else {
+            documentOrder.append(session.id)
+        }
+        focusedDocumentID = old.documentID
+        return WorkspaceOpenResult(session: session, documentID: old.documentID,
+                                   wasAlreadyOpen: false,
+                                   effects: [.documentOpened(old.documentID)]
+                                       + (url.isFileURL ? [.noteRecent(url)] : []))
+    }
+
+    private func raiseIfOpen(_ url: URL) -> WorkspaceOpenResult? {
+        guard let existing = documents.values.compactMap(\.session).first(where: {
+            ($0.url.isFileURL ? $0.url.standardizedFileURL : $0.url) == url
+        }), let id = id(of: existing) else { return nil }
+        focus(existing)
+        return WorkspaceOpenResult(session: existing, documentID: id,
+                                   wasAlreadyOpen: true, effects: [.documentOpened(id)])
     }
 
     private func propagate(_ event: SessionEvent, from source: DocumentSession) {

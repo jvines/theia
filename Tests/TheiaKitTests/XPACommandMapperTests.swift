@@ -85,7 +85,16 @@ final class XPACommandMapperTests: XCTestCase {
 
     func testFileRegionsColormapAndQuitMapWithoutPlatformCode() {
         XCTAssertEqual(XPACommandMapper.set(command: "file", params: "", data: Data("/tmp/a.fits".utf8)),
-                       .success(.openFile("/tmp/a.fits")))
+                       .success(.loadFile("/tmp/a.fits", newFrame: false)))
+        // DS9 loads into the current frame; "new" asks for another frame.
+        XCTAssertEqual(XPACommandMapper.set(command: "file", params: "/tmp/b.fits", data: nil),
+                       .success(.loadFile("/tmp/b.fits", newFrame: false)))
+        XCTAssertEqual(XPACommandMapper.set(command: "fits", params: "new /tmp/b.fits", data: nil),
+                       .success(.loadFile("/tmp/b.fits", newFrame: true)))
+        XCTAssertEqual(XPACommandMapper.set(command: "file", params: "new", data: Data("/tmp/c.fits".utf8)),
+                       .success(.loadFile("/tmp/c.fits", newFrame: true)))
+        XCTAssertEqual(XPACommandMapper.set(command: "file", params: "newer.fits", data: nil),
+                       .success(.loadFile("newer.fits", newFrame: false)))
         XCTAssertEqual(XPACommandMapper.set(command: "regions", params: "", data: Data("image\n".utf8)),
                        .success(.session([.replaceRegions([])])))
         XCTAssertEqual(XPACommandMapper.set(command: "quit", params: "", data: nil), .success(.quit))

@@ -223,17 +223,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try openDocumentThrowing(at: url, remoteData: nil)
     }
 
+    /// Loads `url` (or `data` shown under it) into `controller`'s frame, as DS9
+    /// loads a file into the current frame: the document keeps the frame's
+    /// number, stretch and colour map, and its window takes the old one's place.
     @discardableResult
-    private func openDocumentThrowing(at url: URL, remoteData: Data?) throws -> DocumentWindowController {
+    func replaceDocument(in controller: DocumentWindowController, at url: URL,
+                         data: Data? = nil) throws -> DocumentWindowController {
+        try openDocumentThrowing(at: url, remoteData: data, replacing: controller)
+    }
+
+    @discardableResult
+    private func openDocumentThrowing(at url: URL, remoteData: Data?,
+                                      replacing replaced: DocumentWindowController? = nil)
+        throws -> DocumentWindowController {
         log("openDocument at \(url.absoluteString)")
         var loadedDocument: DocumentModel?
-        let result = try workspace.open(url: url) { resolvedURL in
+        let load = { (resolvedURL: URL) throws -> DocumentSession in
             let document: DocumentModel
             if let remoteData { document = try DocumentModel(url: resolvedURL, data: remoteData) }
             else { document = try DocumentModel(url: resolvedURL) }
+            if let replaced, document.restoredState == nil {
+                document.session.view.stretch = replaced.documentModel.session.view.stretch
+                document.session.view.colorMap = replaced.documentModel.session.view.colorMap
+            }
             loadedDocument = document
             return document.session
         }
+        let result = try replaced.map {
+            try workspace.open(url: url, replacing: $0.documentModel.session, load: load)
+        } ?? workspace.open(url: url, load: load)
         if result.wasAlreadyOpen {
             guard let existing = controllers.first(where: {
                 $0.documentModel.session === result.session
@@ -247,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         log("loaded \(document.file.hdus.count) HDUs")
         let controller = DocumentWindowController(document: document)
+        if let frame = replaced?.window?.frame { controller.window?.setFrame(frame, display: false) }
         controllers.append(controller)
         let controllerID = ObjectIdentifier(controller)
         imageAvailability[controllerID] = document.session.displayed != nil
@@ -258,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.refreshDocumentToolbars()
         }
         for effect in result.effects { applyEffect(effect) }
+        replaced?.window?.close()
         refreshDocumentToolbars()
         log("window shown, toolbar items=\(controller.window?.toolbar?.items.count ?? -1)")
         return controller

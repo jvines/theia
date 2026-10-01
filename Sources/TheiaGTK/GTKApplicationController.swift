@@ -182,19 +182,8 @@ import XPABridge
     @discardableResult func open(url: URL, remoteData: Data? = nil) throws -> GTKDocumentWindow {
         var newPersistence: GTKSessionPersistence?
         let opened = try workspace.open(url: url) { url in
-            let data: Data
-            if let remoteData { data = remoteData }
-            else { data = try Data(contentsOf: url, options: .mappedIfSafe) }
-            let session = DocumentSession(
-                url: url, file: try FITSFile(data: data),
-                stretch: preferences.defaultStretch,
-                colorMap: preferences.defaultColorMap,
-                zscaleContrast: { [preferences] in preferences.zscaleContrast },
-                catalogClient: catalogClient
-            )
-            newPersistence = GTKSessionPersistence(session: session, fileData: data,
-                                                   paths: appPaths)
-            return session
+            try loadSession(url: url, data: remoteData, stretch: preferences.defaultStretch,
+                            colorMap: preferences.defaultColorMap, persistence: &newPersistence)
         }
         recentFiles.record(opened.session.url)
         refreshDocumentMenus()
@@ -202,11 +191,53 @@ import XPABridge
             existing.present()
             return existing
         }
+        return showWindow(for: opened.session, persistence: newPersistence)
+    }
+
+    /// Loads `url` (or `data` shown under it) into `window`'s frame, as DS9
+    /// loads a file into the current frame: the document keeps the frame's
+    /// number, stretch and colour map, and its window takes the old one's size.
+    @discardableResult func replaceDocument(in window: GTKDocumentWindow, with url: URL,
+                                            data: Data? = nil) throws -> GTKDocumentWindow {
+        var newPersistence: GTKSessionPersistence?
+        let replaced = window.session
+        let opened = try workspace.open(url: url, replacing: replaced) { url in
+            try loadSession(url: url, data: data, stretch: replaced.view.stretch,
+                            colorMap: replaced.view.colorMap, persistence: &newPersistence)
+        }
+        if let existing = windows[opened.session.id] {
+            existing.present()
+            return existing
+        }
+        if opened.session.url.isFileURL { recentFiles.record(opened.session.url) }
+        let oldWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(window.widget))
+        let size = (gtk_widget_get_width(oldWidget), gtk_widget_get_height(oldWidget))
+        let replacement = showWindow(for: opened.session, persistence: newPersistence,
+                                     size: size.0 > 0 && size.1 > 0 ? size : nil)
+        gtk_window_destroy(window.widget)
+        return replacement
+    }
+
+    private func loadSession(url: URL, data: Data?, stretch: ImageStretch, colorMap: ColorMap,
+                             persistence: inout GTKSessionPersistence?) throws -> DocumentSession {
+        let fileData = try data ?? Data(contentsOf: url, options: .mappedIfSafe)
+        let session = DocumentSession(
+            url: url, file: try FITSFile(data: fileData),
+            stretch: stretch, colorMap: colorMap,
+            zscaleContrast: { [preferences] in preferences.zscaleContrast },
+            catalogClient: catalogClient
+        )
+        persistence = GTKSessionPersistence(session: session, fileData: fileData, paths: appPaths)
+        return session
+    }
+
+    private func showWindow(for session: DocumentSession, persistence newPersistence: GTKSessionPersistence?,
+                            size: (Int32, Int32)? = nil) -> GTKDocumentWindow {
         if let newPersistence {
-            sessionPersistence[opened.session.id] = newPersistence
+            sessionPersistence[session.id] = newPersistence
         }
         let window = GTKDocumentWindow(
-            application: application, session: opened.session,
+            application: application, session: session,
             preferences: preferences,
             recentFiles: recentFiles,
             workspace: workspace,
@@ -222,18 +253,18 @@ import XPABridge
             },
             onSettings: { [weak self] in self?.showSettingsWindow() },
             onDrop: { [weak self] paths in self?.openDropped(paths) },
-            onWorkspaceCommand: { [weak self, weak session = opened.session] command in
+            onWorkspaceCommand: { [weak self, weak session = session] command in
                 guard let self, let session else { return }
                 self.performWorkspaceCommand(command, from: session)
             },
             onWorkspaceToolAction: { [weak self] action, session in
                 self?.performWorkspaceToolAction(action, from: session)
             },
-            onFocus: { [weak self, weak session = opened.session] in
+            onFocus: { [weak self, weak session = session] in
                 guard let self, let session else { return }
                 self.workspace.focus(session)
             }
-        ) { [weak self, weak session = opened.session] in
+        ) { [weak self, weak session = session] in
             guard let self, let session else { return }
             self.staleDialogs.removeValue(forKey: session.id)?.dismiss()
             self.sessionPersistence.removeValue(forKey: session.id)?.close()
@@ -241,8 +272,9 @@ import XPABridge
             self.workspace.unregister(session)
             self.refreshDocumentMenus()
         }
-        windows[opened.session.id] = window
+        windows[session.id] = window
         refreshDocumentMenus()
+        if let size { gtk_window_set_default_size(window.widget, size.0, size.1) }
         window.present()
         if let newPersistence {
             newPersistence.onWarning = { [weak window] message in
@@ -259,11 +291,11 @@ import XPABridge
                     parent: window.widget,
                     onRestore: { [weak newPersistence] in newPersistence?.restoreStale() },
                     onDiscard: { [weak newPersistence] in newPersistence?.discardStale() },
-                    onClose: { [weak self, id = opened.session.id] in
+                    onClose: { [weak self, id = session.id] in
                         self?.staleDialogs.removeValue(forKey: id)
                     }
                 )
-                staleDialogs[opened.session.id] = dialog
+                staleDialogs[session.id] = dialog
                 dialog.present()
             }
         }

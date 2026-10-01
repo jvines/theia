@@ -34,6 +34,21 @@ final class GTKXPACommandBridgeTests: XCTestCase {
             XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("heat"))
             XCTAssertEqual(bridge.xpaGet(command: "zscale", params: "contrast"), .success("0.25"))
             XCTAssertEqual(bridge.xpaGet(command: "frame", params: ""), .success("1"))
+
+            // ds9 loads `file` into the current frame: one window, same frame,
+            // and the frame keeps its scale and colour map.
+            let other = try XCTUnwrap(Bundle.module.url(
+                forResource: "multi_hdu", withExtension: "fits", subdirectory: "Fixtures"
+            ))
+            XCTAssertTrue(succeeded(bridge.xpaSet(command: "file", params: other.path, data: nil)))
+            XCTAssertEqual(controller.documentWindowCount, 1)
+            XCTAssertEqual(bridge.xpaGet(command: "file", params: ""), .success(other.path))
+            XCTAssertEqual(bridge.xpaGet(command: "frame", params: ""), .success("1"))
+            XCTAssertEqual(bridge.xpaGet(command: "scale", params: ""), .success("log"))
+            XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("heat"))
+            // "new" asks for another frame.
+            XCTAssertTrue(succeeded(bridge.xpaSet(command: "file", params: "new \(fixture.path)", data: nil)))
+            XCTAssertEqual(controller.documentWindowCount, 2)
             for window in controller.documentWindowsForScripting { gtk_window_destroy(window.widget) }
         }
     }

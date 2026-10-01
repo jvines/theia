@@ -35,9 +35,14 @@ final class GTKXPACommandBridge: XPAServerDelegate {
             }
             guard let controller else { return .failure(XPACommandError("Theia is shutting down")) }
             switch action {
-            case .openFile(let path):
+            case .loadFile(let path, let newFrame):
                 do {
-                    _ = try controller.open(path: path)
+                    let url = URL(fileURLWithPath: path)
+                    if !newFrame, let window = frontWindow() {
+                        _ = try controller.replaceDocument(in: window, with: url)
+                    } else {
+                        _ = try controller.open(url: url)
+                    }
                     return .success(())
                 } catch {
                     return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))

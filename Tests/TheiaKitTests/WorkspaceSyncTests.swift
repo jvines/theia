@@ -198,6 +198,48 @@ final class WorkspaceSyncTests: XCTestCase {
         }
     }
 
+    func testReplacingADocumentKeepsItsIDLikeADS9Frame() async throws {
+        try await MainActor.run {
+            let workspace = Workspace()
+            let first = try workspace.open(path: "/tmp/workspace-first.fits") { _ in
+                try makeSession(name: "first")
+            }
+            let second = try workspace.open(path: "/tmp/workspace-second.fits") { _ in
+                try makeSession(name: "second")
+            }
+            let thirdURL = URL(fileURLWithPath: "/tmp/workspace-third.fits")
+            let third = try workspace.open(url: thirdURL, replacing: first.session) { _ in
+                try makeSession(name: "third")
+            }
+            XCTAssertEqual(third.documentID, 0)
+            XCTAssertFalse(third.wasAlreadyOpen)
+            XCTAssertEqual(third.effects, [.documentOpened(0), .noteRecent(thirdURL)])
+            XCTAssertNil(workspace.id(of: first.session))
+            XCTAssertTrue(workspace.document(at: 0) === third.session)
+            XCTAssertEqual(workspace.id(of: second.session), 1)
+            XCTAssertEqual(workspace.focusedDocumentID, 0)
+            // The replaced window closing afterwards changes nothing.
+            workspace.unregister(first.session)
+            XCTAssertTrue(workspace.document(at: 0) === third.session)
+            // The replacement takes part in sync; the replaced document does not.
+            _ = workspace.perform(.setSyncFlag(.colormap, true), origin: .user)
+            third.session.view.colorMap = .heat
+            XCTAssertEqual(second.session.view.colorMap, .heat)
+            first.session.view.colorMap = .cool
+            XCTAssertEqual(second.session.view.colorMap, .heat)
+
+            // A file already open elsewhere is raised and the frame is kept.
+            let raised = try workspace.open(url: URL(fileURLWithPath: "/tmp/workspace-second.fits"),
+                                            replacing: third.session) { _ in
+                XCTFail("loaded a file that is already open")
+                return try makeSession(name: "unexpected")
+            }
+            XCTAssertTrue(raised.wasAlreadyOpen)
+            XCTAssertTrue(raised.session === second.session)
+            XCTAssertTrue(workspace.document(at: 0) === third.session)
+        }
+    }
+
     func testFailedOpenDoesNotReserveAnIDOrFocus() async throws {
         enum LoadFailure: Error { case unreadable }
         try await MainActor.run {
