@@ -50,6 +50,18 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(try a.recordURL(for: source).lastPathComponent, "image.fits-\(expectedHash).json")
     }
 
+    @MainActor func testPipedImagesAreNeverSavedOrRestored() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let piped = PipedFITS.nextURL()
+        let persistence = store(root)
+        try persistence.save(session(), for: piped, fileData: primary())
+        guard case .none = try persistence.load(for: piped, fileData: primary()) else {
+            return XCTFail("A piped image must not restore a session")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try persistence.recordURL(for: piped).path))
+    }
+
     func testRemoteSessionRestoresBySSHURLWithoutALocalFile() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

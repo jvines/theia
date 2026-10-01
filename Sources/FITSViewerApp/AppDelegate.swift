@@ -223,6 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try openDocumentThrowing(at: url, remoteData: nil)
     }
 
+    /// Opens FITS bytes that did not come from `url`, such as piped XPA data.
+    @discardableResult
+    func openDocumentThrowing(at url: URL, data: Data) throws -> DocumentWindowController {
+        try openDocumentThrowing(at: url, remoteData: data)
+    }
+
     /// Loads `url` (or `data` shown under it) into `controller`'s frame, as DS9
     /// loads a file into the current frame: the document keeps the frame's
     /// number, stretch and colour map, and its window takes the old one's place.

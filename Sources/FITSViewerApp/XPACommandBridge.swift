@@ -11,7 +11,7 @@ final class XPACommandBridge: XPAServerDelegate {
                 let session = controller.documentModel.session
                 return XPADocumentSnapshot(
                     id: AppDelegate.shared?.scriptingID(of: controller) ?? -1,
-                    path: controller.documentModel.url.path,
+                    path: PipedFITS.displayPath(for: controller.documentModel.url),
                     stretch: session.view.stretch,
                     colorMap: session.view.colorMap,
                     regions: session.regions,
@@ -45,6 +45,18 @@ final class XPACommandBridge: XPAServerDelegate {
                     return .success(())
                 } catch {
                     return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))
+                }
+            case .loadData(let data, let newFrame):
+                do {
+                    let url = PipedFITS.nextURL()
+                    if !newFrame, let controller = frontController() {
+                        try app.replaceDocument(in: controller, at: url, data: data)
+                    } else {
+                        try app.openDocumentThrowing(at: url, data: data)
+                    }
+                    return .success(())
+                } catch {
+                    return .failure(XPACommandError("cannot read the FITS data: \(error.localizedDescription)"))
                 }
             case .session(let commands):
                 guard let session = frontController()?.documentModel.session else {

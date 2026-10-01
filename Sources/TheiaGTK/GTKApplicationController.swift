@@ -185,7 +185,7 @@ import XPABridge
             try loadSession(url: url, data: remoteData, stretch: preferences.defaultStretch,
                             colorMap: preferences.defaultColorMap, persistence: &newPersistence)
         }
-        recentFiles.record(opened.session.url)
+        if !PipedFITS.isPiped(opened.session.url) { recentFiles.record(opened.session.url) }
         refreshDocumentMenus()
         if let existing = windows[opened.session.id] {
             existing.present()

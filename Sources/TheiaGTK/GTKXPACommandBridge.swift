@@ -14,7 +14,7 @@ final class GTKXPACommandBridge: XPAServerDelegate {
             let snapshot = frontWindow().map { window in
                 XPADocumentSnapshot(
                     id: controller?.scriptingID(of: window) ?? -1,
-                    path: window.session.url.path,
+                    path: PipedFITS.displayPath(for: window.session.url),
                     stretch: window.session.view.stretch,
                     colorMap: window.session.view.colorMap,
                     regions: window.session.regions,
@@ -46,6 +46,18 @@ final class GTKXPACommandBridge: XPAServerDelegate {
                     return .success(())
                 } catch {
                     return .failure(XPACommandError("cannot open \(path): \(error.localizedDescription)"))
+                }
+            case .loadData(let data, let newFrame):
+                do {
+                    let url = PipedFITS.nextURL()
+                    if !newFrame, let window = frontWindow() {
+                        _ = try controller.replaceDocument(in: window, with: url, data: data)
+                    } else {
+                        _ = try controller.open(url: url, remoteData: data)
+                    }
+                    return .success(())
+                } catch {
+                    return .failure(XPACommandError("cannot read the FITS data: \(error.localizedDescription)"))
                 }
             case .session(let commands):
                 guard let session = frontWindow()?.session else {

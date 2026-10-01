@@ -95,6 +95,15 @@ final class XPACommandMapperTests: XCTestCase {
                        .success(.loadFile("/tmp/c.fits", newFrame: true)))
         XCTAssertEqual(XPACommandMapper.set(command: "file", params: "newer.fits", data: nil),
                        .success(.loadFile("newer.fits", newFrame: false)))
+        // `xpaset ds9 fits < image.fits` sends the image itself.
+        let image = Data("SIMPLE  =                    T".utf8) + Data(repeating: 32, count: 50)
+        XCTAssertEqual(XPACommandMapper.set(command: "fits", params: "", data: image),
+                       .success(.loadData(image, newFrame: false)))
+        XCTAssertEqual(XPACommandMapper.set(command: "fits", params: "new", data: image),
+                       .success(.loadData(image, newFrame: true)))
+        // A file name in the parameters wins over whatever stdin carried.
+        XCTAssertEqual(XPACommandMapper.set(command: "file", params: "/tmp/d.fits", data: image),
+                       .success(.loadFile("/tmp/d.fits", newFrame: false)))
         XCTAssertEqual(XPACommandMapper.set(command: "regions", params: "", data: Data("image\n".utf8)),
                        .success(.session([.replaceRegions([])])))
         XCTAssertEqual(XPACommandMapper.set(command: "quit", params: "", data: nil), .success(.quit))
@@ -125,5 +134,38 @@ final class XPACommandMapperTests: XCTestCase {
         XCTAssertEqual(XPACommandMapper.set(command: "regions", params: "",
                                             data: Data("image; circle(100,100,20)".utf8)),
                        .success(.session([.replaceRegions([circle])])))
+    }
+}
+
+final class PipedFITSTests: XCTestCase {
+    @MainActor func testEachPipedImageGetsItsOwnStdinURL() async throws {
+        let first = PipedFITS.nextURL()
+        let second = PipedFITS.nextURL()
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(PipedFITS.isPiped(first))
+        XCTAssertFalse(first.isFileURL)
+        XCTAssertEqual(first.lastPathComponent, "stdin")
+        XCTAssertEqual(PipedFITS.displayPath(for: first), "stdin")
+        XCTAssertEqual(PipedFITS.displayPath(for: URL(fileURLWithPath: "/data/a.fits")), "/data/a.fits")
+        XCTAssertFalse(PipedFITS.isPiped(URL(fileURLWithPath: "/data/a.fits")))
+    }
+
+    @MainActor func testWorkspaceDoesNotRememberPipedImagesAsRecent() async throws {
+        let workspace = Workspace()
+        let url = PipedFITS.nextURL()
+        let image = Data("SIMPLE  =                    T".utf8)
+        XCTAssertTrue(PipedFITS.isFITS(image))
+        XCTAssertFalse(PipedFITS.isFITS(Data("/tmp/a.fits".utf8)))
+        var header = [
+            "SIMPLE  =                    T", "BITPIX  =                    8",
+            "NAXIS   =                    2", "NAXIS1  =                    2",
+            "NAXIS2  =                    2", "END",
+        ].map { $0.padding(toLength: 80, withPad: " ", startingAt: 0) }.joined()
+        header = header.padding(toLength: 2880, withPad: " ", startingAt: 0)
+        let data = Data(header.utf8) + Data([1, 2, 3, 4]) + Data(repeating: 0, count: 2876)
+        let opened = try workspace.open(url: url) { url in
+            DocumentSession(url: url, file: try FITSFile(data: data))
+        }
+        XCTAssertEqual(opened.effects, [.documentOpened(opened.documentID)])
     }
 }

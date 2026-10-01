@@ -75,6 +75,17 @@ for _ in $(seq 1 50); do
 done
 [[ "$windows" == 1 ]] || { echo "XPA file left $windows document windows" >&2; exit 1; }
 
+# ds9's idiom for in-memory images: the FITS bytes on xpaset's stdin.
+timeout 5 xpaset ds9 fits < "$fits" || { cat "$log" >&2; exit 1; }
+opened=$(timeout 5 xpaget ds9 file)
+[[ "$opened" == stdin ]] || { echo "XPA piped image is $opened" >&2; exit 1; }
+for _ in $(seq 1 50); do
+    LC_ALL=C.utf8 xwininfo -root -tree | grep -Fq '"stdin — Theia"' && break
+    sleep 0.1
+done
+LC_ALL=C.utf8 xwininfo -root -tree | grep -Fq '"stdin — Theia"' ||
+    { echo 'XPA piped image has no stdin window' >&2; exit 1; }
+
 timeout 5 xpaset -p ds9 exit || { cat "$log" >&2; exit 1; }
 for _ in $(seq 1 100); do
     if ! kill -0 "$app_pid" 2>/dev/null; then break; fi

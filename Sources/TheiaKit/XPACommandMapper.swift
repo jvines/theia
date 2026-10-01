@@ -28,6 +28,8 @@ public enum XPAAction: Sendable, Equatable {
     /// Load a FITS file into the current frame, replacing what it shows, or
     /// into a new one.
     case loadFile(String, newFrame: Bool)
+    /// Load FITS bytes sent on the XPA data channel, the same way.
+    case loadData(Data, newFrame: Bool)
     /// Commands for the current frame's document, performed in order.
     case session([SessionCommand])
     case quit
@@ -87,6 +89,10 @@ public enum XPACommandMapper {
             // DS9 loads into the current frame unless the request starts with "new".
             let newFrame = value.lowercased() == "new" || value.lowercased().hasPrefix("new ")
             let name = newFrame ? value.dropFirst(3).trimmingCharacters(in: .whitespaces) : value
+            // The data channel carries either the image itself or a file name.
+            if name.isEmpty, let data, PipedFITS.isFITS(data) {
+                return .success(.loadData(data, newFrame: newFrame))
+            }
             let path = name.isEmpty ? stringFrom(data) : name
             guard let path, !path.isEmpty else {
                 return .failure(XPARequestError("\(command): expected a file name"))

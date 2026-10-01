@@ -49,6 +49,16 @@ final class GTKXPACommandBridgeTests: XCTestCase {
             // "new" asks for another frame.
             XCTAssertTrue(succeeded(bridge.xpaSet(command: "file", params: "new \(fixture.path)", data: nil)))
             XCTAssertEqual(controller.documentWindowCount, 2)
+            // `xpaset ds9 fits < image.fits`: the bytes load into the current
+            // frame, every time, under the name stdin.
+            let image = try Data(contentsOf: fixture)
+            for _ in 0..<2 {
+                XCTAssertTrue(succeeded(bridge.xpaSet(command: "fits", params: "", data: image)))
+                XCTAssertEqual(controller.documentWindowCount, 2)
+                XCTAssertEqual(bridge.xpaGet(command: "file", params: ""), .success("stdin"))
+            }
+            XCTAssertFalse(succeeded(bridge.xpaSet(command: "fits", params: "",
+                                                   data: Data("SIMPLE  = garbage".utf8))))
             for window in controller.documentWindowsForScripting { gtk_window_destroy(window.widget) }
         }
     }

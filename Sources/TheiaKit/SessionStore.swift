@@ -67,6 +67,8 @@ public struct SessionStore {
     }
 
     public func save(_ session: SessionState, for fitsURL: URL, identity: FileIdentity) throws {
+        // Piped data has no file to come back to.
+        guard !PipedFITS.isPiped(fitsURL) else { return }
         let path = try canonicalPath(for: fitsURL)
         let url = try recordURL(for: fitsURL)
         if let existing = try readRecord(at: url), existing.canonicalPath != path {
@@ -88,6 +90,7 @@ public struct SessionStore {
     }
 
     public func load(for fitsURL: URL, identity: FileIdentity) throws -> LoadResult {
+        guard !PipedFITS.isPiped(fitsURL) else { return .none }
         let path = try canonicalPath(for: fitsURL)
         let url = try recordURL(for: fitsURL)
         let staleURL = try staleRecordURL(for: fitsURL)

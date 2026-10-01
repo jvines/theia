@@ -120,7 +120,8 @@ public enum SyncFlag: String, CaseIterable, Hashable, Sendable {
         let id = self.id(of: session)!
         return WorkspaceOpenResult(session: session, documentID: id,
                                    wasAlreadyOpen: false,
-                                   effects: [.documentOpened(id), .noteRecent(url)])
+                                   effects: [.documentOpened(id)]
+                                       + (PipedFITS.isPiped(url) ? [] : [.noteRecent(url)]))
     }
 
     /// Opens `url` in place of `replaced`, as DS9 loads a file into the current
