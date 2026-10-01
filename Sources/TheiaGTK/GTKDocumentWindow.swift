@@ -67,6 +67,8 @@ private final class RenderCancellation: @unchecked Sendable {
     private let columns: UnsafeMutablePointer<GtkBox>
     private let stack: OpaquePointer
     private let strip: UnsafeMutablePointer<GtkBox>
+    /// The stack height the strip was last sized for; 0 when not narrow.
+    private var stripSizedForHeight = 0
     private let preferences: GTKPreferences?
     private(set) var pixelTableWindow: GTKPixelTableWindow?
     private(set) var contourLevelsWindow: GTKContourLevelsWindow?
@@ -249,13 +251,13 @@ private final class RenderCancellation: @unchecked Sendable {
         gtk_box_append(columns, inspector.widget)
         gtk_box_append(root, UnsafeMutablePointer<GtkWidget>(OpaquePointer(columns)))
         // The narrow arrangement starts empty; applyLayout moves panels in.
-        // The strip opens 280 px tall and the image takes the rest and any
-        // later growth; the divider stays draggable.
+        // syncStripHeight sizes the strip on each height change and the image
+        // takes the rest; the divider stays draggable and can close the strip.
         let stackWidget = UnsafeMutablePointer<GtkWidget>(stack)
         let stripWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(strip))
-        gtk_widget_set_size_request(stripWidget, -1, 280)
         gtk_paned_set_end_child(stack, stripWidget)
         gtk_paned_set_resize_end_child(stack, 0)
+        gtk_paned_set_shrink_end_child(stack, 1)
         gtk_widget_set_vexpand(stackWidget, 1)
         gtk_widget_set_visible(stackWidget, 0)
         gtk_box_append(root, stackWidget)
@@ -1177,6 +1179,22 @@ private final class RenderCancellation: @unchecked Sendable {
         let width = Int(gtk_widget_get_width(UnsafeMutablePointer<GtkWidget>(OpaquePointer(widget))))
         guard width > 0 else { return }
         applyLayout(GTKDocumentLayout.mode(forWidth: width, narrowBelow: narrowLayoutBelow))
+        syncStripHeight()
+    }
+
+    /// Sizes the narrow strip whenever the stack's height changes, so the
+    /// image keeps most of a short window. A divider drag holds until the
+    /// next resize.
+    private func syncStripHeight() {
+        guard layout == .narrow else {
+            stripSizedForHeight = 0
+            return
+        }
+        let height = Int(gtk_widget_get_height(UnsafeMutablePointer<GtkWidget>(stack)))
+        guard height > 0, height != stripSizedForHeight else { return }
+        stripSizedForHeight = height
+        let strip = GTKDocumentLayout.stripHeight(forStackHeight: height)
+        gtk_paned_set_position(stack, gint(height - strip))
     }
 
     /// Moves the HDU list, image column and inspector between the wide three

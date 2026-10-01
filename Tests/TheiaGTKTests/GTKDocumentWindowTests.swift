@@ -741,6 +741,56 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(GTKDocumentLayout.narrowBelow, 1000)
     }
 
+    func testStripNeverTakesMoreThanTwoFifthsOfTheStack() {
+        XCTAssertEqual(GTKDocumentLayout.stripHeight(forStackHeight: 900), 280)
+        XCTAssertEqual(GTKDocumentLayout.stripHeight(forStackHeight: 700), 280)
+        XCTAssertEqual(GTKDocumentLayout.stripHeight(forStackHeight: 300), 120)
+        XCTAssertEqual(GTKDocumentLayout.stripHeight(forStackHeight: 0), 0)
+    }
+
+    @MainActor func testShortNarrowWindowKeepsMostOfItsHeightForTheImage() async throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(
+            forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"
+        ))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        func heights(windowHeight: Int32) throws -> (image: Int32, strip: Int32) {
+            let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+            let window = GTKDocumentWindow(application: application, session: session)
+            defer { gtk_window_destroy(window.widget) }
+            gtk_window_set_default_size(window.widget, 620, windowHeight)
+            window.present()
+            let image = UnsafeMutablePointer<GtkWidget>(window.imageOverlay)
+            let strip = window.inspector.widget
+            // Settle until two consecutive checks agree: the policy applies a
+            // frame after the strip first gets its natural height.
+            var last: (Int32, Int32) = (-1, -1)
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline {
+                for _ in 0..<20 {
+                    _ = g_main_context_iteration(nil, 0)
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
+                let now = (gtk_widget_get_height(image), gtk_widget_get_height(strip))
+                if window.layout == .narrow, now.0 > 0, now.1 > 0, now == last { break }
+                last = now
+            }
+            XCTAssertEqual(window.layout, .narrow)
+            return (gtk_widget_get_height(image), gtk_widget_get_height(strip))
+        }
+
+        // A quarter tile of a 1280×800 screen, and 1280×800 at scale 2. (GTK
+        // clamps windows to Xvfb's 480-px screen, so tall windows are covered
+        // by the policy test above.)
+        for height: Int32 in [369, 350] {
+            let short = try heights(windowHeight: height)
+            XCTAssertGreaterThanOrEqual(Double(short.image), 1.4 * Double(short.strip),
+                                        "a \(height)-px window left the image \(short.image) px")
+        }
+    }
+
     @MainActor func testNarrowWindowStacksPanelsUnderAFullWidthImage() async throws {
         gtk_init()
         let fileURL = try XCTUnwrap(Bundle.module.url(
