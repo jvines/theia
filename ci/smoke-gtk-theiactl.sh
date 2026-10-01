@@ -6,7 +6,16 @@ set -euo pipefail
 
 app=${1:?usage: smoke-gtk-theiactl.sh APP FITS_FILE}
 fits=$(realpath "${2:?usage: smoke-gtk-theiactl.sh APP FITS_FILE}")
-theiactl=$(pwd)/scripts/theiactl
+# A packaged tree ships theiactl beside the app: run that one with a PATH
+# that has no XPA tools, so it must find its own xpaget/xpaset through the
+# symlink. A development build uses the source copy and the PATH below.
+theiactl="$(dirname "$app")/theiactl"
+ctl_env=(env)
+if [[ -x "$theiactl" ]]; then
+    ctl_env=(env PATH=/usr/bin:/bin)
+else
+    theiactl=$(pwd)/scripts/theiactl
+fi
 [[ -x "$theiactl" ]] || { echo "theiactl not found or not executable: $theiactl" >&2; exit 1; }
 
 runtime_root=$(mktemp -d /tmp/theia-theiactl.XXXXXX)
@@ -57,7 +66,7 @@ wait_for_instance() {
 "$app" "$fits" >"$log_one" 2>&1 & first=$!
 dir_one=$(wait_for_instance "$first")
 
-listing=$("$ctl" list)
+listing=$("${ctl_env[@]}" "$ctl" list)
 [[ "$(printf '%s\n' "$listing" | wc -l)" -eq 1 ]] || {
     cat "$log_one" >&2
     echo "theiactl list: expected one instance, got: $listing" >&2
@@ -65,8 +74,8 @@ listing=$("$ctl" list)
 }
 
 # A piped, non-tty region write must reach xpaset -- not be dropped by -p.
-printf 'image\ncircle(10,10,3)\n' | "$ctl" --instance "$first" set regions
-regions=$("$ctl" --instance "$first" get regions </dev/null)
+printf 'image\ncircle(10,10,3)\n' | "${ctl_env[@]}" "$ctl" --instance "$first" set regions
+regions=$("${ctl_env[@]}" "$ctl" --instance "$first" get regions </dev/null)
 [[ "$regions" == *'circle('* ]] || {
     echo "theiactl get regions did not see the piped write: $regions" >&2
     exit 1
@@ -74,13 +83,13 @@ regions=$("$ctl" --instance "$first" get regions </dev/null)
 
 # A parameter-only read run from a non-tty context (CI/cron-like) must not
 # hang or fail on an empty stdin.
-timeout 5 "$ctl" --instance "$first" get version </dev/null >/dev/null
+timeout 5 "${ctl_env[@]}" "$ctl" --instance "$first" get version </dev/null >/dev/null
 
 # Start a second instance, SIGKILL it without warning, and confirm
 # `theiactl list` both drops it and removes its stale instance directory.
 "$app" >"$log_two" 2>&1 & second=$!
 dir_two=$(wait_for_instance "$second")
-[[ "$(printf '%s\n' "$("$ctl" list)" | wc -l)" -eq 2 ]] || {
+[[ "$(printf '%s\n' "$("${ctl_env[@]}" "$ctl" list)" | wc -l)" -eq 2 ]] || {
     cat "$log_two" >&2
     echo 'theiactl list did not see both instances' >&2
     exit 1
@@ -95,7 +104,7 @@ kill -0 "$second" 2>/dev/null && { echo 'second instance survived SIGKILL' >&2; 
 wait "$second" 2>/dev/null || true
 second=
 
-after_kill=$("$ctl" list)
+after_kill=$("${ctl_env[@]}" "$ctl" list)
 [[ "$after_kill" != *"$dir_two"* ]] || {
     echo "theiactl list still shows the killed instance: $after_kill" >&2
     exit 1
@@ -110,7 +119,7 @@ after_kill=$("$ctl" list)
 }
 
 # --instance against an already-dead PID must fail clearly, not hang.
-if "$ctl" --instance "$second_pid" get version </dev/null >"$log_two" 2>&1; then
+if "${ctl_env[@]}" "$ctl" --instance "$second_pid" get version </dev/null >"$log_two" 2>&1; then
     echo 'theiactl succeeded against a dead instance' >&2
     exit 1
 fi
@@ -119,7 +128,7 @@ grep -qi 'not running' "$log_two" || {
     exit 1
 }
 
-timeout 5 "$ctl" --instance "$first" set exit </dev/null
+timeout 5 "${ctl_env[@]}" "$ctl" --instance "$first" set exit </dev/null
 for _ in $(seq 1 100); do
     kill -0 "$first" 2>/dev/null || break
     sleep 0.1
