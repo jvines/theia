@@ -5,6 +5,7 @@ public enum ImageStretch: String, CaseIterable, Sendable {
     case log
     case sqrt
     case asinh
+    case sinh
     case power
     case histogramEq
 
@@ -14,6 +15,7 @@ public enum ImageStretch: String, CaseIterable, Sendable {
         case .log: return "Log"
         case .sqrt: return "Sqrt"
         case .asinh: return "Asinh"
+        case .sinh: return "Sinh"
         case .power: return "Power"
         case .histogramEq: return "Histogram Eq"
         }
@@ -41,6 +43,9 @@ public enum ImageStretch: String, CaseIterable, Sendable {
             return x.squareRoot()
         case .asinh:
             return Foundation.asinh(10 * x) / Foundation.asinh(10.0)
+        case .sinh:
+            // DS9's sinh(3x)/10, normalised to reach 1 like asinh above.
+            return Foundation.sinh(3 * x) / Foundation.sinh(3.0)
         case .power:
             let exp = Swift.max(parameter, 1e-6)
             return Foundation.pow(x, exp)

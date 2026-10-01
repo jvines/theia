@@ -33,6 +33,7 @@ extension ImageStretch {
         case .log: return 1
         case .sqrt: return 2
         case .asinh: return 3
+        case .sinh: return 6
         case .histogramEq: return 4
         case .power: return 5
         }

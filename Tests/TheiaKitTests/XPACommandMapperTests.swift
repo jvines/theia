@@ -26,6 +26,16 @@ final class XPACommandMapperTests: XCTestCase {
                        .session(.applyScalePreset(.percentile(lower: 0.25, upper: 99.75))))
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "histequal", data: nil),
                        .session(.setStretch(.histogramEq)))
+        // DS9's own keywords.
+        XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "histequ", data: nil),
+                       .session(.setStretch(.histogramEq)))
+        XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "sinh", data: nil),
+                       .session(.setStretch(.sinh)))
+        for (stretch, name) in [(ImageStretch.histogramEq, "histequ"), (.sinh, "sinh")] {
+            let snapshot = XPADocumentSnapshot(id: 0, path: "/data/star.fits", stretch: stretch,
+                                               colorMap: .gray, regions: [])
+            XCTAssertEqual(XPACommandMapper.get(command: "scale", document: snapshot), name)
+        }
         XCTAssertEqual(XPACommandMapper.set(command: "scale", params: "limits 1 20", data: nil),
                        .session(.setLevels(min: 1, max: 20)))
         XCTAssertNil(XPACommandMapper.set(command: "scale", params: "mode bogus", data: nil))

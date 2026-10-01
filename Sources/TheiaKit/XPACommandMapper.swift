@@ -94,7 +94,7 @@ public enum XPACommandMapper {
     private static func appStretch(from value: String) -> ImageStretch? {
         switch value.lowercased() {
         case "pow", "power", "squared": return .power
-        case "histequal", "histogrameq": return .histogramEq
+        case "histequ", "histequal", "histogrameq": return .histogramEq
         default: return ImageStretch(rawValue: value.lowercased())
         }
     }
@@ -102,7 +102,7 @@ public enum XPACommandMapper {
     private static func ds9Scale(from stretch: ImageStretch) -> String {
         switch stretch {
         case .power: return "pow"
-        case .histogramEq: return "histequal"
+        case .histogramEq: return "histequ"
         default: return stretch.rawValue
         }
     }

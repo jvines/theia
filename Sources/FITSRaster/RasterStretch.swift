@@ -39,6 +39,7 @@ public enum RasterStretch {
         case .log: return log10(1 + 9 * x)
         case .sqrt: return x.squareRoot()
         case .asinh: return asinh(10 * x) / asinh(Float(10))
+        case .sinh: return sinh(3 * x) / sinh(Float(3))
         case .power: return pow(x, max(parameter, 1e-6))
         case .histogramEq:
             guard let cdf, !cdf.isEmpty else { return x }

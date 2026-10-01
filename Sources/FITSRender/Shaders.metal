@@ -4,7 +4,7 @@ using namespace metal;
 struct Uniforms {
     float vmin;
     float vmax;
-    int stretchType;   // 0=linear, 1=log, 2=sqrt, 3=asinh, 4=histogramEq, 5=power
+    int stretchType;   // 0=linear, 1=log, 2=sqrt, 3=asinh, 4=histogramEq, 5=power, 6=sinh
     int cdfLength;
     float stretchParam;
     float imageX0;
@@ -78,6 +78,8 @@ fragment float4 fragmentMain(
         n = cdf[clamp(idx, 0, u.cdfLength - 1)];
     } else if (u.stretchType == 5) {
         n = pow(x, max(u.stretchParam, 1e-6));
+    } else if (u.stretchType == 6) {
+        n = sinh(3.0 * x) / sinh(3.0);
     } else {
         n = x;
     }

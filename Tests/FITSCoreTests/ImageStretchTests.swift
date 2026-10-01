@@ -27,6 +27,16 @@ final class ImageStretchTests: XCTestCase {
         XCTAssertEqual(ImageStretch.sqrt.apply(1, vmin: 0, vmax: 1), 1)
     }
 
+    func testSinhStretchIsDS9sConvexCounterpartOfAsinh() {
+        XCTAssertEqual(ImageStretch.sinh.apply(0, vmin: 0, vmax: 1), 0, accuracy: 1e-12)
+        XCTAssertEqual(ImageStretch.sinh.apply(1, vmin: 0, vmax: 1), 1, accuracy: 1e-12)
+        // DS9's sinh(3x)/10, normalised to reach 1 the way Theia's asinh is.
+        XCTAssertEqual(ImageStretch.sinh.apply(0.5, vmin: 0, vmax: 1),
+                       Foundation.sinh(1.5) / Foundation.sinh(3), accuracy: 1e-12)
+        XCTAssertLessThan(ImageStretch.sinh.apply(0.5, vmin: 0, vmax: 1), 0.5)
+        XCTAssertEqual(ImageStretch.sinh.label, "Sinh")
+    }
+
     func testAsinhStretchIsConcaveAndAnchored() {
         XCTAssertEqual(ImageStretch.asinh.apply(0, vmin: 0, vmax: 1), 0, accuracy: 1e-12)
         XCTAssertEqual(ImageStretch.asinh.apply(1, vmin: 0, vmax: 1), 1, accuracy: 1e-12)
