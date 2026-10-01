@@ -26,8 +26,6 @@ package() {
         "${pkgdir}/usr/share/applications/cl.jvines.theia.desktop"
     install -Dm644 "${source_dir}/share/icons/hicolor/scalable/apps/cl.jvines.theia.svg" \
         "${pkgdir}/usr/share/icons/hicolor/scalable/apps/cl.jvines.theia.svg"
-    install -Dm644 "${source_dir}/share/mime/packages/cl.jvines.theia.mime.xml" \
-        "${pkgdir}/usr/share/mime/packages/cl.jvines.theia.mime.xml"
     install -Dm644 "${source_dir}/share/doc/theia/LICENSE" \
         "${pkgdir}/usr/share/licenses/theia-fits-bin/LICENSE"
     install -Dm644 "${source_dir}/share/doc/theia/FFmpeg-GPL-3.0.txt" \

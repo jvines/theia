@@ -138,10 +138,6 @@ def assemble(bin_dir: Path, stage: Path, version: str, revision: str) -> None:
         'exec "$app_dir/bin/theia" "$@"\n'
     )
     app_run.chmod(0o755)
-    mime_packages = stage / "share/mime/packages"
-    mime_packages.mkdir(parents=True)
-    shutil.copy2(resources / "cl.jvines.theia.mime.xml", mime_packages)
-    run("update-mime-database", str(stage / "share/mime"))
 
     font_config = stage / "share/fontconfig"
     font_config.mkdir(parents=True)
