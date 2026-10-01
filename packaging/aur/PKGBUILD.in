@@ -1,3 +1,4 @@
+# Maintainer: Jose Vines <jose.vines.l@gmail.com>
 # Generated with scripts/generate_aur_pkgbuild.py after both Linux archives are built.
 pkgname=theia-fits-bin
 pkgver=@VERSION@
@@ -6,7 +7,7 @@ pkgdesc='Native FITS image viewer and analysis app'
 arch=('x86_64' 'aarch64')
 url='https://git.jvines.cl/jayvains/theia'
 license=('BSD-3-Clause' 'GPL-3.0-only')
-depends=('bash' 'glibc')
+depends=('bash' 'glibc' 'hicolor-icon-theme')
 provides=('theia-fits')
 conflicts=('theia-fits')
 options=('!strip' '!debug')
@@ -20,6 +21,7 @@ package() {
     install -d "${pkgdir}/opt/theia-fits" "${pkgdir}/usr/bin"
     cp -a "${source_dir}/." "${pkgdir}/opt/theia-fits/"
     ln -s /opt/theia-fits/bin/theia "${pkgdir}/usr/bin/theia-fits"
+    ln -s /opt/theia-fits/bin/theiactl "${pkgdir}/usr/bin/theiactl"
     install -Dm644 "${source_dir}/share/applications/cl.jvines.theia.desktop" \
         "${pkgdir}/usr/share/applications/cl.jvines.theia.desktop"
     sed -i 's/^Exec=theia %F$/Exec=theia-fits %F/' \
