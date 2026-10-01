@@ -67,19 +67,24 @@ final class XPACommandMapperTests: XCTestCase {
             .contains("histequ") == true)
     }
 
-    func testColormapNamesMatchDS9sCaseInsensitively() {
-        for (name, map) in [("heat", ColorMap.heat), ("HEAT", .heat), ("Cool", .cool),
-                            ("bb", .bb), ("i8", .i8), ("aips0", .aips0), ("sls", .sls),
-                            ("hsv", .hsv), ("rainbow", .rainbow), ("a", .a), ("grey", .gray),
-                            ("Gray", .gray), ("invertedgray", .invertedGray),
-                            ("invertedGray", .invertedGray), ("Viridis", .viridis)] {
+    func testColormapNamesAreMatplotlibsCaseInsensitivelyWithDS9Aliases() {
+        for (name, map) in [("hot", ColorMap.hot), ("HOT", .hot), ("Cool", .cool),
+                            ("gist_heat", .gistHeat), ("Gist_Heat", .gistHeat),
+                            ("afmhot", .afmhot), ("cubehelix", .cubehelix), ("inferno", .inferno),
+                            ("hsv", .hsv), ("rainbow", .rainbow), ("Gray", .gray),
+                            ("invertedgray", .invertedGray), ("invertedGray", .invertedGray),
+                            ("Viridis", .viridis),
+                            // DS9 names with a matplotlib counterpart.
+                            ("grey", .gray), ("heat", .hot), ("bb", .afmhot), ("gray_r", .invertedGray)] {
             XCTAssertEqual(XPACommandMapper.set(command: "cmap", params: name, data: nil),
                            .success(.session([.setColormap(map)])), name)
         }
-        let message = failure(XPACommandMapper.set(command: "cmap", params: "doesnotexist", data: nil))
-        XCTAssertEqual(message, "unknown colour map 'doesnotexist'; valid: "
-            + XPACommandMapper.colorMapNames.joined(separator: " "))
-        XCTAssertTrue(XPACommandMapper.colorMapNames.contains("heat"))
+        // DS9's own tables are not offered.
+        let message = failure(XPACommandMapper.set(command: "cmap", params: "sls", data: nil))
+        XCTAssertEqual(message, "unknown colour map 'sls'; valid: "
+            + XPACommandMapper.colorMapNames.joined(separator: " ")
+            + " (DS9's grey, heat and bb give gray, hot and afmhot)")
+        XCTAssertTrue(XPACommandMapper.colorMapNames.contains("gist_heat"))
         XCTAssertTrue(XPACommandMapper.colorMapNames.contains("invertedgray"))
     }
 

@@ -28,10 +28,7 @@ import Foundation
 public struct ColorTable: Sendable {
     public let entries: [RGBA8]
 
-    /// Entries for maps with hard steps: a step lands within half an entry,
-    /// 1/8190 of the range, of where the map puts it.
-    public static let steppedMapSize = 4096
-    /// Largest table a smooth map gets, however steep its ramps.
+    /// Largest table a map gets, however steep its ramps.
     public static let maximumSize = 16_384
 
     public static func cached(_ map: ColorMap) -> ColorTable {
@@ -39,11 +36,6 @@ public struct ColorTable: Sendable {
     }
 
     public init(map: ColorMap) {
-        if map.hasDiscontinuities {
-            let size = Self.steppedMapSize
-            entries = (0..<size).map { RGBA8(map.sample(Float($0) / Float(size - 1))) }
-            return
-        }
         let reference = (0...65_536).map { RGBA8(map.sample(Float($0) / 65_536)) }
         var size = 2
         while true {

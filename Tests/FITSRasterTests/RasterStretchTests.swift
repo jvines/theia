@@ -46,9 +46,7 @@ final class RasterStretchTests: XCTestCase {
             (0...256).map { Float(pow(10.0, -12.0 + Double($0) * 12.0 / 256.0)) }
         let sample: [Float] = [0, 0.1, 0.1, 0.4, 0.9, 1]
         let cdf = RasterCDF.make(sortedFiniteSample: sample, levels: levels)
-        // A float/double difference at a stepped map's step flips a whole
-        // colour; ColorTableTests checks those maps away from their steps.
-        for map in ColorMap.allCases where !map.hasDiscontinuities {
+        for map in ColorMap.allCases {
             let table = ColorTable(map: map)
             for stretch in ImageStretch.allCases {
                 let parameters: [Float] = stretch == .power ? [0.1, 0.3, 2, 8] : [2]

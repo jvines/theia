@@ -44,12 +44,12 @@ frame=$(timeout 5 xpaget ds9 frame)
 [[ "$frame" == 1 ]] || { echo "XPA frame is $frame" >&2; exit 1; }
 timeout 5 xpaset -p ds9 cmap HEAT || { cat "$log" >&2; exit 1; }
 cmap=$(timeout 5 xpaget ds9 cmap)
-[[ "$cmap" == heat ]] || { echo "XPA cmap is $cmap" >&2; exit 1; }
+[[ "$cmap" == hot ]] || { echo "XPA cmap is $cmap" >&2; exit 1; }
 if reply=$(timeout 5 xpaset -p ds9 cmap bogus 2>&1); then
     echo 'XPA accepted an unknown colour map' >&2
     exit 1
 fi
-[[ "$reply" == *"valid: "*heat* ]] || { echo "XPA cmap error lacks the valid names: $reply" >&2; exit 1; }
+[[ "$reply" == *"valid: "*inferno* ]] || { echo "XPA cmap error lacks the valid names: $reply" >&2; exit 1; }
 contrast=$(timeout 5 xpaget ds9 zscale contrast)
 [[ "$contrast" == 0.25 ]] || { echo "XPA zscale contrast is $contrast" >&2; exit 1; }
 printf 'image; circle(10,10,3)' | timeout 5 xpaset ds9 regions || { cat "$log" >&2; exit 1; }

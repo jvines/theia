@@ -57,7 +57,7 @@ private struct OnboardingView: View {
         (
             icon: "slider.horizontal.3",
             title: "Stretches & colormaps",
-            detail: "Linear, log, asinh, square-root and more stretches; viridis, magma, plasma and DS9's built-in colour maps."
+            detail: "Linear, log, asinh, square-root and more stretches; matplotlib's colour maps."
         ),
         (
             icon: "circle.dashed",

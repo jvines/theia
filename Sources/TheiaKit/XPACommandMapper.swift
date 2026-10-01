@@ -43,8 +43,15 @@ public struct XPARequestError: Error, Equatable, Sendable {
 }
 
 public enum XPACommandMapper {
-    /// The names `cmap` accepts, in menu order; DS9's "grey" is also accepted.
+    /// The names `cmap` accepts, in menu order: matplotlib's names.
     public static var colorMapNames: [String] { ColorMap.allCases.map { $0.rawValue.lowercased() } }
+
+    /// DS9 names with a matplotlib counterpart. DS9's bb is the same function
+    /// as matplotlib's afmhot; its heat is closest to hot.
+    public static let colorMapAliases: [String: ColorMap] = [
+        "grey": .gray, "gray_r": .invertedGray, "grey_r": .invertedGray,
+        "heat": .hot, "bb": .afmhot,
+    ]
 
     public static func get(command: String, params: String = "",
                            document: XPADocumentSnapshot?) -> Result<String, XPARequestError> {
@@ -104,6 +111,7 @@ public enum XPACommandMapper {
             guard let map = colorMap(named: value) else {
                 return .failure(XPARequestError(
                     "unknown colour map '\(value)'; valid: \(colorMapNames.joined(separator: " "))"
+                        + " (DS9's grey, heat and bb give gray, hot and afmhot)"
                 ))
             }
             return .success(.session([.setColormap(map)]))
@@ -220,11 +228,10 @@ public enum XPACommandMapper {
         }
     }
 
-    /// Case-insensitive, like DS9, which also takes "grey" for gray.
+    /// Case-insensitive, like DS9.
     private static func colorMap(named value: String) -> ColorMap? {
         let name = value.lowercased()
-        if name == "grey" { return .gray }
-        return ColorMap.allCases.first { $0.rawValue.lowercased() == name }
+        return colorMapAliases[name] ?? ColorMap.allCases.first { $0.rawValue.lowercased() == name }
     }
 }
 

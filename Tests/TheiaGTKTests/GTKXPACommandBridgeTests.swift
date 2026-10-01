@@ -31,7 +31,7 @@ final class GTKXPACommandBridgeTests: XCTestCase {
             XCTAssertEqual(bridge.xpaGet(command: "scale", params: ""), .success("log"))
             XCTAssertFalse(succeeded(bridge.xpaSet(command: "scale", params: "mode bogus", data: nil)))
             XCTAssertTrue(succeeded(bridge.xpaSet(command: "cmap", params: "Heat", data: nil)))
-            XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("heat"))
+            XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("hot"))
             XCTAssertEqual(bridge.xpaGet(command: "zscale", params: "contrast"), .success("0.25"))
             XCTAssertEqual(bridge.xpaGet(command: "frame", params: ""), .success("1"))
 
@@ -45,7 +45,7 @@ final class GTKXPACommandBridgeTests: XCTestCase {
             XCTAssertEqual(bridge.xpaGet(command: "file", params: ""), .success(other.path))
             XCTAssertEqual(bridge.xpaGet(command: "frame", params: ""), .success("1"))
             XCTAssertEqual(bridge.xpaGet(command: "scale", params: ""), .success("log"))
-            XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("heat"))
+            XCTAssertEqual(bridge.xpaGet(command: "cmap", params: ""), .success("hot"))
             // "new" asks for another frame.
             XCTAssertTrue(succeeded(bridge.xpaSet(command: "file", params: "new \(fixture.path)", data: nil)))
             XCTAssertEqual(controller.documentWindowCount, 2)

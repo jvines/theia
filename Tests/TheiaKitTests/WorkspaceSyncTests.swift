@@ -223,10 +223,10 @@ final class WorkspaceSyncTests: XCTestCase {
             XCTAssertTrue(workspace.document(at: 0) === third.session)
             // The replacement takes part in sync; the replaced document does not.
             _ = workspace.perform(.setSyncFlag(.colormap, true), origin: .user)
-            third.session.view.colorMap = .heat
-            XCTAssertEqual(second.session.view.colorMap, .heat)
+            third.session.view.colorMap = .hot
+            XCTAssertEqual(second.session.view.colorMap, .hot)
             first.session.view.colorMap = .cool
-            XCTAssertEqual(second.session.view.colorMap, .heat)
+            XCTAssertEqual(second.session.view.colorMap, .hot)
 
             // A file already open elsewhere is raised and the frame is kept.
             let raised = try workspace.open(url: URL(fileURLWithPath: "/tmp/workspace-second.fits"),
