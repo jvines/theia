@@ -15,6 +15,16 @@ python3 scripts/generate_aur_pkgbuild.py \
   --output /path/to/theia-fits-bin/PKGBUILD
 ```
 
+Omit `--arm-archive` to generate an `x86_64`-only recipe (no `aarch64` source or
+checksum) when only the x86_64 archive has been published yet:
+
+```sh
+python3 scripts/generate_aur_pkgbuild.py \
+  --version 0.1.0 \
+  --x86-archive dist/Theia-0.1.0-linux-x86_64.tar.xz \
+  --output /path/to/theia-fits-bin/PKGBUILD
+```
+
 In an Arch build environment, run `makepkg --verifysource`, `makepkg`, and
 `makepkg --printsrcinfo > .SRCINFO` before publishing the `PKGBUILD` and
 `.SRCINFO` to AUR. The recipe requires the archives to have stable release URLs

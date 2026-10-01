@@ -25,7 +25,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--x86-archive", type=Path, required=True)
-    parser.add_argument("--arm-archive", type=Path, required=True)
+    parser.add_argument(
+        "--arm-archive", type=Path,
+        help="omit to generate an x86_64-only recipe",
+    )
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", options.version):
@@ -35,9 +38,16 @@ def main() -> None:
     replacements = {
         "@VERSION@": options.version,
         "@X86_SHA256@": archive_hash(options.x86_archive, options.version, "x86_64"),
-        "@ARM_SHA256@": archive_hash(options.arm_archive, options.version, "aarch64"),
     }
     recipe = (ROOT / "packaging/aur/PKGBUILD.in").read_text()
+    if options.arm_archive is not None:
+        replacements["@ARM_SHA256@"] = archive_hash(
+            options.arm_archive, options.version, "aarch64"
+        )
+    else:
+        recipe = recipe.replace("arch=('x86_64' 'aarch64')", "arch=('x86_64')")
+        recipe = re.sub(r"\nsource_aarch64=.*", "", recipe)
+        recipe = re.sub(r"\nsha256sums_aarch64=.*", "", recipe)
     for marker, value in replacements.items():
         recipe = recipe.replace(marker, value)
     if re.search(r"@[A-Z0-9_]+@", recipe):
