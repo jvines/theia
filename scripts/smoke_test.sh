@@ -186,7 +186,7 @@ echo "smoke: oversized header rejected (431)"
 #     guard: before the fix the bad open hangs the runloop and this times out).
 BADPATH="/no/such/fitsviewer-smoke-missing-$$.fits"
 OUT="$(req POST /open "{\"path\":\"$BADPATH\"}")"; CODE="${OUT##*$'\n'}"
-assert_status 500 "$CODE" "POST /open (bad path) must fail fast, not hang"
+assert_status 404 "$CODE" "POST /open (missing file) must fail fast with 404, not hang"
 OUT="$(req GET /status)"; CODE="${OUT##*$'\n'}"
 assert_status 200 "$CODE" "GET /status after a failed open (app still responsive)"
 echo "smoke: failed open returns error without hanging"
