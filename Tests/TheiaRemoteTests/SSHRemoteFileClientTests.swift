@@ -43,7 +43,8 @@ final class SSHRemoteFileClientTests: XCTestCase {
         let options = try String(contentsOf: arguments, encoding: .utf8)
             .split(separator: "\n").map(String.init)
         XCTAssertEqual(options, ["-T", "-o", "BatchMode=yes", "-o",
-                                 "StrictHostKeyChecking=yes", "-p", "2222", "--",
+                                 "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=15",
+                                 "-p", "2222", "--",
                                  "jose@cluster.example", "~/.local/bin/theia-remote-helper"])
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(
             with: Data(contentsOf: request)

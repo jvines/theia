@@ -85,6 +85,10 @@ public final class RemoteTransferCancellation: @unchecked Sendable {
 /// Reads a remote file through a Theia helper. SSH verifies the host using the
 /// user's known_hosts file; the path travels only in the versioned stdin protocol.
 public struct SSHRemoteFileClient: Sendable {
+    /// Seconds SSH waits for the TCP connection. Without it an unreachable host
+    /// holds the transfer for the kernel's SYN retry budget, over two minutes.
+    public static let connectTimeoutSeconds = 15
+
     private let executableURL: URL
     private let environment: [String: String]
 
@@ -114,7 +118,8 @@ public struct SSHRemoteFileClient: Sendable {
         let process = Process()
         process.executableURL = executableURL
         process.environment = environment
-        process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+        process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                             "-o", "ConnectTimeout=\(Self.connectTimeoutSeconds)"]
             + (location.port.map { ["-p", String($0)] } ?? [])
             + ["--", location.sshTarget, "~/.local/bin/theia-remote-helper"]
         let input = Pipe()
