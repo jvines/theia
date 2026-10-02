@@ -14,6 +14,7 @@ import XPABridge
     private let recentFiles: GTKRecentFiles
     private let catalogClient = CatalogClient(transport: CurlCatalogTransport())
     private let bridge = GTKMainLoopBridge()
+    private let userStylesheet = GTKUserStylesheet()
     private lazy var scriptingServer = GTKScriptingServer(
         controller: self, runtimeDirectory: instanceRuntime?.directory
     )
@@ -92,6 +93,7 @@ import XPABridge
         xpaRuntime?.stop()
         xpaRuntime = nil
         scriptingServer.stop()
+        userStylesheet.stop()
         instanceRuntime?.stop()
         instanceRuntime = nil
         bridge.remove()
@@ -135,6 +137,7 @@ import XPABridge
 
     func activate() {
         GTKTranslations.configure()
+        userStylesheet.start()
         var remoteURLs: [URL] = []
         for path in paths {
             if let url = URL(string: path), url.scheme?.lowercased() == "ssh" {
