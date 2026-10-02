@@ -24,6 +24,16 @@ import TheiaKit
         }
     }
 
+    /// Records where this instance's DS9:ds9 access point listens when it has
+    /// no private name server, so `theiactl` can still reach this instance.
+    func recordXPAMethod(_ method: String) throws {
+        let file = directory.appendingPathComponent("xpa_method")
+        guard FileManager.default.createFile(
+            atPath: file.path, contents: Data((method + "\n").utf8),
+            attributes: [.posixPermissions: 0o600]
+        ) else { throw GTKXPARuntime.RuntimeError.unsafePath }
+    }
+
     func stop() {
         try? FileManager.default.removeItem(at: directory)
     }

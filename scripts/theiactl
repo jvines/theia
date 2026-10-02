@@ -51,7 +51,8 @@ if [[ "${1:-}" == list ]]; then
         pid=${name#instance-}
         pid=${pid%%-*}
         if is_live_instance "$pid"; then
-            [[ -S "$directory/xpans_unix" ]] && printf '%s\t%s\n' "$pid" "$directory"
+            [[ -S "$directory/xpans_unix" || -s "$directory/xpa_method" ]] &&
+                printf '%s\t%s\n' "$pid" "$directory"
         else
             remove_stale_instance_dir "$directory" || true
         fi
@@ -79,7 +80,7 @@ shopt -s nullglob
 matches=("$runtime_base"/instance-"$pid"-*)
 [[ ${#matches[@]} -eq 1 ]] || { echo "theiactl: expected one instance for PID $pid" >&2; exit 1; }
 instance_dir=${matches[0]}
-[[ -d "$instance_dir" && -S "$instance_dir/xpans_unix" ]] || {
+[[ -d "$instance_dir" && ! -L "$instance_dir" ]] || {
     echo 'theiactl: instance socket unavailable' >&2
     exit 1
 }
@@ -88,13 +89,34 @@ instance_dir=${matches[0]}
     echo 'theiactl: instance directory is not private' >&2
     exit 1
 }
-export XPA_METHOD=unix
-export XPA_TMPDIR="$instance_dir"
-export XPA_NSUNIX="$instance_dir/xpans_unix"
+# A private instance runs its own name server in its directory. A public one
+# registers the way DS9 does and records where its DS9:ds9 access point
+# listens: naming that address reaches this instance alone, where a plain
+# `ds9` would reach every public instance the name server knows.
+if [[ -S "$instance_dir/xpans_unix" ]]; then
+    export XPA_METHOD=unix
+    export XPA_TMPDIR="$instance_dir"
+    export XPA_NSUNIX="$instance_dir/xpans_unix"
+    target=ds9
+elif [[ -f "$instance_dir/xpa_method" && ! -L "$instance_dir/xpa_method" ]]; then
+    target=$(<"$instance_dir/xpa_method")
+    if [[ "$target" == /* && -S "$target" ]]; then
+        # libxpa takes a socket path as a target only inside its XPA_TMPDIR.
+        export XPA_METHOD=unix
+        XPA_TMPDIR=$(dirname "$target")
+        export XPA_TMPDIR
+    elif [[ ! "$target" =~ ^[0-9A-Fa-f]+:[0-9]+$ ]]; then
+        echo 'theiactl: instance XPA address is unusable' >&2
+        exit 1
+    fi
+else
+    echo 'theiactl: instance socket unavailable' >&2
+    exit 1
+fi
 script_dir=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 if [[ "$action" == get ]]; then
     if [[ -x "$script_dir/xpaget" ]]; then helper="$script_dir/xpaget"; else helper=xpaget; fi
-    exec "$helper" ds9 "$@"
+    exec "$helper" "$target" "$@"
 fi
 if [[ -x "$script_dir/xpaset" ]]; then helper="$script_dir/xpaset"; else helper=xpaset; fi
 # -p (paramonly) skips reading stdin for a data payload. Only pass it when
@@ -104,6 +126,6 @@ if [[ -x "$script_dir/xpaset" ]]; then helper="$script_dir/xpaset"; else helper=
 # parameter-only command run from CI/cron), xpaset reads EOF immediately and
 # sends an empty payload, which is harmless for commands that ignore it.
 if [[ -t 0 ]]; then
-    exec "$helper" -p ds9 "$@"
+    exec "$helper" -p "$target" "$@"
 fi
-exec "$helper" ds9 "$@"
+exec "$helper" "$target" "$@"

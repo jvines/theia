@@ -127,6 +127,10 @@ import XPABridge
         let server = XPAServer(delegate: xpaBridge)
         server.start()
         xpaServer = server
+        if xpaRuntime == nil, let method = server.method {
+            do { try instanceRuntime.recordXPAMethod(method) }
+            catch { fputs("Theia: theiactl cannot reach this instance: \(error)\n", stderr) }
+        }
     }
 
     func activate() {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The opt-in public XPA mode: with no XPA settings at all, a plain
 # `xpaget ds9` reaches Theia the way it reaches DS9; the default private mode
-# keeps the same request out.
+# keeps the same request out. theiactl reaches a public instance too.
 set -euo pipefail
 
 app=${1:?usage: smoke-gtk-xpa-public.sh APP FITS_FILE}
@@ -60,32 +60,55 @@ if [[ "$(ds9_version)" == Theia* ]]; then
 fi
 stop_app
 
-# Public: the same plain request reaches Theia, with no private namespace.
-THEIA_XPA=public "$app" "$fits" >"$log" 2>&1 &
-app_pid=$!
-version=
-for _ in $(seq 1 100); do
-    version=$(ds9_version)
-    [[ "$version" == Theia* ]] && break
-    kill -0 "$app_pid" 2>/dev/null || break
-    sleep 0.1
-done
-[[ "$version" == Theia* ]] || { cat "$log" >&2; echo 'public instance did not answer xpaget ds9' >&2; exit 1; }
-opened=$(timeout 5 "$bin/xpaget" ds9 file)
-[[ "$opened" == "$fits" ]] || { echo "public XPA file is $opened" >&2; exit 1; }
-for candidate in "$runtime_root/theia"/instance-"$app_pid"-*/xpans_unix; do
-    [[ ! -S "$candidate" ]] || { echo 'public instance also made a private namespace' >&2; exit 1; }
-done
-timeout 5 "$bin/xpaset" -p ds9 exit
-for _ in $(seq 1 100); do
-    kill -0 "$app_pid" 2>/dev/null || break
-    sleep 0.1
-done
-if kill -0 "$app_pid" 2>/dev/null; then
-    cat "$log" >&2
-    echo 'public instance did not quit after xpaset exit' >&2
-    exit 1
-fi
-wait "$app_pid" || true
-app_pid=
+# A packaged tree ships theiactl beside the app; a development build uses the
+# source copy, which finds xpaget/xpaset on PATH.
+theiactl="$bin/theiactl"
+[[ -x "$theiactl" ]] || theiactl=$(pwd)/scripts/theiactl
+export PATH="$bin:$PATH"
+fail() { cat "$log" >&2; echo "$1" >&2; exit 1; }
+
+# Public: the same plain request reaches Theia, with no private namespace, and
+# theiactl still lists and drives that one instance. Run with no XPA settings,
+# on loopback (XPA_METHOD=localhost, as ergonOS sets it) and on Unix sockets.
+public_run() {
+    local method=$1 version= opened listing scale
+    unset XPA_METHOD XPA_TMPDIR
+    [[ "$method" == default ]] || export XPA_METHOD=$method
+    if [[ "$method" == unix ]]; then
+        export XPA_TMPDIR="$runtime_root/xpa"
+        mkdir -p "$XPA_TMPDIR"
+    fi
+    THEIA_XPA=public "$app" "$fits" >"$log" 2>&1 &
+    app_pid=$!
+    for _ in $(seq 1 100); do
+        version=$(ds9_version)
+        [[ "$version" == Theia* ]] && break
+        kill -0 "$app_pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    [[ "$version" == Theia* ]] || fail "public instance ($method) did not answer xpaget ds9"
+    opened=$(timeout 5 "$bin/xpaget" ds9 file)
+    [[ "$opened" == "$fits" ]] || fail "public XPA file ($method) is $opened"
+    for candidate in "$runtime_root/theia"/instance-"$app_pid"-*/xpans_unix; do
+        [[ ! -S "$candidate" ]] || fail "public instance ($method) also made a private namespace"
+    done
+    listing=$(timeout 5 "$theiactl" list)
+    [[ "$listing" == "$app_pid"$'\t'* && "$(wc -l <<<"$listing")" -eq 1 ]] \
+        || fail "theiactl list ($method) did not show the public instance: $listing"
+    timeout 5 "$bin/xpaset" -p ds9 scale log
+    scale=$(timeout 5 "$theiactl" --instance "$app_pid" get scale </dev/null) \
+        || fail "theiactl get ($method) failed on the public instance"
+    [[ "$scale" == log ]] || fail "theiactl get scale ($method) is $scale"
+    timeout 5 "$theiactl" --instance "$app_pid" set exit </dev/null
+    for _ in $(seq 1 100); do
+        kill -0 "$app_pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -0 "$app_pid" 2>/dev/null && fail "public instance ($method) did not quit after theiactl set exit"
+    wait "$app_pid" || true
+    app_pid=
+}
+public_run default
+public_run localhost
+public_run unix
 echo 'GTK public XPA smoke: PASS'

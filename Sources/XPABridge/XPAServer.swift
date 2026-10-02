@@ -38,6 +38,13 @@ public final class XPAServer {
         self.delegate = delegate
     }
 
+    /// Where the first access point listens, as libxpa writes it: `ip:port`
+    /// in hex for inet, a socket path for unix. An XPA client given this as
+    /// its template reaches that access point alone, without the name server.
+    public var method: String? {
+        accessPoints.first?.pointee.method.map { String(cString: $0) }
+    }
+
     /// Registers `DS9:<name>` for each name (default: `ds9` for drop-in DS9
     /// compatibility, plus `fitsviewer` for explicit targeting), then starts
     /// polling on the main queue.
