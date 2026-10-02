@@ -1253,6 +1253,38 @@ final class GTKDocumentWindowTests: XCTestCase {
         XCTAssertEqual(session.view.backingScale, 1.5)
     }
 
+    @MainActor func testTilingResizeRefitsUntilTheUserZooms() throws {
+        gtk_init()
+        let fileURL = try XCTUnwrap(Bundle.module.url(forResource: "uint8_simple", withExtension: "fits", subdirectory: "Fixtures"))
+        let session = DocumentSession(url: fileURL, file: try FITSFile(data: Data(contentsOf: fileURL)))
+        let application = gtk_application_new("cl.jvines.theia.tests", GApplicationFlags(rawValue: 1 << 5))!
+        defer { g_object_unref(UnsafeMutableRawPointer(application)) }
+        XCTAssertEqual(g_application_register(UnsafeMutablePointer<GApplication>(OpaquePointer(application)), nil, nil), 1)
+        let window = GTKDocumentWindow(application: application, session: session)
+        defer { gtk_window_destroy(window.widget) }
+        let image = try XCTUnwrap(session.displayed)
+        func fit(_ width: Double, _ height: Double) -> ViewTransform {
+            ViewTransform.fit(imageSize: SIMD2(Double(image.width), Double(image.height)),
+                              viewSize: SIMD2(width, height))
+        }
+
+        // The tiler first gives the window a tile, then shrinks it when
+        // another window opens beside it: the whole image stays in view.
+        window.updateCanvasSize(width: 1200, height: 800, scale: 1)
+        XCTAssertEqual(session.view.transform, fit(1200, 800))
+        window.updateCanvasSize(width: 590, height: 800, scale: 1)
+        XCTAssertEqual(session.view.transform, fit(590, 800))
+
+        XCTAssertNil(session.perform(.zoomIn, origin: .user).failure)
+        let zoomed = session.view.transform
+        window.updateCanvasSize(width: 1200, height: 800, scale: 1)
+        XCTAssertEqual(session.view.transform, zoomed)
+
+        XCTAssertNil(session.perform(.fitView, origin: .user).failure)
+        window.updateCanvasSize(width: 400, height: 300, scale: 1)
+        XCTAssertEqual(session.view.transform, fit(400, 300))
+    }
+
     @MainActor func testRemoteDragUsesReducedTextureAndRefinesOnRelease() async throws {
         let previousSSH = getenv("SSH_CONNECTION").map { String(cString: $0) }
         setenv("SSH_CONNECTION", "client 12345 cluster 22", 1)

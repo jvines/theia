@@ -106,7 +106,6 @@ private final class RenderCancellation: @unchecked Sendable {
     private var framePulseSourceID: guint = 0
     private var frameDriver: SessionFrameDriver?
     private var tableHDUIndex: Int?
-    private var initialFitTransform: ViewTransform?
     private var dragStart: SIMD2<Double>?
     private var dragButton: PointerEvent.Button = .primary
     private let overlayScene = OverlayScene()
@@ -293,7 +292,6 @@ private final class RenderCancellation: @unchecked Sendable {
         session.view.viewSizePoints = CGSize(width: 640, height: 480)
         session.view.backingScale = 1
         session.view.fitDisplayedImage()
-        initialFitTransform = session.view.transform
         renderCanvas()
         refreshOverlay()
         observerID = session.addEventObserver { [weak self] event in
@@ -1572,11 +1570,7 @@ private final class RenderCancellation: @unchecked Sendable {
 
     func updateCanvasSize(width: Int, height: Int, scale: Double) {
         guard width > 0, height > 0, scale.isFinite, scale > 0 else { return }
-        let refit = initialFitTransform == session.view.transform
-        initialFitTransform = nil
-        session.view.viewSizePoints = CGSize(width: width, height: height)
-        session.view.backingScale = scale
-        if refit { _ = session.view.fitDisplayedImage() }
+        session.view.resize(to: CGSize(width: width, height: height), backingScale: scale)
         renderCanvas()
         refreshOverlay()
     }

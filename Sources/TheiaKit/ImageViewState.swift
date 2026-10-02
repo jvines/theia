@@ -34,6 +34,9 @@ enum ImageViewChange {
         didSet { if colorMap != oldValue { onChange?(.displayParameters) } }
     }
     @ObservationIgnored var onChange: ((ImageViewChange) -> Void)?
+    /// What the last fit produced. While the view still shows it, a resize
+    /// fits again; a zoom or pan since then is the user's view and is kept.
+    @ObservationIgnored private var fittedTransform: ViewTransform?
     @ObservationIgnored private var displaying = false
     @ObservationIgnored private let zscaleContrast: @MainActor () -> Double
 
@@ -90,7 +93,17 @@ enum ImageViewChange {
             imageSize: SIMD2(Double(image.width), Double(image.height)),
             viewSize: SIMD2(Double(viewSizePoints.width), Double(viewSizePoints.height))
         )
+        fittedTransform = transform
         return true
+    }
+
+    /// Adopts a new canvas size. A fitted view is fitted to it again, so a
+    /// window a tiler shrinks still shows the whole image.
+    public func resize(to size: CGSize, backingScale scale: Double) {
+        let refit = fittedTransform == transform
+        viewSizePoints = size
+        backingScale = scale
+        if refit { fitDisplayedImage() }
     }
 
     @discardableResult public func zoom(
