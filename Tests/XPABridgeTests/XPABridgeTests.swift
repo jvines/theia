@@ -20,7 +20,7 @@ final class XPABridgeTests: XCTestCase {
         let delegate = Silent()
         let server = XPAServer(delegate: delegate)
         XCTAssertNil(server.method)
-        server.start(names: ["_xpabridge_method_probe"], commands: ["version"])
+        server.start(accessPoints: [("DS9", "_xpabridge_method_probe")], commands: ["version"])
         defer { server.stop() }
         // Hex ip:port for inet, libxpa's default; the socket's path for unix.
         let method = server.method ?? ""

@@ -92,6 +92,12 @@ public_run() {
     for candidate in "$runtime_root/theia"/instance-"$app_pid"-*/xpans_unix; do
         [[ ! -S "$candidate" ]] || fail "public instance ($method) also made a private namespace"
     done
+    # pyds9's DS9() looks up DS9:* and refuses more than one match: a second
+    # access point in class DS9 would answer twice.
+    [[ "$(timeout 5 "$bin/xpaget" 'DS9:*' version)" == "$version" ]] \
+        || fail "DS9:* ($method) matches more than Theia's DS9:ds9"
+    [[ "$(timeout 5 "$bin/xpaget" fitsviewer version)" == Theia* ]] \
+        || fail "public instance ($method) did not answer xpaget fitsviewer"
     listing=$(timeout 5 "$theiactl" list)
     [[ "$listing" == "$app_pid"$'\t'* && "$(wc -l <<<"$listing")" -eq 1 ]] \
         || fail "theiactl list ($method) did not show the public instance: $listing"

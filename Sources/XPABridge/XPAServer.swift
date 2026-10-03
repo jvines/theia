@@ -45,18 +45,19 @@ public final class XPAServer {
         accessPoints.first?.pointee.method.map { String(cString: $0) }
     }
 
-    /// Registers `DS9:<name>` for each name (default: `ds9` for drop-in DS9
-    /// compatibility, plus `fitsviewer` for explicit targeting), then starts
-    /// polling on the main queue.
-    public func start(names: [String] = ["ds9", "fitsviewer"],
+    /// Registers each access point (default: `DS9:ds9` for drop-in DS9
+    /// compatibility, plus `THEIA:fitsviewer` for explicit targeting as
+    /// `fitsviewer`), then starts polling on the main queue. Only `ds9` is in
+    /// class DS9: pyds9's `DS9()` looks up `DS9:*` and refuses two matches.
+    public func start(accessPoints: [(xclass: String, name: String)] = [("DS9", "ds9"), ("THEIA", "fitsviewer")],
                       commands: [String] = defaultCommands) {
-        for name in names {
-            guard let xpa = "DS9".withCString({ cls in
+        for (xclass, name) in accessPoints {
+            guard let xpa = xclass.withCString({ cls in
                 name.withCString { nm in
                     XPACmdNew(UnsafeMutablePointer(mutating: cls), UnsafeMutablePointer(mutating: nm))
                 }
             }) else { continue }
-            accessPoints.append(xpa)
+            self.accessPoints.append(xpa)
             for cmd in commands {
                 let ctx = XPACommandContext(server: self, command: cmd)
                 contexts.append(ctx)
